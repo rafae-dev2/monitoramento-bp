@@ -7,7 +7,7 @@
 }(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis), function () {
   'use strict';
 
-  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao'];
+  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'semApontamento'];
   var DEFAULTS = {
     velocidade: true,
     rpm: true,
@@ -15,7 +15,8 @@
     turno: true,
     motorCondicao: true,
     generico: true,
-    aguardandoCaminhao: true
+    aguardandoCaminhao: true,
+    semApontamento: true
   };
   var NUMEROS_FALADOS = ['zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'];
   // Expansões confirmadas pelo usuário no DOCX de 23/11/2026. Os códigos sem
@@ -177,7 +178,7 @@
       var compact = norm(directText).replace(/[\s_-]+/g, '');
       var aliases = {
         velocidade: 'velocidade', rpm: 'rpm', ocioso: 'ocioso', turno: 'turno',
-        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao',
+        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', semapontamento: 'semApontamento',
         ociososemapontamento: 'ocioso'
       };
       if (aliases[compact]) return aliases[compact];
@@ -266,6 +267,15 @@
       return 'Trator ' + vehicleNumber(item, event) + ' aguardando caminhão. Frente/grupo ' + String(front).trim() + '. Verificar.';
     }
 
+    if (selectedCategory === 'semApontamento') {
+      var frente = event.frente;
+      if (frente == null || String(frente).trim() === '') frente = 'frente não informada';
+      var vClass = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
+      var minutos = numericAlertValue(item.valor);
+      return vClass + ' ' + vehicleNumber(item, event) + ' sem apontamento' +
+        (minutos ? ' há ' + String(minutos) + (minutos === 1 ? ' minuto' : ' minutos') : '') +
+        '. Frente/grupo ' + String(frente).trim() + '. Verificar.';
+    }
     var identification = vehicleNumber(item, event);
     var vehicleClass = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
     var aprovada = FALAS_SGPA[codeFromAlert(item)];

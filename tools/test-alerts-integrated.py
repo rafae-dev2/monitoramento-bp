@@ -191,6 +191,20 @@ with sync_playwright() as pw:
       ok(api.ativos().length===0,'espera respeita duas amostras positivas');
       feed({...row,descOperacao:'Aguardando Caminhão'});
       ok(api.ativos().length===1,'segunda amostra confirma espera');
+      t.reset(); api.configurar({calcularLocal:false});
+      const leve = {...row,cdEquipamento:'LEVE-6614',descEquipamento:'6614 - VEICULO LEVE - IVECO',descTpEquipamento:'VEICULO LEVE',descGrupoEquipamento:'VEICULO LEVE',descOperacao:'953 - Sem Apontamento',vlVelocidade:0};
+      feed(leve);
+      ok(!api.ativos().some(x=>x.regra==='semApontamento'),'sem apontamento respeita tolerância de 5 minutos');
+      t.avaliarFrota(Date.now()+4*60_000,'tempo');
+      ok(!api.ativos().some(x=>x.regra==='semApontamento'),'sem apontamento não alerta antes de 5 minutos');
+      t.avaliarFrota(Date.now()+6*60_000,'tempo');
+      const sp = api.ativos().find(x=>x.regra==='semApontamento');
+      ok(sp && sp.notificar===true && sp.fonte==='app' && /sem apontamento há \\d+ minutos\\. Frente\\/grupo VEICULO LEVE/.test(sp.fala), 'sem apontamento após 5 min gera alerta com fala e notificação local: ' + (sp && sp.fala));
+      t.reset(); api.configurar({calcularLocal:false,notificarCategorias:{semApontamento:false}});
+      feed(leve); t.avaliarFrota(Date.now()+6*60_000,'tempo');
+      const spOff = api.ativos().find(x=>x.regra==='semApontamento');
+      ok(spOff && spOff.notificar===false, 'chave desligada mantém sem apontamento só na central');
+      api.configurar({notificarCategorias:{semApontamento:true}});
       t.reset(); api.configurar({amostras:5}); t.espelharAlarmes([a]);
       ok(api.ativos().length===1,'alarme oficial já confirmado não aguarda amostras locais');
       t.processarQuadros([{type:'alarme',cdEquipamento:row.cdEquipamento,cdTpAlarme:5,fgOnline:'F'}]);
@@ -397,7 +411,7 @@ with sync_playwright() as pw:
     assert page.locator('#cfg-alertas').evaluate("el => el.classList.contains('hide')"), 'O X deve fechar as preferências'
     assert page.evaluate('document.activeElement.id === "btn-cfg"'), 'Ao fechar, o foco deve voltar ao controle de configurações visível'
     page.click('#btn-cfg')
-    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 7")
+    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 8")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
     page.locator('.catalogo-detalhes').first.locator('summary').click()
     page.fill('#cfg-busca-tipo','12480')

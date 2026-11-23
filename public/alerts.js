@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.2.6';
+  const VERSAO = '1.2.7';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -70,6 +70,7 @@
     ociosoSemApontamento: { id: 'ociosoSemApontamento', nome: 'Motor ocioso sem apontamento', icone: '🔌', cor: '#db9b3b', severidade: 2 },
     motorCondicao: { id: 'motorCondicao', nome: 'Motor ligado — condição combinada', icone: 'M', cor: '#c6a0e8', severidade: 2 },
     aguardandoCaminhao: { id: 'aguardandoCaminhao', nome: 'Aguardando caminhão', icone: 'T', cor: '#e9b457', severidade: 2 },
+    semApontamento: { id: 'semApontamento', nome: 'Sem apontamento', icone: '📝', cor: '#e07b39', severidade: 2 },
     generico: { id: 'generico', nome: 'Alarme do portal', icone: '⚠️', cor: '#93a4b3', severidade: 1 },
   };
 
@@ -84,6 +85,7 @@
     maxPorCiclo: 4, // no máximo N alertas falam por ciclo (evita "chuva de voz" ao abrir o app)
     rpmOcioso: 900,
     minutosOcioso: 5,
+    minutosSemApontamento: 5, // tolerância antes de alertar operação “Sem Apontamento”
     minutosTurno: 4, // pedido do usuário (o portal usa 3)
     maxAtrasoMin: 20, // ignorar equipamento sem sinal há mais que isso
     espelharServidor: true,
@@ -780,7 +782,10 @@
       e.vistoEm = agora();
       if (!e.fonte) e.fonte = 'stream';
       if (q.descTpEquipamento) e.tipo = q.descTpEquipamento;
-      if (q.descOperacao !== undefined && dentroDoEscopo(e)) regraAguardandoCaminhao(e, agora());
+      if (q.descOperacao !== undefined && dentroDoEscopo(e)) {
+        regraAguardandoCaminhao(e, agora());
+        regraSemApontamento(e, agora());
+      }
     }
     estado.quadros += lista.length;
   }
@@ -1136,6 +1141,7 @@
         regraRpm(e, ts);
         regraAguardandoCaminhao(e, ts);
       }
+      regraSemApontamento(e, ts);
       regraTurno(e, ts);
       regraOcioso(e, ts);
     }
@@ -1158,6 +1164,30 @@
     });
   }
 
+  /* Operação SGPA “Sem Apontamento” sem alarme oficial: alerta após a tolerância. */
+  function regraSemApontamento(e, ts) {
+    const liga = e.operacaoConfirmada === true && policy.semApontamento(e);
+    const st = marcar(e.id, 'semApontamento', liga, ts, null);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!st.firing) return;
+    const min = Math.max(1, num(cfg.minutosSemApontamento) || 5);
+    const durou = (ts - inicioReal(st, e)) / 60000;
+    if (durou < min) return;
+    // motor ocioso + sem apontamento já tem alerta combinado próprio: evita fala dupla
+    const combinado = estados.get(String(e.id) + '|ociosoSemApontamento');
+    if (combinado && combinado.firing && combinado.emitido) return;
+    if (!podeDisparar(st, ts)) return;
+    emitir({
+      chave: st.chave,
+      regra: 'semApontamento',
+      e,
+      valor: Math.round(durou),
+      limite: Math.round(min),
+      texto: `sem apontamento há ${minutosTxt(durou)} · frente/grupo: ${e.frente || 'não informada'}`,
+      detalhe: `Operação SGPA ${e.operacao || '—'} · ${e.tipo || 'equipamento'} · tolerância ${minutosTxt(min)}`,
+      inicio: inicioReal(st, e),
+    });
+  }
   function regraRpm(e, ts) {
     if (!cfg.calcularLocal || e.rpm === null) return;
     const limite = num(cfg.limiteRpm);
@@ -1443,7 +1473,7 @@
       contagem: (prev && prev.contagem ? prev.contagem : 0) + 1,
       repeticao: !!prev,
     };
-    alerta.notificar = alerta.fonte === 'portal' && policy.notificar(cfg, alerta);
+    alerta.notificar = (alerta.fonte === 'portal' || localComCanais(alerta)) && policy.notificar(cfg, alerta);
     alerta.fala = montarFala(alerta);
     ativos.set(chave, alerta);
     if (a.replay) {
@@ -1488,6 +1518,7 @@
 
     const silenciado = ts < (Number(cfg.silencioAte) || 0) || jaReconhecido;
     const oficial = alerta.fonte === 'portal';
+    const localAberto = localComCanais(alerta) && alerta.notificar;
     // Alarmes oficiais chegam pelo stream e não podem ser suprimidos pela proteção
     // de rajada destinada apenas aos cálculos locais e exemplos.
     let demais = false;
@@ -1495,14 +1526,14 @@
       if (ts - rajada.ts > 20000) rajada = { ts, voz: 0, aviso: false };
       demais = ++rajada.voz > Math.max(1, Number(cfg.maxPorCiclo) || 4);
     }
-    if (cfg.popup && (oficial || a.simulado)) mostrarToast(alerta, silenciado || demais);
+    if (cfg.popup && (oficial || localAberto || a.simulado)) mostrarToast(alerta, silenciado || demais);
     if (!silenciado && !demais) {
-      if ((oficial || a.simulado) && cfg.som) tocar(regra.severidade);
-      if (cfg.voz && (oficial || a.simulado || vozLocalSemPontoConfirmado) && (!alerta.repeticao || cfg.repetirVoz)) {
+      if ((oficial || localAberto || a.simulado) && cfg.som) tocar(regra.severidade);
+      if (cfg.voz && (oficial || localAberto || a.simulado || vozLocalSemPontoConfirmado) && (!alerta.repeticao || cfg.repetirVoz)) {
         falar(alerta.fala, { oficial });
       }
-      if ((oficial || a.simulado) && cfg.vibrar) vibrar(regra.severidade);
-      if (oficial) notificar(alerta);
+      if ((oficial || localAberto || a.simulado) && cfg.vibrar) vibrar(regra.severidade);
+      if (oficial || localAberto) notificar(alerta);
     }
     if (demais && rajada.aviso !== true && ts - rajada.ts < 5000) {
       rajada.aviso = true;
@@ -1704,8 +1735,16 @@
     }
   }
 
+  /* Exceção pedida pelo usuário: “Sem apontamento” (cálculo do app) usa todos os
+     canais, mas só enquanto o app está aberto — nunca passa pelo Web Push. */
+  function localComCanais(a) {
+    return !!a && a.fonte === 'app' && a.regra === 'semApontamento';
+  }
+  function canalSistema(a) {
+    return !!a && (a.fonte === 'portal' || localComCanais(a));
+  }
   function notificar(a) {
-    if (!a || a.fonte !== 'portal' || !a.notificar || !cfg.notificacao || typeof Notification === 'undefined') return;
+    if (!a || !canalSistema(a) || !a.notificar || !cfg.notificacao || typeof Notification === 'undefined') return;
     if (Notification.permission !== 'granted') return;
     const titulo = `${a.classe} ${a.numero} — ${a.nome}`;
     const opcoes = {
@@ -1720,7 +1759,7 @@
     // Android/PWA exige showNotification; new Notification pode lançar TypeError.
     if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
       navigator.serviceWorker.getRegistration().then((registro) => {
-        if (!cfg.ativo || a.fonte !== 'portal' || !a.notificar || !policy.notificar(cfg, a) || !cfg.notificacao) return;
+        if (!cfg.ativo || !canalSistema(a) || !a.notificar || !policy.notificar(cfg, a) || !cfg.notificacao) return;
         if (registro && registro.showNotification) return registro.showNotification(titulo, opcoes);
         notificarDesktop(titulo, opcoes, a);
       }).catch(() => notificarDesktop(titulo, opcoes, a));
@@ -1730,7 +1769,7 @@
   }
 
   function notificarDesktop(titulo, opcoes, a) {
-    if (!cfg.ativo || !a || a.fonte !== 'portal' || !a.notificar || !cfg.notificacao || !policy.notificar(cfg, a)) return;
+    if (!cfg.ativo || !a || !canalSistema(a) || !a.notificar || !cfg.notificacao || !policy.notificar(cfg, a)) return;
     try {
       const n = new Notification(titulo, opcoes);
       n.onclick = () => {
@@ -1895,6 +1934,7 @@
     <div class="grade">
       <label class="campo"><span>RPM máxima do motor</span><input id="cfg-rpm" type="number" min="0" step="10" inputmode="numeric"></label>
       <label class="campo"><span>Motor ocioso (min)</span><input id="cfg-ocioso" type="number" min="1" step="1" inputmode="numeric"></label>
+      <label class="campo"><span>Sem apontamento (min)</span><input id="cfg-sem-ponto" type="number" min="1" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Troca de turno (min)</span><input id="cfg-turno" type="number" min="1" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Repetir o mesmo alerta a cada (min)</span><input id="cfg-cooldown" type="number" min="0" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Máx. de alertas falados por ciclo</span><input id="cfg-maxvoz" type="number" min="1" step="1" inputmode="numeric"></label>
@@ -2297,6 +2337,7 @@
     turno: 'Troca de turno oficial e cálculo complementar, se ativado.',
     motorCondicao: 'Condições combinadas do motor; não são velocidade pura.',
     aguardandoCaminhao: 'Trator/transbordo com a operação Aguardando Caminhão. Informa a frente/grupo.',
+    semApontamento: 'Equipamento na operação SGPA “Sem Apontamento” por 5 min ou mais (sem alarme do portal). Fala e notifica só com o app aberto.',
     generico: 'Demais tipos oficiais, com o nome original do SGPA.',
   };
   let limiteTipos = 80;
@@ -2514,6 +2555,7 @@
     const valores = {
       'cfg-rpm': cfg.limiteRpm,
       'cfg-ocioso': cfg.minutosOcioso,
+      'cfg-sem-ponto': cfg.minutosSemApontamento,
       'cfg-turno': cfg.minutosTurno,
       'cfg-cooldown': cfg.cooldownMin,
       'cfg-maxvoz': cfg.maxPorCiclo,
@@ -2601,6 +2643,7 @@
       repetirVoz: $('cfg-repete').checked,
       limiteRpm: n('cfg-rpm', 2000),
       minutosOcioso: n('cfg-ocioso', 5),
+      minutosSemApontamento: n('cfg-sem-ponto', 5),
       minutosTurno: n('cfg-turno', 4),
       cooldownMin: n('cfg-cooldown', 10),
       maxPorCiclo: n('cfg-maxvoz', 4),
