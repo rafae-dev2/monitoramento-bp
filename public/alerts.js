@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.2.8';
+  const VERSAO = '1.2.9';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -1158,7 +1158,13 @@
     const st = marcar(e.id, 'aguardandoCaminhao', liga, ts, null);
     if (!liga && !st.firing) ativos.delete(st.chave);
     if (!liga) return;
-    if (!podeDisparar(st, ts)) return;
+    // Alarme imediato: a primeira leitura com 905 já dispara (ignora “leituras p/ confirmar”).
+    if (!st.emitido) { st.emitido = true; st.ultimo = ts; }
+    else {
+      const cd = Math.max(0, Number(cfg.cooldownMin) || 0) * 60000;
+      if (!cd || ts - st.ultimo < cd) return;
+      st.ultimo = ts;
+    }
     emitir({
       chave: st.chave,
       regra: 'aguardandoCaminhao',

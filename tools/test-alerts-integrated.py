@@ -186,11 +186,11 @@ with sync_playwright() as pw:
       ok(api.ativos().length===0, 'duas leituras negativas encerram espera sem equivaler carregamento');
       feed({...row,descOperacao:'Aguardando Caminhão'});
       ok(api.historico().length===wn+1, 'novo episódio de espera notifica novamente');
-      t.reset(); api.configurar({amostras:2});
-      feed({...row,descOperacao:'Aguardando Caminhão'});
-      ok(api.ativos().length===0,'espera respeita duas amostras positivas');
-      feed({...row,descOperacao:'Aguardando Caminhão'});
-      ok(api.ativos().length===1,'segunda amostra confirma espera');
+      t.reset(); api.configurar({amostras:3});
+      feed({...row,descOperacao:'905 - AGUARDANDO CAMINHAO'});
+      ok(api.ativos().length===1 && api.ativos()[0].regra==='aguardandoCaminhao','905 dispara na primeira leitura mesmo exigindo confirmações');
+      t.reset(); t.aplicarTelemetria([{...row,cdEquipamento:'COL-905',cdOperacao:905,descOperacao:'Aguardando Caminhão Colheita'}]); t.avaliarFrota(Date.now(),'lotes');
+      ok(api.ativos().some(x=>x.e.id==='COL-905' && x.regra==='aguardandoCaminhao'),'código 905 reconhecido pelo código da operação');
       t.reset(); api.configurar({calcularLocal:false});
       const leve = {...row,cdEquipamento:'LEVE-6614',descEquipamento:'6614 - VEICULO LEVE - IVECO',descTpEquipamento:'VEICULO LEVE',descGrupoEquipamento:'VEICULO LEVE',descOperacao:'953 - Sem Apontamento',vlVelocidade:0};
       feed(leve);

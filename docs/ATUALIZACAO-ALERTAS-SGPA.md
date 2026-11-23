@@ -145,3 +145,9 @@ Novo alerta calculado pelo app a partir da operação atual do SGPA (ex.: `953 -
 ## Versão 1.2.8 — Controle de refeições (23/11/2026)
 
 Nova seção “Controle de refeições” nas configurações da Central. Cada grupo/frente recebe um tempo (Não controlar, 30 min, 45 min, 1 hora, 1h30) e um campo por equipamento (`6614=30, 8833=60`; `=0` desliga) prevalece sobre o grupo. A refeição é detectada pela operação atual do SGPA contendo “Refeição” (ex.: `REFEIÇÃO`, `REFEIÇÃO (1 HORA)`, `REFEIÇÃO_TPL`), almoço ou jantar. Ao ultrapassar o limite, gera o alarme “Refeição excedida” com duração e limite, repetido conforme o cooldown; tem chavinha própria e usa fala/pop-up/som/notificação somente com o app aberto (não passa pelo Web Push). Grupos sem tempo configurado não são monitorados. Cache `bperes-shell-v25`. Testes: 25 Push fixture, 63 grupos integrados, sessão/UI.
+
+## 1.2.9 — Aguardando Caminhão (905) imediato
+
+- O apontamento `905 - Aguardando Caminhão` (por código `cdOperacao=905` ou descrição) gera o alarme na primeira leitura, sem esperar as leituras de confirmação.
+- Detecção ampliada para variações que começam com "Aguardando Caminhão".
+- Repetição segue o intervalo de repetição configurado. Cache `bperes-shell-v26`.

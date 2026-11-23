@@ -135,9 +135,11 @@
     if (!/(?:^|[^a-z0-9])(?:trator|transbordo)(?:$|[^a-z0-9])/.test(tipo)) return false;
 
     var operacao = e.operacao == null ? '' : String(e.operacao);
+    // Código 905 = Aguardando Caminhão no SGPA da unidade.
+    if (String(e.cdOperacao == null ? '' : e.cdOperacao).trim() === '905' || /^\s*905\s*-/.test(operacao)) return true;
     operacao = operacao.replace(/^\s*\d+\s*-\s*/, '');
     var normalized = norm(operacao);
-    return /^aguardando caminhao(?:\s+-\s+(?:hd|hr))?$/.test(normalized);
+    return /^aguardando caminhao\b/.test(normalized);
   }
 
   function semApontamento(e) {
