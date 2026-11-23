@@ -54,3 +54,6 @@ O usuário aceitou a detecção em segundo plano com polling de um minuto e auto
 [10]: https://www.w3.org/TR/push-api/ "W3C Push API"
 [11]: https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/ "Netlify credits and compute"
 [12]: https://docs.netlify.com/build/functions/usage-and-billing/ "Netlify Functions Usage and Billing"
+
+
+> **Atualização 23/11/2026 20:42 UTC:** o deploy `6b04a350a594bc37a6716375` (commit `a6bd5bb`) passou a servir `/api/push` com HTTP 200 e a chave VAPID pública correta. Os logs do cron mostraram `Push database RPC failed (401)`: a `SUPABASE_ANON_KEY` cadastrada estava truncada (um caractere a menos, `exp` inválido). A variável foi corrigida em Functions/Production com a chave anon oficial do projeto (validada por RPC read-only: `ok:true`, `hasSubscriptions:false`). Este commit gera o redeploy que aplica o valor corrigido; com zero inscrições o monitor termina em `no-subscriptions` sem consultar o SGPA. Envio Push real ainda não testado: começa quando um aparelho ativar o Push e aceitar a permissão.

@@ -56,3 +56,6 @@
 
 
 - [x] Preferências de alertas: incluir X acessível no topo para fechar e retornar o foco a um controle visível do app; dimensionar e rolar dentro da área visível. Central de alertas: impedir que os cartões encolham e escondam conteúdo; permitir rolagem, quebra de texto e adaptação dos controles em celular, tablet e computador. Verificado em 320×640, 412×915, 768×1024 e 1280×900 com CSS real e testes integrados.
+
+
+> **Atualização 23/11/2026 20:42 UTC:** o deploy `6b04a350a594bc37a6716375` (commit `a6bd5bb`) passou a servir `/api/push` com HTTP 200 e a chave VAPID pública correta. Os logs do cron mostraram `Push database RPC failed (401)`: a `SUPABASE_ANON_KEY` cadastrada estava truncada (um caractere a menos, `exp` inválido). A variável foi corrigida em Functions/Production com a chave anon oficial do projeto (validada por RPC read-only: `ok:true`, `hasSubscriptions:false`). Este commit gera o redeploy que aplica o valor corrigido; com zero inscrições o monitor termina em `no-subscriptions` sem consultar o SGPA. Envio Push real ainda não testado: começa quando um aparelho ativar o Push e aceitar a permissão.
