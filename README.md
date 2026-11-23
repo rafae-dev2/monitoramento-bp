@@ -351,76 +351,34 @@ O `pack.sh` já chama a auditoria no final; ele também descarta `node_modules`,
 
 ---
 
-## 13. Central de Alertas (velocidade, RPM, troca de turno, motor ocioso)
+## 13. Central de alertas SGPA (versão 1.2.0)
 
-Um sino **🔔** na barra superior abre a central. Ela vigia a frota que está no mapa e dispara,
-por equipamento e por regra, com **pop-up na tela, som e fala** (texto lido em voz alta), além de
-vibração no celular, notificação do sistema (se autorizada) e histórico exportável em CSV.
+O sino abre a central com todos os alarmes oficiais recebidos do SGPA, independentemente de haver aviso habilitado para o tipo. Nas configurações, chaves por categoria e por código de tipo permitem escolher quais devem gerar pop-up, som, fala, vibração e notificação do sistema. As chaves são persistidas automaticamente neste aparelho; desligá-las não apaga os eventos da central nem do histórico.
 
-### As quatro regras
+**Velocidade é exclusivamente oficial.** A telemetria não gera mais alarme local de velocidade, nem existe limiar genérico de 51 km/h na interface. O aplicativo avisa quando o SGPA emitir o alarme e a seleção permitir. RPM, troca de turno e motor ocioso mantêm cálculo complementar opcional com os parâmetros anteriores. Os tipos combinados 2697/2699 são apresentados como condição do motor, não como velocidade pura.
 
-| Regra | O que dispara | Padrão |
-|---|---|---|
-| **Velocidade excedida** | leitura de velocidade acima do limiar | ≥ 51 km/h (regra do tenant `VELOCIDADE_EXCEDIDA_50_VL`; há um limiar opcional de 23 km/h para canavieiro, desligado) |
-| **RPM máxima do motor** | rotação do motor acima do limiar, ou alarme oficial de RPM | ≥ 2 000 RPM no cálculo local; o limite certo por tipo de máquina chega pelo espelho oficial |
-| **Preso em troca de turno** | operação `925 - Troca de Turno - HR` por mais de N minutos | ≥ **4 min** (o portal usa 3 min); avisa quando está sem operador definido |
-| **Motor ocioso** | motor ligado, equipamento parado, rotação baixa por N minutos | ≥ 5 min com velocidade ≤ 1 km/h e RPM ≤ 900 |
+Tratores/transbordos na operação exata **Aguardando Caminhão** geram um alerta na mesma lista, incluindo equipamento e frente/grupo. O matcher aceita acentos, caixa, prefixo numérico e sufixos HD/HR, sem equivaler outras operações. Duas leituras negativas encerram o episódio. Esse rastreio continua ativo com o cálculo complementar desligado.
 
-Tudo isso é ajustável na tecla **Regras** (🔔 → ⚙): limiares, intervalo de leitura, tempo de
-cooldown, volume/velocidade da voz, frente/unidade e lista de equipamentos vigiados.
+A auditoria confirmou 2.972 tipos gerais, 38 regras e 39 expressões; 13 expressões têm condição de velocidade. O catálogo geral não significa que todos esses tipos estejam configurados para a unidade. A busca de tipos e o inventário das 39 expressões estão nas configurações. Veja [auditoria e comportamento detalhado](docs/ATUALIZACAO-ALERTAS-SGPA.md), `public/sgpa-alert-catalog.json` e `docs/AUDITORIA-ALERTAS-SGPA.json`. Os arquivos são sanitizados, sem equipamentos individuais, operadores ou tokens.
 
-### De onde vêm os dados
+### Fontes e fala
 
-| Fonte | Uso |
-|---|---|
-| `POST api-usa…/monitoramento/v2/subscribe-live` (NDJSON, Web Worker) | **tempo real**: operação, operador, estado, direção, alarme — push do servidor, sem ficar perguntando |
-| `GET api-br…/estatistica/monitoramento` | **velocidade e RPM** (só esta rota entrega), frente, tipo |
-| `GET api-br…/alarmeOnline?ativo=true` | **espelho oficial**: o que o próprio portal já considera alarme (todo tipo de máquina tem limite de RPM diferente; aqui é o valor do fabricante) |
-| `GET api-br…/alarmeTempoEquipamento` | duração que o servidor já conta (semente para as regras de tempo) |
+O Web Worker recebe mudanças do stream `subscribe-live`. A consulta oficial `/alarmeOnline?ativo=true` e a telemetria `/estatistica/monitoramento` ocorrem a cada 45 segundos por padrão, de forma independente: falha de uma não impede a outra. `/alarmeTempoEquipamento` complementa a duração. A deduplicação oficial usa equipamento + tipo, unindo stream e REST da mesma ocorrência sem suprimir tipos diferentes.
 
-O motor cruza as três fontes, mantém um estado por equipamento/regra com **histerese** (duas
-leituras contrárias para encerrar o episódio) e **cooldown** (10 min por equipamento+regra) para o
-mesmo evento não falar dez vezes. Ao abrir o app, quando dezenas de condições já estão montadas,
-só os `maxPorCiclo` (4) primeiros falam — o resto entra na lista silenciosamente.
+O identificador é falado algarismo por algarismo, mas velocidade, RPM e minutos continuam valores normais:
 
-**Respeito ao servidor:** a API da Solinftec limita 10 requisições por minuto por IP (medido).
-O ciclo padrão é de 45 s, com rodízio das rotas pesadas, e nada de escrever no portal — a central
-**lê** e alerta; justificar alarme continua sendo ato humano no sistema oficial.
+> Veículo oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.
 
-### A fala
+Sem medição oficial válida, informa o alarme sem inventar km/h. O navegador usa voz disponível em português; o APK usa a ponte AndroidTTS existente. Notificações móveis do PWA usam `serviceWorker.showNotification` quando há permissão. Não há Web Push/coleta autônoma: navegador/aplicativo deve estar em execução e o sistema pode suspendê-lo em segundo plano.
 
-Formato pedido (e gerado com dados reais no teste):
+### Histórico e validação
 
-> "Veículo 8833, operador Gilmar Pereira Rodrigues, excedeu a velocidade: 71 quilômetros por hora,
-> limite 51 quilômetros por hora. Verificar."
+Eventos reais continuam usando a auditoria `pwa_alertas` do Supabase e o histórico local exportável em CSV. Exemplos de teste não são enviados ao banco nem alteram a frota consolidada. Nenhuma regra/justificativa do SGPA ou esquema do banco foi alterado.
 
-No navegador usa `speechSynthesis` (se houver voz pt-BR instalada); no **APK** usa o motor de voz
-do Android pela ponte `window.AndroidTTS` (`falar/parar/vibrar`), porque o WebView não implementa
-`speechSynthesis`. Sem voz nenhuma disponível, o som de campainha e o pop-up continuam funcionando.
+`node tools/test-alerts-policy.cjs` e `python3 tools/test-alerts-integrated.py` validam o comportamento com fixtures isoladas, rede de produção bloqueada e zero escrita de produção. O teste integrado cobre 26 grupos, inclusive seleção, fala, deduplicação, desligamento do stream, espera, persistência e layout móvel. O retrato de produção auditado não tinha equipamento em Aguardando Caminhão nem alarme oficial de velocidade ativo; portanto não se afirma validação ao vivo desses disparos. O teste antigo `tools/teste-alertas.py` documenta a fase anterior e não é evidência da política nova.
 
-### Auditoria
+O APK 1.2 existente aponta para o PWA e aproveita a atualização web, sem novo APK nesta etapa. O casco de cache passa a `bperes-shell-v15`.
 
-Cada disparo pode ser gravado no Supabase (`pwa_alertas`, ver `supabase/schema.sql`) — a Function
-recebe em lote a cada 20 s, com pausa em caso de 429. Além do banco, a central exporta CSV do
-histórico do aparelho, com equipamento, operador, valor lido, limiar, fonte e a frase falada.
-
-### Como foi validado
-
-`tools/teste-alertas.py` (Playwright + Chromium, contra o emulador local e a conta real):
-
-- primeiro ciclo com a frota real: 9–10 alertas, entre eles 8833 a 71 km/h, 32271 a 2.155 RPM e
-  6606 com motor ocioso pelo espelho oficial;
-- com limiares de demonstração, **as quatro regras** dispararam juntas
-  (ocioso 17 · velocidade 12 · rpm 32 · turno 5) sobre ~155 equipamentos vigiados;
-- stream ao vivo conectado (35–49 quadros em 16 s), zero requisições com erro, zero 429;
-- evidências em `docs/out/` (`alerta-desktop-*.png`, `alerta-celular-*.png`, relatórios `.txt`).
-
-### APK 1.2
-
-O aplicativo Android agora aponta para este PWA (que por sua vez abre o mapa do portal), então o
-alerta com voz funciona dentro do app instalado. ponte: `MainActivity.PonteVoz` →
-`android.speech.tts.TextToSpeech` em pt-BR + vibração (`permission VIBRATE`). Para usar o portal
-puro sem a central, basta trocar `HOME_URL` no `MainActivity.java`.
 ---
 
 ## 14. Estrutura do repositório
@@ -428,7 +386,9 @@ puro sem a central, basta trocar `HOME_URL` no `MainActivity.java`.
 ```
 public/                     PWA (casca do app + central de alertas)
   index.html · app.js       barra, iframe do mapa, sessão automática
-  alerts.js                 motor de regras (velocidade, RPM, troca de turno, motor ocioso)
+  alerts.js                 motor, central e seleção de alarmes oficiais
+  alerts-policy.js          política pura de seleção, fala e espera por caminhão
+  sgpa-alert-catalog.json    catálogo e inventário sanitizado das regras SGPA
   alerts-stream.js          Web Worker do stream NDJSON subscribe-live
   alerts.css · local.js     visual da central · modo local (login no navegador)
 netlify/functions/          session.mjs — login, props, proxy de dados, auditoria em lote

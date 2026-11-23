@@ -102,7 +102,7 @@
         <div class="sheet">
           <h3>Opções</h3>
           <button data-act="alertas">🔔 Central de alertas</button>
-          <button data-act="regras">🎯 Regras e limiares dos alertas</button>
+          <button data-act="regras">Preferências de alertas</button>
           <button data-act="teste">🗣️ Testar pop-up e voz</button>
           <button data-act="reload">Recarregar o mapa</button>
           <button data-act="portal">Abrir a tela oficial do portal (nova aba)</button>
@@ -128,10 +128,10 @@
           </p>
           <p id="about-meta" class="fine"></p>
           <p class="fine">
-            A Central de Alertas vigia a telemetria oficial do portal e avisa, com pop-up e voz, quando
-            um equipamento <b>excede a velocidade</b>, atinge a <b>RPM máxima do motor</b>, fica
-            <b>em troca de turno além do limite</b> ou fica com <b>motor ocioso</b>. Os limites ficam no
-            ⚙ → Regras e limiares.
+            A Central de Alertas recebe os <b>alarmes oficiais do SGPA</b>. Velocidade só é avisada
+            quando o portal emitir o alarme. Tratores e transbordos em <b>Aguardando Caminhão</b>
+            também aparecem com sua frente/grupo. Escolha categorias e tipos individuais em
+            ⚙ → Preferências de alertas. Desligar avisos não apaga a central nem o histórico.
           </p>
           <button data-act="close-about" class="primary">Entendi</button>
         </div>
@@ -139,6 +139,7 @@
     </main>
 
     <script src="/local.js"></script>
+    <script src="/alerts-policy.js"></script>
     <script src="/alerts.js"></script>
     <script src="/app.js"></script>
   </body>

@@ -2,13 +2,15 @@
  * Só cacheamos o casco do app (HTML/CSS/JS/ícones). Sessão e dados do portal
  * passam sempre pela rede e NUNCA entram no cache.
  */
-const SHELL = 'bperes-shell-v14';
+const SHELL = 'bperes-shell-v15';
 const ASSETS = [
   '/',
   '/index.html',
   '/app.js',
   '/local.js',
   '/styles.css',
+  '/alerts-policy.js',
+  '/sgpa-alert-catalog.json',
   '/alerts.js',
   '/alerts.css',
   '/alerts-stream.js',
@@ -66,4 +68,19 @@ self.addEventListener('fetch', (e) => {
   }
 
   e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request)));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const dados = e.notification.data || {};
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (lista) => {
+    const origem = self.location.origin;
+    const app = lista.find((c) => new URL(c.url).origin === origem);
+    if (app) {
+      await app.focus();
+      app.postMessage({ type: 'alerta-notificacao', equipamento: dados.equipamento });
+      return;
+    }
+    return self.clients.openWindow('/');
+  }));
 });

@@ -13,10 +13,10 @@
  *      disparou, com valor medido) e GET {sgpa}/alarmeTempoEquipamento (há quanto
  *      tempo o alarme está ativo, no relógio do servidor).
  *
- * As regras (velocidade excedida, RPM máxima do motor, preso em troca de turno,
- * motor ocioso) são avaliadas AQUI, no aparelho, com histerese: se a regra
- * oficial do portal atrasar ou falhar — queixa do usuário —, o alerta sai mesmo
- * assim. O alerta oficial também é espelhado, para não perder nada.
+ * Velocidade é exclusivamente o alarme oficial do SGPA, sem limiar local.
+ * RPM, troca de turno e ociosidade mantêm cálculo local opcional. A operação
+ * Aguardando Caminhão em tratores/transbordos é rastreada na telemetria.
+ * Todos os tipos oficiais entram na central; preferências filtram só os avisos.
  *
  * Saída: pop-up na tela, som, voz em português (Web Speech API; no APK do Android
  * usa a ponte nativa AndroidTTS), notificação do sistema, vibração e histórico
@@ -29,7 +29,8 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.1.0';
+  const VERSAO = '1.2.0';
+  const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
   const KEY_ACK = 'bperes.alertas.ack.v2';
@@ -46,8 +47,8 @@
     2685: 'velocidade', // Velocidade máxima
     1641: 'velocidade', // VELOCIDADE EM DESLOCAMENTO
     10820: 'velocidade', // Controle_Vel_Canavieiro
-    2697: 'velocidade',
-    2699: 'velocidade',
+    2697: 'motorCondicao', // condição combinada: não interpretar valor como km/h
+    2699: 'motorCondicao',
     4: 'rpm', // RPM MAXIMA MOTOR
     6: 'rpm', // RPM MOTOR EM PARADA
     8: 'rpm', // RPM MOTOR EM MANOBRA
@@ -63,6 +64,8 @@
     rpm: { id: 'rpm', nome: 'RPM máxima do motor', icone: '⚙️', cor: '#ff8f3f', severidade: 3 },
     turno: { id: 'turno', nome: 'Preso em troca de turno', icone: '⏱️', cor: '#f0cc0c', severidade: 2 },
     ocioso: { id: 'ocioso', nome: 'Motor ocioso', icone: '🔌', cor: '#4aa3ff', severidade: 2 },
+    motorCondicao: { id: 'motorCondicao', nome: 'Motor ligado — condição combinada', icone: 'M', cor: '#c6a0e8', severidade: 2 },
+    aguardandoCaminhao: { id: 'aguardandoCaminhao', nome: 'Aguardando caminhão', icone: 'T', cor: '#e9b457', severidade: 2 },
     generico: { id: 'generico', nome: 'Alarme do portal', icone: '⚠️', cor: '#93a4b3', severidade: 1 },
   };
 
@@ -80,7 +83,9 @@
     minutosTurno: 4, // pedido do usuário (o portal usa 3)
     maxAtrasoMin: 20, // ignorar equipamento sem sinal há mais que isso
     espelharServidor: true,
-    incluirOutros: false, // alarmes oficiais de outros tipos (SEM CONEXÃO, IMPL. OCIOSO…) ficam fora
+    incluirOutros: true, // novas instalações notificam todos; valor legado é preservado
+    notificarCategorias: {},
+    tiposNotificacao: {},
     calcularLocal: true,
     usarStream: true,
     frentes: [],
@@ -103,7 +108,7 @@
   /* estado                                                             */
   /* ------------------------------------------------------------------ */
 
-  let cfg = carregar(KEY_CFG, PADRAO);
+  let cfg = policy.normalizeCfg(carregar(KEY_CFG, PADRAO));
   let hist = carregar(KEY_HIST, []);
   let acks = carregar(KEY_ACK, {});
   let ctx = { selecao: new Set(), props: null };
@@ -118,6 +123,9 @@
   const estados = new Map(); // "equipamento|regra" => máquina de estados
   const ativos = new Map(); // chave => alerta exibido
   let el = {};
+  let catalogo = { tipos: [], expressoes: [], regras: [] };
+  let carregandoCatalogo = null;
+  let atualizandoCatalogo = false;
 
   const estado = {
     ligado: false,
@@ -136,7 +144,9 @@
     try {
       const bruto = localStorage.getItem(chave);
       if (!bruto) return JSON.parse(JSON.stringify(padrao));
-      return JSON.parse(JSON.stringify(Object.assign({}, padrao, JSON.parse(bruto))));
+      const salvo = JSON.parse(bruto);
+      if (Array.isArray(padrao)) return Array.isArray(salvo) ? salvo : [];
+      return JSON.parse(JSON.stringify(Object.assign({}, padrao, salvo && typeof salvo === 'object' ? salvo : {})));
     } catch {
       return JSON.parse(JSON.stringify(padrao));
     }
@@ -332,8 +342,8 @@
 
   function abrirStream() {
     fecharStream();
-    if (!cfg.usarStream || typeof Worker === 'undefined' || !ctx.token) {
-      estado.stream = cfg.usarStream ? 'indisponível' : 'desligado';
+    if (!cfg.ativo || !cfg.usarStream || typeof Worker === 'undefined' || !ctx.token) {
+      estado.stream = !cfg.ativo || !cfg.usarStream ? 'desligado' : 'indisponível';
       renderCabecalho();
       return;
     }
@@ -391,6 +401,7 @@
   }
 
   function processarQuadros(itens) {
+    if (!cfg.ativo) return;
     const lista = Array.isArray(itens) ? itens : [];
     for (const q of lista) {
       if (!q || !q.cdEquipamento) continue;
@@ -400,7 +411,7 @@
       }
       const e = mesclar(String(q.cdEquipamento));
       e.frente = q.descFrente || e.frente;
-      if (q.cdOperacao !== undefined && q.cdOperacao !== null) {
+      if (q.descOperacao !== undefined || (q.cdOperacao !== undefined && q.cdOperacao !== null)) {
         const novaOperacao = String(q.descOperacao || q.cdOperacao || '');
         if (norm(novaOperacao) !== norm(e.operacao)) {
           e.operacaoTs = agora(); // acabou de entrar nesta operação
@@ -428,40 +439,51 @@
       if (ts) e.tsEquipamento = ts;
       e.vistoEm = agora();
       if (!e.fonte) e.fonte = 'stream';
+      if (q.descTpEquipamento) e.tipo = q.descTpEquipamento;
+      if (q.descOperacao !== undefined && dentroDoEscopo(e)) regraAguardandoCaminhao(e, agora());
     }
     estado.quadros += lista.length;
   }
 
   /* quadro de alarme do stream: é o que desenha o halo pulsante no mapa */
   function quadroAlarme(q) {
-    let regra = MAPA_ALARME[q.cdTpAlarme];
-    if (!regra) {
-      if (!cfg.incluirOutros) return;
-      regra = 'generico';
+    if (!cfg.ativo || !cfg.espelharServidor) return;
+    const codigo = String(q.cdTpAlarme || 'desconhecido');
+    if (alarmeFechado(q.fgOnline)) {
+      fecharOficial(String(q.cdEquipamento), codigo);
+      return;
     }
     const e = mesclar(String(q.cdEquipamento));
     e.alarmeOficial = q.descAlarme || e.alarmeOficial;
-    if (q.fgOnline === false || q.fgOnline === 0) {
-      e.alarmeOnline = false;
-      return;
-    }
     e.alarmeOnline = true;
-    e.tsAlarme = agora();
-    emitirAlarmeOficial(
-      {
-        cdEquipamento: q.cdEquipamento,
-        descEquipamento: q.descEquipamento || e.nome,
-        descTpAlarme: q.descAlarme || q.descTpAlarme,
-        cdTpAlarme: q.cdTpAlarme,
-        nomeOperador: q.descOperador || e.operadorBruto,
-        descOperacao: q.descOperacao || e.operacao,
-        descGrupoEquipamento: q.descFrente || e.frente,
-        vlAlarme: q.vlPeso != null ? q.vlPeso : q.vlAlarme,
-        dtHrLocal: dataHorario(q.dtHrLocal),
-      },
-      regra,
-      'mapa',
-    );
+    emitirAlarmeOficial({
+      cdEquipamento: q.cdEquipamento,
+      cdId: q.cdId,
+      descEquipamento: q.descEquipamento,
+      descTpAlarme: q.descAlarme || q.descTpAlarme,
+      cdTpAlarme: q.cdTpAlarme,
+      nomeOperador: q.descOperador || e.operadorBruto,
+      descOperacao: q.descOperacao || e.operacao,
+      descGrupoEquipamento: q.descFrente || e.frente,
+      // vlPeso é peso, não velocidade. Sem medição explícita, não inventar km/h.
+      vlAlarme: q.vlAlarme,
+      vlAlarmeMaximoAtingido: q.vlAlarmeMaximoAtingido,
+      dtHrLocal: dataHorario(q.dtHrLocal),
+    }, policy.categoria(q.cdTpAlarme, q.descAlarme || q.descTpAlarme), 'mapa');
+  }
+
+  function alarmeFechado(flag) {
+    return flag === false || flag === 0 || /^(false|f|0)$/i.test(String(flag));
+  }
+
+  function fecharOficial(id, codigo) {
+    const chave = id + '|sgpa:' + codigo;
+    const st = estados.get(chave);
+    if (st && st.ocorrencia) {
+      st.ocorrenciasEncerradas = [...new Set([...(st.ocorrenciasEncerradas || []), st.ocorrencia])].slice(-20);
+    }
+    if (st) Object.assign(st, { firing: false, consec: 0, emitido: false, negados: 0 });
+    ativos.delete(chave);
   }
 
   /* ------------------------------------------------------------------ */
@@ -514,10 +536,11 @@
       e.nome = p.nome || e.nome;
       e.numero = p.numero;
       e.tipo = row.descTpEquipamento || e.tipo;
+      e.tipoCompleto = row.descFullTpEquipamento || e.tipoCompleto;
       e.frente = row.descGrupoEquipamento || e.frente;
-      if (row.descOperacao && norm(row.descOperacao) !== norm(e.operacao)) {
+      if (row.descOperacao !== undefined && norm(row.descOperacao) !== norm(e.operacao)) {
         e.operacaoTs = agora();
-        e.operacao = String(row.descOperacao);
+        e.operacao = String(row.descOperacao || '');
       }
       e.cdOperacao = String(row.cdOperacao || e.cdOperacao || '');
       e.estadoTxt = row.descEstado || e.estadoTxt;
@@ -598,30 +621,32 @@
     const ts = agora();
     let pegou = false;
     try {
-      if (cfg.calcularLocal) {
-        const t = await chamar(rotaTelemetria());
-        if (Array.isArray(t)) {
-          aplicarTelemetria(t);
-          pegou = true;
-        }
+      // Telemetria e espelho independentes: falha de uma fonte não bloqueia a outra.
+      const resultados = await Promise.allSettled([
+        chamar(rotaTelemetria()),
+        cfg.espelharServidor ? chamar(rotaAlarmes()) : Promise.resolve(null),
+      ]);
+      if (!cfg.ativo) return;
+      let telemetriaNova = false;
+      if (resultados[0].status === 'fulfilled' && Array.isArray(resultados[0].value)) {
+        aplicarTelemetria(resultados[0].value);
+        telemetriaNova = true;
+        pegou = true;
       }
-      // rodízio: o stream já traz o alarme na hora; o espelho varre a cada 3 ciclos
-      if (cfg.espelharServidor && nCiclo % 3 === 1) {
-        const a = await chamar(rotaAlarmes()).catch(() => null);
-        if (Array.isArray(a)) {
-          espelharAlarmes(a);
-          pegou = true;
-        }
+      if (cfg.espelharServidor && resultados[1].status === 'fulfilled' && Array.isArray(resultados[1].value)) {
+        espelharAlarmes(resultados[1].value);
+        pegou = true;
       }
+      if (!pegou) throw new Error('sem resposta das fontes SGPA');
       if (cfg.espelharServidor && nCiclo % 3 === 2) {
         const d = await chamar(rotaTempos()).catch(() => null);
-        if (Array.isArray(d)) aplicarTempos(d);
+        if (cfg.ativo && Array.isArray(d)) aplicarTempos(d);
       }
       estado.erros = 0;
       estado.backoff = 0;
       estado.ultimoCiclo = ts;
-      estado.fonte = pegou ? (cfg.calcularLocal ? 'telemetria + portal' : 'portal') : 'sem dados';
-      avaliarFrota(ts, 'lotes');
+      estado.fonte = telemetriaNova ? 'telemetria + SGPA oficial' : 'SGPA oficial';
+      avaliarFrota(ts, telemetriaNova ? 'lotes' : 'tempo');
       purarResolvidos(ts);
     } catch (e) {
       estado.erros++;
@@ -705,22 +730,18 @@
   }
 
   function aplicarTempos(itens) {
+    if (!cfg.ativo || !cfg.espelharServidor) return;
     for (const t of itens || []) {
-      const id = String(t.cdEquipamento || '');
-      const regra = MAPA_ALARME[t.cdTpAlarme];
-      if (!id || !regra) continue;
-      const st = estados.get(id + '|' + regra) || marcar(id, regra, true, agora(), null);
+      const chave = String(t.cdEquipamento || '') + '|sgpa:' + String(t.cdTpAlarme || 'desconhecido');
+      const st = estados.get(chave);
+      if (!st) continue; // duração não é uma ocorrência de alarme
       const m = String(t.tempo || '').match(/(\d{1,3}):(\d{2}):(\d{2})/);
       if (m) st.duracaoServidor = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
     }
   }
 
-  /* ------------------------------------------------------------------ */
-  /* as 4 regras pedidas                                                */
-  /* ------------------------------------------------------------------ */
+  /* Regras locais opcionais e rastreio operacional; velocidade é só SGPA. */
 
-  /* modo='lotes' (depois de uma leitura nova) avalia tudo;
-     modo='tempo' (relógio de 1 s) só as regras de duração — é o tempo que muda entre leituras. */
   function avaliarFrota(ts, modo) {
     const lotes = modo !== 'tempo';
     let cont = 0;
@@ -728,8 +749,8 @@
       if (!dentroDoEscopo(e)) continue;
       cont++;
       if (lotes) {
-        regraVelocidade(e, ts);
         regraRpm(e, ts);
+        regraAguardandoCaminhao(e, ts);
       }
       regraTurno(e, ts);
       regraOcioso(e, ts);
@@ -737,23 +758,18 @@
     estado.monitorados = cont;
   }
 
-  function regraVelocidade(e, ts) {
-    if (!cfg.calcularLocal || e.velocidade === null) return;
-    const canav = num(cfg.limiteVelocidadeCanavieiro);
-    const ehCanavieiro = /caminhao|canavieiro/.test(norm(e.tipo) + ' ' + norm(e.frente));
-    const limite = canav > 0 && ehCanavieiro ? canav : num(cfg.limiteVelocidade);
-    if (limite <= 0) return;
-    const st = marcar(e.id, 'velocidade', e.velocidade >= limite, ts, e.velocidade);
+  function regraAguardandoCaminhao(e, ts) {
+    const liga = policy.aguardandoCaminhao(e);
+    const st = marcar(e.id, 'aguardandoCaminhao', liga, ts, null);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!liga) return;
     if (!podeDisparar(st, ts)) return;
-    const v = Math.round(e.velocidade);
     emitir({
       chave: st.chave,
-      regra: 'velocidade',
+      regra: 'aguardandoCaminhao',
       e,
-      valor: v,
-      limite: Math.round(limite),
-      texto: `excedeu a velocidade: ${v} km/h, limite ${Math.round(limite)} km/h`,
-      detalhe: `${e.nome} · ${e.frente || 'sem frente'} · operação ${e.operacao || '—'} · estado ${e.estadoTxt || '—'}`,
+      texto: `aguardando caminhão · frente/grupo: ${e.frente || 'não informada'}`,
+      detalhe: `Rastreio operacional SGPA · ${e.tipo || 'trator/transbordo'} · operação ${e.operacao || '—'}`,
       inicio: st.since,
     });
   }
@@ -838,18 +854,26 @@
   /* ------------------------------------------------------------------ */
 
   function espelharAlarmes(itens) {
+    if (!cfg.ativo || !cfg.espelharServidor) return;
+    const vistos = new Set();
     for (const a of itens || []) {
-      if (a.fgOnline === false) continue;
-      let regra = MAPA_ALARME[a.cdTpAlarme];
-      if (!regra) {
-        if (!cfg.incluirOutros) continue;
-        regra = 'generico';
-      }
-      emitirAlarmeOficial(a, regra, 'portal');
+      const id = String(a.cdEquipamento || '');
+      const codigo = String(a.cdTpAlarme || 'desconhecido');
+      if (!id) continue;
+      if (alarmeFechado(a.fgOnline)) { fecharOficial(id, codigo); continue; }
+      vistos.add(id + '|sgpa:' + codigo);
+      emitirAlarmeOficial(a, policy.categoria(a.cdTpAlarme, a.descTpAlarme || a.descAlarme), 'portal');
+    }
+    // Só um snapshot oficial completo pode fechar tipos oficiais ausentes.
+    for (const [chave, st] of estados) {
+      if (!chave.includes('|sgpa:') || vistos.has(chave)) continue;
+      marcar(st.id, st.regra, false, agora(), null);
+      if (!st.firing) fecharOficial(st.id, st.regra.replace(/^sgpa:/, ''));
     }
   }
 
   function emitirAlarmeOficial(a, regra, via) {
+    if (!cfg.ativo || !cfg.espelharServidor) return;
     const id = String(a.cdEquipamento || '');
     if (!id) return;
     const e = mesclar(id);
@@ -866,41 +890,58 @@
     if (a.descOperacao) e.operacao = String(a.descOperacao);
     if (!dentroDoEscopo(e)) return;
 
-    const chave = id + '|' + regra;
-    const st = estados.get(chave) || marcar(id, regra, true, agora(), null);
-    if (!st.firing) {
-      st.firing = true;
-      if (!st.since) st.since = agora();
-      st.consec = 1;
-    } else {
-      st.consec = Math.max(1, st.consec);
+    const codigo = String(a.cdTpAlarme || 'desconhecido');
+    const nomeAlarme = a.descTpAlarme || a.descAlarme || nomeTipo(codigo);
+    registrarTipo(codigo, nomeAlarme);
+    const chave = id + '|sgpa:' + codigo;
+    const st = marcar(id, 'sgpa:' + codigo, true, agora(), null);
+    // Diferentes tipos são independentes. Stream e REST da mesma ocorrência se unem.
+    if (a.cdId && st.ocorrencia && String(a.cdId) !== st.ocorrencia) {
+      st.emitido = false;
+      st.since = agora();
+      ativos.delete(chave);
+      delete acks[chave];
     }
-    if (!podeDisparar(st, agora())) return;
-
-    const valor = a.vlAlarme != null ? a.vlAlarme : a.vlAlarmeMaximoAtingido;
-    const nomeAlarme = a.descTpAlarme || a.descAlarme || '';
+    if (a.cdId) st.ocorrencia = String(a.cdId);
+    st.consec = Math.max(st.consec, Math.max(1, cfg.amostras)); // SGPA já confirmou o alarme
+    const replay = st.ocorrencia && (st.ocorrenciasEncerradas || []).includes(st.ocorrencia);
+    const bruto = a.vlAlarme != null && a.vlAlarme !== '' ? a.vlAlarme : a.vlAlarmeMaximoAtingido;
+    const convertido = typeof bruto === 'number' ? bruto : Number(String(bruto == null ? '' : bruto).replace(',', '.'));
+    const valor = bruto != null && bruto !== '' && Number.isFinite(convertido) && convertido >= 0 ? convertido : null;
     let texto;
     if (regra === 'velocidade') {
-      texto = valor ? `velocidade excedida (${Math.round(num(valor))} km/h, alarme oficial do portal)` : 'velocidade excedida (alarme oficial do portal)';
+      texto = valor !== null ? `excedeu a velocidade a ${Math.round(valor)} km/h (alarme oficial do portal)` : 'velocidade excedida (alarme oficial do portal; medição não informada)';
     } else if (regra === 'rpm') {
-      texto = valor ? `RPM máxima do motor (${milhar(num(valor))} RPM, alarme oficial do portal)` : 'RPM máxima do motor (alarme oficial do portal)';
+      texto = valor !== null ? `RPM do motor: ${milhar(valor)} RPM (alarme oficial do portal)` : 'alarme de RPM do motor (alarme oficial do portal)';
     } else if (regra === 'turno') {
       texto = 'tempo excedido em troca de turno (alarme oficial do portal)';
     } else if (regra === 'ocioso') {
       texto = 'motor ocioso (alarme oficial do portal)';
     } else {
-      texto = `alarme ${nomeAlarme || 'não classificado'} (portal)`;
+      texto = `${nomeAlarme || 'alarme não classificado'} (alarme oficial do portal)`;
     }
-    emitir({
-      chave,
-      regra,
-      e,
-      valor: num(valor) || null,
+    const alerta = {
+      chave, regra, e, valor, tipoAlarme: codigo, nomeAlarme,
       texto,
-      detalhe: `Alarme oficial · tipo ${a.cdTpAlarme || '—'} ${nomeAlarme} · via ${via} · operação ${e.operacao || '—'}${a.cdId ? ' · código ' + a.cdId : ''}`,
-      inicio: dataArray(a.dtHrLocal) || (typeof a.dtHrLocal === 'number' ? a.dtHrLocal : agora()),
+      detalhe: `Alarme oficial · tipo ${codigo} ${nomeAlarme} · via ${via} · frente/grupo ${e.frente || 'não informado'} · operação ${e.operacao || '—'}`,
+      inicio: dataArray(a.dtHrLocal) || (typeof a.dtHrLocal === 'number' ? a.dtHrLocal : st.since),
       servidor: true,
-    });
+    };
+    if (replay) {
+      st.emitido = true;
+      emitir(Object.assign(alerta, { replay: true }));
+      return;
+    }
+    if (podeDisparar(st, agora())) emitir(alerta);
+    else {
+      // Melhor medição no REST atualiza a central sem segunda fala/histórico/INSERT.
+      const anterior = ativos.get(chave);
+      if (anterior) {
+        const medida = valor !== null ? { valor, texto } : {};
+        Object.assign(anterior, medida, { detalhe: alerta.detalhe, e, numero: e.numero, nomeAlarme });
+        anterior.fala = montarFala(anterior);
+      }
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -908,6 +949,7 @@
   /* ------------------------------------------------------------------ */
 
   function emitir(a) {
+    if (!cfg.ativo && !a.simulado) return;
     const ts = agora();
     const regra = REGRAS[a.regra] || REGRAS.generico;
     const chave = a.chave || `${a.e.id}|${a.regra}`;
@@ -920,7 +962,9 @@
       ts,
       inicio: a.inicio || ts,
       regra: a.regra,
-      nome: regra.nome,
+      nome: a.nomeAlarme || regra.nome,
+      tipoAlarme: a.tipoAlarme || null,
+      nomeAlarme: a.nomeAlarme || '',
       cor: regra.cor,
       icone: regra.icone,
       severidade: regra.severidade,
@@ -938,13 +982,23 @@
       contagem: (prev && prev.contagem ? prev.contagem : 0) + 1,
       repeticao: !!prev,
     };
+    alerta.notificar = policy.notificar(cfg, alerta);
     alerta.fala = montarFala(alerta);
     ativos.set(chave, alerta);
+    if (a.replay) {
+      renderAtivos();
+      renderCabecalho();
+      return;
+    }
 
     hist.unshift({
       ts,
       chave,
       regra: alerta.regra,
+      tipoAlarme: alerta.tipoAlarme,
+      nomeAlarme: alerta.nomeAlarme,
+      frente: alerta.e.frente || '',
+      notificacaoSelecionada: alerta.notificar,
       equipamento: alerta.numero,
       descricao: alerta.descricao,
       operador: alerta.operador,
@@ -958,7 +1012,12 @@
     });
     if (hist.length > MAX_HIST) hist.length = MAX_HIST;
     salvar(KEY_HIST, hist);
-    registrarNoServidor(alerta);
+    if (!a.simulado) registrarNoServidor(alerta);
+    if (!alerta.notificar && !a.simulado) {
+      renderAtivos();
+      renderCabecalho();
+      return; // só central/histórico: não consome rajada nem entrega canais
+    }
 
     const silenciado = ts < (Number(cfg.silencioAte) || 0) || jaReconhecido;
     // rajada: ao abrir o app podem nascer dezenas de alertas de uma vez — só os
@@ -984,26 +1043,7 @@
 
   /* "Veículo 8833, operador Rafael, excedeu a velocidade. Verificar." */
   function montarFala(a) {
-    const partes = [`${a.classe} ${String(a.numero).replace(/\D/g, '')}`];
-    if (a.operador) partes.push(`operador ${a.operador}`);
-    else partes.push('sem operador definido');
-    const oficial = /alarme oficial/.test(String(a.texto));
-    let msg = String(a.texto)
-      .replace(/ ?\(alarme oficial do portal\)/gi, '')
-      .replace(/\(alarme oficial do portal\)/gi, '')
-      .replace(/ ?alarme oficial do portal/gi, '')
-      .replace(/\(([^)]*)\)/g, '$1')
-      .replace(/RPM do motor no máximo:/, 'rotação do motor no máximo:')
-      .replace(/RPM máxima do motor \(/, 'rotação máxima do motor (')
-      .replace(/RPM máxima do motor/, 'rotação máxima do motor')
-      .replace(/km\/h/g, 'quilômetros por hora')
-      .replace(/RPM/g, 'rotações por minuto')
-      .replace(/—/g, ',')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
-    partes.push(msg.replace(/,\s*(?=,|$)/g, '').replace(/\s{2,}/g, ' ').trim());
-    if (oficial) partes.push('conforme o alarme oficial do portal');
-    return partes.join(', ').replace(/,\s*$/, '') + '. Verificar.';
+    return policy.montarFala(a);
   }
 
   /* --------------------------- voz (TTS) --------------------------- */
@@ -1153,15 +1193,32 @@
   function notificar(a) {
     if (!cfg.notificacao || typeof Notification === 'undefined') return;
     if (Notification.permission !== 'granted') return;
+    const titulo = `${a.classe} ${a.numero} — ${a.nome}`;
+    const opcoes = {
+      body: a.texto,
+      tag: a.chave,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      requireInteraction: a.severidade >= 3,
+      renotify: true,
+      data: { equipamento: String(a.e.id), chave: a.chave },
+    };
+    // Android/PWA exige showNotification; new Notification pode lançar TypeError.
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+      navigator.serviceWorker.getRegistration().then((registro) => {
+        if (!cfg.ativo || !policy.notificar(cfg, a) || !cfg.notificacao) return;
+        if (registro && registro.showNotification) return registro.showNotification(titulo, opcoes);
+        notificarDesktop(titulo, opcoes, a);
+      }).catch(() => notificarDesktop(titulo, opcoes, a));
+      return;
+    }
+    notificarDesktop(titulo, opcoes, a);
+  }
+
+  function notificarDesktop(titulo, opcoes, a) {
+    if (!cfg.ativo || !cfg.notificacao || !policy.notificar(cfg, a)) return;
     try {
-      const n = new Notification(`${a.classe} ${a.numero} — ${a.nome}`, {
-        body: a.texto + (a.operador ? ' · ' + a.operador : ''),
-        tag: a.chave,
-        icon: '/icons/icon-192.png',
-        badge: '/icons/icon-192.png',
-        requireInteraction: a.severidade >= 3,
-        renotify: true,
-      });
+      const n = new Notification(titulo, opcoes);
       n.onclick = () => {
         window.focus();
         abrirNoMapa(a);
@@ -1265,7 +1322,7 @@
         <button id="btn-som" class="icone" title="Som do alerta">🔊</button>
         <button id="btn-voz" class="icone" title="Fala do alerta">🗣️</button>
         <button id="btn-silencio" class="icone" title="Silenciar por 30 minutos">🤫</button>
-        <button id="btn-cfg" class="icone" title="Regras e limiares">⚙️</button>
+        <button id="btn-cfg" class="icone" title="Preferências de alertas">⚙️</button>
       </div>
     </div>
     <div class="linha-status">
@@ -1290,10 +1347,24 @@
 <div id="cfg-alertas" class="hide">
   <div class="card cfg">
     <img class="marca" src="/icons/logo-mark.png" alt="" width="44" height="44" />
-    <h2>Regras de alerta</h2>
-    <p class="fine">Salvas neste aparelho. O app lê a telemetria oficial do portal e aplica estes limites; a central continua funcionando mesmo se o alerta oficial atrasar.</p>
+    <h2>Preferências de alertas</h2>
+    <p class="fine">Escolha o que deve avisar neste aparelho. Todos os alarmes oficiais continuam na central e no histórico; as chaves controlam apenas pop-up, som, fala, vibração e notificação.</p>
+    <div class="fonte-oficial"><strong>Velocidade: somente SGPA</strong><span>O app notifica quando o SGPA emitir o alarme. Os limites são os cadastrados no portal, não um cálculo genérico do aplicativo.</span></div>
+    <p class="rotulo">Quais alertas devem notificar</p>
+    <div id="cfg-categorias" class="alert-switch-list"></div>
+    <details class="catalogo-detalhes">
+      <summary>Escolher tipos individuais do SGPA</summary>
+      <p id="cfg-catalogo-status" class="fine">Carregando catálogo auditado…</p>
+      <label class="campo"><span>Buscar por nome ou código oficial</span><input id="cfg-busca-tipo" type="search" placeholder="Velocidade, motor, desvio de rota…"></label>
+      <div class="catalogo-filtros"><label class="chk"><input id="cfg-todos-tipos" type="checkbox"><span>Mostrar catálogo geral, não só tipos utilizados/conhecidos</span></label><button id="cfg-atualizar-catalogo" type="button">Atualizar SGPA</button></div>
+      <p class="fine">Um tipo marcado herda a chave de sua categoria. O catálogo geral não significa que todos esses alarmes estão configurados para esta unidade. Correspondências por nome não comprovam vínculo entre regra e tipo.</p>
+      <div id="cfg-tipos" class="alert-switch-list catalogo-lista"></div>
+      <button id="cfg-mais-tipos" type="button" class="hide">Mostrar mais tipos</button>
+    </details>
+    <details class="catalogo-detalhes"><summary>Regras auditadas da unidade</summary><p id="cfg-regras-status" class="fine"></p><div id="cfg-regras-auditadas" class="regras-auditadas"></div><p class="fine">Inventário para consulta. As expressões permanecem executadas pelo SGPA, sem recriar condições ambíguas no aplicativo.</p></details>
+    <h3 class="secao-alertas">Leitura e cálculos complementares</h3>
+    <p class="fine">RPM, ociosidade e troca de turno podem ter cálculo local complementar. A espera por caminhão usa a operação da telemetria mesmo com esses cálculos desligados.</p>
     <div class="grade">
-      <label class="campo"><span>Velocidade (km/h)</span><input id="cfg-vel" type="number" min="0" step="1" inputmode="numeric"></label>
       <label class="campo"><span>RPM máxima do motor</span><input id="cfg-rpm" type="number" min="0" step="10" inputmode="numeric"></label>
       <label class="campo"><span>Motor ocioso (min)</span><input id="cfg-ocioso" type="number" min="1" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Troca de turno (min)</span><input id="cfg-turno" type="number" min="1" step="1" inputmode="numeric"></label>
@@ -1302,18 +1373,17 @@
       <label class="campo"><span>Intervalo de leitura (s)</span><input id="cfg-int" type="number" min="30" step="5" inputmode="numeric"></label>
       <label class="campo"><span>Leituras p/ confirmar</span><input id="cfg-amostras" type="number" min="1" max="5" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Ignorar sem sinal há (min)</span><input id="cfg-atraso" type="number" min="1" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Velocidade canavieiro (0 = off)</span><input id="cfg-velcan" type="number" min="0" step="1" inputmode="numeric"></label>
       <label class="campo"><span>RPM abaixo disto é ocioso</span><input id="cfg-rpmoci" type="number" min="0" step="10" inputmode="numeric"></label>
     </div>
     <label class="campo"><span>Só estes equipamentos (separados por espaço ou vírgula; vazio = todos)</span>
       <input id="cfg-eq" type="text" placeholder="ex.: 8833 4462 74073" spellcheck="false" autocomplete="off"></label>
     <p class="rotulo">Frentes / grupos monitorados</p>
     <div id="cfg-frentes" class="chips"></div>
+    <h3 class="secao-alertas">Fontes e canais de aviso</h3>
     <div class="switches">
       <label class="chk"><input id="cfg-liga" type="checkbox"><span>Central de alertas ligada</span></label>
-      <label class="chk"><input id="cfg-local" type="checkbox"><span>Calcular as regras no app (cobre a falha do portal)</span></label>
-      <label class="chk"><input id="cfg-serv" type="checkbox"><span>Espelhar os alarmes oficiais do portal</span></label>
-      <label class="chk"><input id="cfg-outros" type="checkbox"><span>Avisar também os alarmes oficiais de outros tipos</span></label>
+      <label class="chk"><input id="cfg-local" type="checkbox"><span>Cálculo complementar: RPM, motor ocioso e troca de turno</span></label>
+      <label class="chk"><input id="cfg-serv" type="checkbox"><span>Receber alarmes oficiais SGPA (stream e consulta)</span></label>
       <label class="chk"><input id="cfg-stream" type="checkbox"><span>Conexão ao vivo (stream de eventos do mapa)</span></label>
       <label class="chk"><input id="cfg-mapa" type="checkbox"><span>Alertar só do que foi clicado no mapa</span></label>
       <label class="chk"><input id="cfg-popup" type="checkbox"><span>Pop-up na tela</span></label>
@@ -1330,7 +1400,7 @@
       <label class="campo"><span>Tom <b id="lb-tom"></b></span><input id="cfg-tom" type="range" min="0.6" max="1.4" step="0.05"></label>
     </div>
     <div class="row">
-      <button id="cfg-salvar" class="primary">Salvar regras</button>
+      <button id="cfg-salvar" class="primary">Salvar preferências</button>
       <button id="cfg-teste2">Ouvir exemplo</button>
       <button id="cfg-fechar">Fechar</button>
     </div>
@@ -1393,8 +1463,11 @@
     $('btn-teste').onclick = testar;
     $('cfg-fechar').onclick = fecharConfig;
     $('cfg-salvar').onclick = lerConfig;
-    $('cfg-teste2').onclick = () =>
-      falar('Veículo 8833, operador Rafael, excedeu a velocidade, 62 quilômetros por hora, limite 51. Verificar.');
+    $('cfg-teste2').onclick = () => falar(policy.montarFala({ regra: 'velocidade', numero: '8833', valor: 85 }));
+    $('cfg-busca-tipo').oninput = () => { limiteTipos = 80; renderTipos(); };
+    $('cfg-todos-tipos').onchange = () => { limiteTipos = 80; renderTipos(); };
+    $('cfg-mais-tipos').onclick = () => { limiteTipos += 80; renderTipos(); };
+    $('cfg-atualizar-catalogo').onclick = atualizarCatalogo;
     el.cfg.addEventListener('click', (ev) => {
       if (ev.target === el.cfg) fecharConfig();
     });
@@ -1413,11 +1486,12 @@
   function renderCabecalho() {
     if (!el.painel) return;
     const n = ativos.size;
+    const avisaveis = [...ativos.values()].filter((a) => policy.notificar(cfg, a)).length;
     if (el.badge) {
       el.badge.textContent = n ? String(n) : '';
       el.badge.classList.toggle('hide', !n);
     }
-    if (el.sino) el.sino.classList.toggle('alertando', n > 0);
+    if (el.sino) el.sino.classList.toggle('alertando', cfg.ativo && avisaveis > 0);
     const s = Math.max(0, Math.round((proximo - agora()) / 1000));
     if (el.proximo) el.proximo.textContent = estado.ligado ? `próxima leitura em ${s}s` : 'central desligada';
     if (el.status) {
@@ -1457,7 +1531,8 @@
         <span class="a-icone">${a.icone}</span>
         <strong class="a-eq">${esc(a.classe)} ${esc(a.numero)}</strong>
         <span class="a-chip">${esc(a.nome)}</span>
-        ${a.fonte === 'portal' ? '<span class="a-chip oficial">portal</span>' : ''}
+        ${a.fonte === 'portal' ? '<span class="a-chip oficial">SGPA</span>' : ''}
+        ${!policy.notificar(cfg, a) ? '<span class="a-chip cinza">notificações desligadas</span>' : ''}
         ${a.contagem > 1 ? `<span class="a-chip cinza">×${a.contagem}</span>` : ''}
         <span class="a-hora" title="há ${desde(a.ts)}">${hora(a.ts)}</span>
       </div>
@@ -1525,7 +1600,7 @@
         d.style.setProperty('--cor', r.cor);
         d.innerHTML =
           `<div class="a-top"><span class="a-icone">${r.icone}</span><strong class="a-eq">${esc(h.equipamento)}</strong>` +
-          `<span class="a-chip">${esc(r.nome)}</span><span class="a-hora">${hora(h.ts)}</span></div>` +
+          `<span class="a-chip">${esc(h.nomeAlarme || r.nome)}</span>${h.notificacaoSelecionada === false ? '<span class="a-chip cinza">sem aviso</span>' : ''}<span class="a-hora">${hora(h.ts)}</span></div>` +
           `<p class="a-txt">${esc(h.texto)}</p>` +
           `<p class="a-meta">${esc(h.descricao || '')}${h.operador ? ' · ' + esc(h.operador) : ''} · fonte ${esc(h.fonte)}</p>`;
         d.onclick = () => falar(h.fala || h.texto);
@@ -1597,10 +1672,165 @@
     if (!el.cfg) montar();
     renderConfig();
     el.cfg.classList.remove('hide');
+    carregarCatalogo().then(renderSelecao).catch(() => {});
   }
   function fecharConfig() {
     el.cfg.classList.add('hide');
   }
+
+  const DESCRICOES_CATEGORIAS = {
+    velocidade: 'Somente alarme oficial de velocidade emitido pelo SGPA.',
+    rpm: 'Tipos oficiais de RPM e cálculo complementar, se ativado.',
+    ocioso: 'Motor ocioso oficial e cálculo complementar, se ativado.',
+    turno: 'Troca de turno oficial e cálculo complementar, se ativado.',
+    motorCondicao: 'Condições combinadas do motor; não são velocidade pura.',
+    aguardandoCaminhao: 'Trator/transbordo com a operação Aguardando Caminhão. Informa a frente/grupo.',
+    generico: 'Demais tipos oficiais, com o nome original do SGPA.',
+  };
+  let limiteTipos = 80;
+
+  function chaveNotificacao(nome, detalhe, ligada, onChange) {
+    const label = document.createElement('label');
+    label.className = 'alert-switch';
+    const texto = document.createElement('span');
+    texto.className = 'alert-switch-text';
+    const titulo = document.createElement('strong');
+    titulo.textContent = nome;
+    const descricao = document.createElement('small');
+    descricao.textContent = detalhe;
+    texto.append(titulo, descricao);
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.setAttribute('role', 'switch');
+    input.setAttribute('aria-label', 'Notificar: ' + nome);
+    input.checked = ligada;
+    const track = document.createElement('span');
+    track.className = 'alert-switch-track';
+    track.setAttribute('aria-hidden', 'true');
+    input.onchange = () => onChange(input.checked);
+    label.append(texto, input, track);
+    return label;
+  }
+
+  function renderSelecao() {
+    const box = $('cfg-categorias');
+    if (!box) return;
+    box.innerHTML = '';
+    for (const id of Object.keys(DESCRICOES_CATEGORIAS)) {
+      const r = REGRAS[id];
+      box.appendChild(chaveNotificacao(r.nome, DESCRICOES_CATEGORIAS[id], cfg.notificarCategorias[id] !== false, (ligada) => {
+        configurar({ notificarCategorias: { [id]: ligada } });
+        renderAtivos();
+        renderTipos();
+      }));
+    }
+    renderTipos();
+    const status = $('cfg-regras-status');
+    if (status) status.textContent = `${catalogo.totalRegras || 0} regras e ${catalogo.totalExpressoes || 0} expressões auditadas em ${catalogo.auditadoEm || '23/11/2026'}. Não são o catálogo geral de tipos.`;
+    const regras = $('cfg-regras-auditadas');
+    if (!regras) return;
+    regras.innerHTML = '';
+    for (const e of catalogo.expressoes || []) {
+      const d = document.createElement('div');
+      const strong = document.createElement('strong');
+      strong.textContent = e.nome;
+      const small = document.createElement('small');
+      small.textContent = (e.tiposEquipamento || []).join(' / ') + ((e.condicoesVelocidade || []).length ? ' · ' + e.condicoesVelocidade.join('; ') : '');
+      d.append(strong, small);
+      regras.appendChild(d);
+    }
+  }
+
+  function renderTipos() {
+    const box = $('cfg-tipos');
+    if (!box) return;
+    const busca = norm(($('cfg-busca-tipo') || {}).value);
+    const todos = $('cfg-todos-tipos') && $('cfg-todos-tipos').checked;
+    const lista = catalogo.tipos.filter((t) => (todos || busca || t.observado || t.conhecido || t.correspondenciaNomeRegra) && (!busca || norm(t.nome + ' ' + t.codigo).includes(busca)))
+      .sort((a, b) => Number(!!b.observado) - Number(!!a.observado) || a.nome.localeCompare(b.nome, 'pt-BR') || String(a.codigo).localeCompare(String(b.codigo)));
+    box.innerHTML = '';
+    for (const t of lista.slice(0, limiteTipos)) {
+      const categoria = policy.categoria(t.codigo, t.nome);
+      const selecionada = cfg.tiposNotificacao[t.codigo] !== false;
+      const categoriaLigada = cfg.notificarCategorias[categoria] !== false;
+      const contexto = t.observado ? 'presente nos filtros/observado' : t.correspondenciaNomeRegra ? 'nome também no inventário de regras' : t.conhecido ? 'tipo conhecido' : 'catálogo geral';
+      const descricao = `Código ${t.codigo} · ${REGRAS[categoria].nome} · ${contexto}` + (!categoriaLigada ? ' · categoria silenciada' : '');
+      box.appendChild(chaveNotificacao(t.nome, descricao, selecionada, (ligada) => {
+        configurar({ tiposNotificacao: { [t.codigo]: ligada } });
+        renderAtivos();
+      }));
+    }
+    if (!lista.length) {
+      const vazio = document.createElement('p');
+      vazio.className = 'fine';
+      vazio.textContent = catalogo.tipos.length ? 'Nenhum tipo encontrado. Tente outro nome ou código.' : 'O catálogo ainda está carregando. Alarmes oficiais recebidos continuam entrando na central.';
+      box.appendChild(vazio);
+    }
+    const status = $('cfg-catalogo-status');
+    if (status) status.textContent = `${catalogo.tipos.length} tipos no catálogo · ${lista.length} nesta busca · auditoria ${catalogo.auditadoEm || 'indisponível'}. Chaves salvas automaticamente neste aparelho.`;
+    const mais = $('cfg-mais-tipos');
+    if (mais) mais.classList.toggle('hide', lista.length <= limiteTipos);
+  }
+
+  function nomeTipo(codigo) {
+    const t = catalogo.tipos.find((r) => String(r.codigo) === String(codigo));
+    return t ? t.nome : 'Alarme SGPA ' + codigo;
+  }
+
+  function registrarTipo(codigo, nome) {
+    let t = catalogo.tipos.find((r) => String(r.codigo) === String(codigo));
+    if (!t) {
+      t = { codigo: String(codigo), nome: nome || 'Alarme SGPA ' + codigo, observado: true };
+      catalogo.tipos.push(t);
+    } else if (!t.observado) t.observado = true;
+  }
+
+  async function carregarCatalogo() {
+    if (carregandoCatalogo) return carregandoCatalogo;
+    carregandoCatalogo = fetch('/sgpa-alert-catalog.json', { cache: 'no-cache' })
+      .then((r) => { if (!r.ok) throw new Error('catálogo indisponível'); return r.json(); })
+      .then((j) => {
+        if (!Array.isArray(j.tipos)) throw new Error('catálogo inválido');
+        const observados = catalogo.tipos.filter((t) => t.observado);
+        catalogo = j;
+        for (const t of observados) registrarTipo(t.codigo, t.nome);
+        renderSelecao();
+        return catalogo;
+      }).catch((e) => {
+        carregandoCatalogo = null;
+        renderSelecao();
+        return catalogo;
+      });
+    return carregandoCatalogo;
+  }
+
+  async function atualizarCatalogo() {
+    if (atualizandoCatalogo) return;
+    atualizandoCatalogo = true;
+    const botao = $('cfg-atualizar-catalogo');
+    if (botao) { botao.disabled = true; botao.textContent = 'Consultando SGPA…'; }
+    try {
+      await carregarCatalogo();
+      const tipos = await chamar('/tipo-alarme?buId=' + encodeURIComponent(ctx.buId) + '&language=pt-br');
+      if (!Array.isArray(tipos)) throw new Error('catálogo SGPA inválido');
+      const filtros = await chamar('/alarmeOnline/alarme-filtros?buId=' + encodeURIComponent(ctx.buId) + '&language=pt-br').catch(() => null);
+      const nomes = new Set((filtros && Array.isArray(filtros.descTpAlarme) ? filtros.descTpAlarme : []).map(norm));
+      const anteriores = new Map(catalogo.tipos.map((t) => [String(t.codigo), t]));
+      catalogo.tipos = tipos.filter((t) => t.cdTpAlarme != null).map((t) => {
+        const codigo = String(t.cdTpAlarme);
+        const antigo = anteriores.get(codigo) || {};
+        return { codigo, nome: String(t.descTpAlarme || 'Alarme SGPA ' + codigo).trim(), conhecido: !!MAPA_ALARME[codigo], observado: !!antigo.observado || nomes.has(norm(t.descTpAlarme)), correspondenciaNomeRegra: !!antigo.correspondenciaNomeRegra };
+      });
+      catalogo.auditadoEm = new Date().toLocaleDateString('pt-BR');
+      renderSelecao();
+    } catch (e) {
+      mostrarAviso('Não foi possível atualizar o catálogo agora. A cópia auditada e suas preferências foram mantidas.', 'info');
+    } finally {
+      atualizandoCatalogo = false;
+      if (botao) { botao.disabled = false; botao.textContent = 'Atualizar SGPA'; }
+    }
+  }
+
 
   function preencherVozes() {
     const sel = $('cfg-vozel');
@@ -1626,9 +1856,9 @@
   }
 
   function renderConfig() {
-    if (!$('cfg-vel')) return;
+    if (!$('cfg-rpm')) return;
+    renderSelecao();
     const valores = {
-      'cfg-vel': cfg.limiteVelocidade,
       'cfg-rpm': cfg.limiteRpm,
       'cfg-ocioso': cfg.minutosOcioso,
       'cfg-turno': cfg.minutosTurno,
@@ -1637,7 +1867,6 @@
       'cfg-int': cfg.intervaloSeg,
       'cfg-amostras': cfg.amostras,
       'cfg-atraso': cfg.maxAtrasoMin,
-      'cfg-velcan': cfg.limiteVelocidadeCanavieiro,
       'cfg-rpmoci': cfg.rpmOcioso,
       'cfg-eq': cfg.equipamentos,
       'cfg-vol': cfg.volume,
@@ -1649,7 +1878,6 @@
       'cfg-liga': cfg.ativo,
       'cfg-local': cfg.calcularLocal,
       'cfg-serv': cfg.espelharServidor,
-      'cfg-outros': cfg.incluirOutros,
       'cfg-stream': cfg.usarStream,
       'cfg-mapa': cfg.seguirSelecaoMapa,
       'cfg-popup': cfg.popup,
@@ -1703,7 +1931,6 @@
       ativo: $('cfg-liga').checked,
       calcularLocal: $('cfg-local').checked,
       espelharServidor: $('cfg-serv').checked,
-      incluirOutros: $('cfg-outros').checked,
       usarStream: $('cfg-stream').checked,
       seguirSelecaoMapa: $('cfg-mapa').checked,
       popup: $('cfg-popup').checked,
@@ -1712,8 +1939,7 @@
       notificacao: $('cfg-notif').checked,
       vibrar: $('cfg-vib').checked,
       repetirVoz: $('cfg-repete').checked,
-      limiteVelocidade: n('cfg-vel', 51),
-      limiteRpm: n('cfg-rpm', 1600),
+      limiteRpm: n('cfg-rpm', 2000),
       minutosOcioso: n('cfg-ocioso', 5),
       minutosTurno: n('cfg-turno', 4),
       cooldownMin: n('cfg-cooldown', 10),
@@ -1721,7 +1947,6 @@
       intervaloSeg: n('cfg-int', 45),
       amostras: n('cfg-amostras', 1),
       maxAtrasoMin: n('cfg-atraso', 20),
-      limiteVelocidadeCanavieiro: n('cfg-velcan', 0),
       rpmOcioso: n('cfg-rpmoci', 900),
       equipamentos: $('cfg-eq').value,
       volume: n('cfg-vol', 1),
@@ -1740,12 +1965,12 @@
       }
     }
     fecharConfig();
-    mostrarAviso('Regras salvas. ' + (patch.ativo ? 'Central ligada.' : 'Central desligada.'), 'info');
+    mostrarAviso('Preferências salvas. ' + (patch.ativo ? 'Central ligada.' : 'Central desligada.'), 'info');
     cicloImediato();
   }
 
   function exportarCsv() {
-    const cab = ['quando', 'tipo', 'equipamento', 'descricao', 'operador', 'valor', 'mensagem', 'fonte', 'detalhe', 'fala'];
+    const cab = ['quando', 'tipo', 'equipamento', 'descricao', 'operador', 'valor', 'mensagem', 'fonte', 'detalhe', 'fala', 'codigo_sgpa', 'nome_sgpa', 'frente_grupo', 'notificacao_selecionada'];
     const linhas = hist.map((h) => [
       new Date(h.ts).toLocaleString('pt-BR'),
       (REGRAS[h.regra] || {}).nome || h.regra,
@@ -1757,6 +1982,10 @@
       h.fonte,
       h.detalhe,
       h.fala,
+      h.tipoAlarme || '',
+      h.nomeAlarme || '',
+      h.frente || '',
+      h.notificacaoSelecionada === false ? 'não' : 'sim',
     ]);
     const csv = [cab, ...linhas].map((l) => l.map((c) => `"${String(c == null ? '' : c).replace(/"/g, '""')}"`).join(';')).join('\r\n');
     const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
@@ -1768,8 +1997,8 @@
   }
 
   function testar() {
-    const e = mesclar('8833');
-    Object.assign(e, {
+    const e = {
+      id: 'TESTE',
       numero: '8833',
       nome: 'Caminhão Transbordo (exemplo)',
       tipo: 'CAMINHAO CANAVIEIRO',
@@ -1783,13 +2012,13 @@
       motor: true,
       atraso: 0,
       ativo: 'T',
-    });
+    };
     emitir({
       chave: 'TESTE|velocidade',
       regra: 'velocidade',
       e,
-      valor: 62,
-      texto: `excedeu a velocidade: 62 km/h, limite ${cfg.limiteVelocidade} km/h`,
+      valor: 85,
+      texto: 'excedeu a velocidade a 85 km/h (exemplo)',
       detalhe: 'Alerta de teste — nada aconteceu na frota real',
       inicio: agora(),
       simulado: true,
@@ -1836,7 +2065,17 @@
   /* ------------------------------------------------------------------ */
 
   function configurar(patch) {
-    cfg = Object.assign({}, cfg, patch || {});
+    const antes = cfg;
+    patch = patch || {};
+    cfg = policy.normalizeCfg(Object.assign({}, cfg, patch, {
+      notificarCategorias: Object.assign({}, cfg.notificarCategorias, patch.notificarCategorias),
+      tiposNotificacao: Object.assign({}, cfg.tiposNotificacao, patch.tiposNotificacao),
+    }));
+    cfg.incluirOutros = cfg.notificarCategorias.generico;
+    if (!cfg.ativo || !cfg.voz || patch.notificarCategorias || patch.tiposNotificacao) pararVoz();
+    if (!cfg.ativo || !cfg.usarStream) { fecharStream(); estado.stream = 'desligado'; }
+    else if ((!antes.ativo || !antes.usarStream) && ctx.token) abrirStream();
+    if (!cfg.ativo && el.toasts) el.toasts.innerHTML = '';
     if (cfg.intervaloSeg < 30) cfg.intervaloSeg = 30;
     if (cfg.amostras < 1) cfg.amostras = 1;
     salvar(KEY_CFG, cfg);
@@ -1875,8 +2114,15 @@
           if (agora() - (estado.ultimoCiclo || 0) > cfg.intervaloSeg * 1000 + 5000) cicloImediato();
         }
       });
+      if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', (ev) => {
+        if (!ev.data || ev.data.type !== 'alerta-notificacao') return;
+        const a = [...ativos.values()].find((item) => item.e.id === String(ev.data.equipamento));
+        if (a) abrirNoMapa(a);
+        else abrirPainel();
+      });
     }
     configurar({});
+    carregarCatalogo().catch(() => {});
     abrirStream();
     cicloImediato();
     return { versao: VERSAO, config: cfg };

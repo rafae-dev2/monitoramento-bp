@@ -1,0 +1,7 @@
+# Atualização da central de alertas — 23/11/2026
+
+- [x] Velocidade exclusivamente oficial: se o SGPA emitir alarme do equipamento, o app deve notificá-lo conforme a seleção. Nenhum limite local genérico nem fallback de velocidade deve gerar aviso independente.
+- [x] A fala do identificador deve ler cada algarismo, preservando zeros iniciais. Exemplo: “Veículo oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.” Velocidade, RPM e minutos continuam valores normais; não inventar velocidade quando o alarme não a fornecer.
+- [x] Incorporar os alarmes oficiais à mesma central e auditar as regras configuradas separadamente do catálogo geral. Fornecer chaves persistentes por categoria e tipo SGPA, com busca e apresentação profissional. Desligar notificações não deve apagar histórico nem esconder alarmes oficiais.
+- [x] Rastrear tratores/transbordos pela telemetria SGPA. A operação “Aguardando Caminhão”, normalizada para acentos/caixa/prefixo numérico, deve gerar alerta com equipamento e frente/grupo na mesma central. Não inferir equivalência com “Aguardando Carregamento” ou “Aguard Bascul Transbo”. Fechar o episódio após duas leituras negativas; respeitar confirmação e cooldown.
+- [ ] Validar localmente sem gravar alertas de teste em produção, atualizar cache/documentação, salvar no GitHub e verificar publicação da versão entregue no Netlify. Não fazer mudanças de segurança fora deste escopo.

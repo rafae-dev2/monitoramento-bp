@@ -1,0 +1,684 @@
+{
+  "versao": 1,
+  "auditadoEm": "2026-11-23",
+  "origem": "SGPA Branco Peres",
+  "totalTipos": 2972,
+  "totalRegras": 38,
+  "totalExpressoes": 39,
+  "totalNomesNosFiltros": 23,
+  "expressoes": [
+    {
+      "nome": "MANUTENÇÃO_BARRACÃO",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "VELOCIDADE_50_APOIO",
+      "tiposEquipamento": [
+        "CAMINHÃO APOIO"
+      ],
+      "camposCondicao": [
+        "VL_VELOCIDADE"
+      ],
+      "condicoesVelocidade": [
+        "VL_VELOCIDADE >= 52"
+      ],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "SEM APONTAMENTO__TPL",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "MANOBRA TRANSBORDO",
+      "tiposEquipamento": [
+        "COLHEDORA"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "SEM APONTAMENTO CCT",
+      "tiposEquipamento": [
+        "TRANSBORDO"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "MANUTENÇÃO_TERCEIRO",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "REFEIÇÃO (1 HORA)",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "TROCA FACAS",
+      "tiposEquipamento": [
+        "COLHEDORA"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": [
+        "3520"
+      ]
+    },
+    {
+      "nome": "LAVAGEM DE EQUIPAMENTO",
+      "tiposEquipamento": [
+        "COLHEDORA"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": [
+        "3500"
+      ]
+    },
+    {
+      "nome": "ABAST_INS_TEMPO_EXC",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "Canavieiro_40",
+      "tiposEquipamento": [
+        "CAMINHAO CANAVIEIRO"
+      ],
+      "camposCondicao": [
+        "VL_VELOCIDADE"
+      ],
+      "condicoesVelocidade": [
+        "VL_VELOCIDADE >= 40"
+      ],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "ABAST_INS_ML",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "CD_OPERACAO"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": [
+        "10700"
+      ]
+    },
+    {
+      "nome": "AG COLHEITADEIRA INDEVIDO",
+      "tiposEquipamento": [
+        "TRANSBORDO"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": [
+        "10860"
+      ]
+    },
+    {
+      "nome": "Controle_Velocidade_ Apoio_40",
+      "tiposEquipamento": [
+        "CAMINHÃO APOIO"
+      ],
+      "camposCondicao": [
+        "VL_VELOCIDADE"
+      ],
+      "condicoesVelocidade": [
+        "VL_VELOCIDADE >= 41"
+      ],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "SEM OPERADOR _ TRABALHANDO",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERADOR",
+        "VL_VELOCIDADE"
+      ],
+      "condicoesVelocidade": [
+        "VL_VELOCIDADE >= 30"
+      ],
+      "codigosPorNome": [
+        "11340"
+      ]
+    },
+    {
+      "nome": "FRENTE PÁTIO INDEVIDO _ TRANSB",
+      "tiposEquipamento": [
+        "TRANSBORDO"
+      ],
+      "camposCondicao": [
+        "DESC_ESTADO",
+        "DESC_GRUPO_EQUIPAMENTO"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": [
+        "11304"
+      ]
+    },
+    {
+      "nome": "VINHACA_40",
+      "tiposEquipamento": [
+        "CAMINHÃO APOIO"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_VELOCIDADE"
+      ],
+      "condicoesVelocidade": [
+        "VL_VELOCIDADE >= 44"
+      ],
+      "codigosPorNome": [
+        "11140"
+      ]
+    },
+    {
+      "nome": "SEM OPERADOR _ TRABALHANDO",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_ESTADO",
+        "DESC_OPERADOR"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": [
+        "11340"
+      ]
+    },
+    {
+      "nome": "ALARME_VEL_USINA_23KMH",
+      "tiposEquipamento": [
+        "CAMINHÃO APOIO"
+      ],
+      "camposCondicao": [
+        "VL_VELOCIDADE"
+      ],
+      "condicoesVelocidade": [
+        "VL_VELOCIDADE >= 23"
+      ],
+      "codigosPorNome": [
+        "11480"
+      ]
+    },
+    {
+      "nome": "ABAST_INS_DESLIGAR_MOTOR_PL",
+      "tiposEquipamento": [
+        "PLANTADORA MAG100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_PARAMETRO_4"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "INS_ABAST_DESL_MOTOR_TPL_",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "ALARME_VEL_60KM/H_ RURAL",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "VL_VELOCIDADE"
+      ],
+      "condicoesVelocidade": [
+        "VL_VELOCIDADE >= 62"
+      ],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "DIGITAR_OP_VL",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERADOR",
+        "VL_VELOCIDADE"
+      ],
+      "condicoesVelocidade": [
+        "VL_VELOCIDADE >= 30"
+      ],
+      "codigosPorNome": [
+        "12744"
+      ]
+    },
+    {
+      "nome": "CHUVA_DESLIGAR_CHAVE_GERAL",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_ED_1",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "FORCAR_BE",
+      "tiposEquipamento": [
+        "CAMINHAO CANAVIEIRO"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "DESLIGAR_CHAVE_GERAL_",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_ED_1",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "VELOCIDADE_CAN_23KMH_USINA",
+      "tiposEquipamento": [
+        "CAMINHAO CANAVIEIRO"
+      ],
+      "camposCondicao": [
+        "VL_VELOCIDADE"
+      ],
+      "condicoesVelocidade": [
+        "VL_VELOCIDADE >= 23"
+      ],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "SAIR_APONT_ABAST_INS_ML",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": [
+        "12500"
+      ]
+    },
+    {
+      "nome": "VL _ 60 KM/H",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "VL_VELOCIDADE"
+      ],
+      "condicoesVelocidade": [
+        "VL_VELOCIDADE >= 65"
+      ],
+      "codigosPorNome": [
+        "12724"
+      ]
+    },
+    {
+      "nome": "EQUIP INATIVO TRABALHANDO",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_GRUPO_EQUIPAMENTO",
+        "VL_VELOCIDADE"
+      ],
+      "condicoesVelocidade": [
+        "VL_VELOCIDADE >= 5"
+      ],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "FRENTE PÁTIO INDEVIDO",
+      "tiposEquipamento": [
+        "COLHEDORA"
+      ],
+      "camposCondicao": [
+        "DESC_ESTADO",
+        "DESC_GRUPO_EQUIPAMENTO"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": [
+        "11201"
+      ]
+    },
+    {
+      "nome": "ABAST_INS_DESLIGAR_MOTOR_TPL",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_ED_1",
+        "VL_PARAMETRO_4",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": [
+        "11500"
+      ]
+    },
+    {
+      "nome": "OPERADOR NÃO DEFINIDO - TROCA DE TURNO",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "DESC_OPERADOR",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "APONTAR_CENTRO_DE_CUSTO_CORRETO",
+      "tiposEquipamento": [
+        "CAMINHÃO APOIO"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "APONTAR_CENTRO_DE_CUSTO_CORRETO_PIPA",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "VL_TEMPO_SEC"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": [
+        "12200"
+      ]
+    },
+    {
+      "nome": "MUDAR_OP_OF_TERC_CAN",
+      "tiposEquipamento": [
+        "CAMINHAO CANAVIEIRO"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO",
+        "DESC_OPERADOR"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "VELOCIDADE_EXCEDIDA_50_VL",
+      "tiposEquipamento": [
+        "TRATOR DE PNEU LEVE/MAG 100"
+      ],
+      "camposCondicao": [
+        "VL_VELOCIDADE"
+      ],
+      "condicoesVelocidade": [
+        "VL_VELOCIDADE >= 51"
+      ],
+      "codigosPorNome": []
+    },
+    {
+      "nome": "NÃO_APONTAR_AG_CARREGAMENTO",
+      "tiposEquipamento": [
+        "CAMINHÃO APOIO"
+      ],
+      "camposCondicao": [
+        "DESC_OPERACAO"
+      ],
+      "condicoesVelocidade": [],
+      "codigosPorNome": [
+        "12100"
+      ]
+    },
+    {
+      "nome": "ALARME_CANAV_VEL_USINA_23",
+      "tiposEquipamento": [
+        "CAMINHAO CANAVIEIRO"
+      ],
+      "camposCondicao": [
+        "VL_VELOCIDADE"
+      ],
+      "condicoesVelocidade": [
+        "VL_VELOCIDADE >= 23"
+      ],
+      "codigosPorNome": [
+        "12600"
+      ]
+    }
+  ],
+  "regras": [
+    {
+      "nome": "SEM APONTAMENTO",
+      "statusInformado": 1
+    },
+    {
+      "nome": "REFEIÇÃO_TPL",
+      "statusInformado": 1
+    },
+    {
+      "nome": "SEM APONTAMENTO_TPL",
+      "statusInformado": 1
+    },
+    {
+      "nome": "AGUARDANDO MANOBRA TRANSB",
+      "statusInformado": 1
+    },
+    {
+      "nome": "MANUTENÇÃO BARRACÃO",
+      "statusInformado": 1
+    },
+    {
+      "nome": "VELOCIDADE ACIMA 50 KM/H",
+      "statusInformado": 1
+    },
+    {
+      "nome": "LAVAGEM DE EQUIPAMENTO",
+      "statusInformado": 1
+    },
+    {
+      "nome": "TROCA FACAS",
+      "statusInformado": 1
+    },
+    {
+      "nome": "OFICINA_TERCEIRO",
+      "statusInformado": 1
+    },
+    {
+      "nome": "Controle_Vel_Canavieiro",
+      "statusInformado": 1
+    },
+    {
+      "nome": "ABAST_INS_ML",
+      "statusInformado": 0
+    },
+    {
+      "nome": "ABAST_INS_TEMPO_EXCEDIDO",
+      "statusInformado": 0
+    },
+    {
+      "nome": "AG COLHEITADEIRA INDEVIDO",
+      "statusInformado": 1
+    },
+    {
+      "nome": "OPERADOR INDEFINIDO",
+      "statusInformado": 1
+    },
+    {
+      "nome": "VINHACA_40",
+      "statusInformado": 1
+    },
+    {
+      "nome": "VELOCIDADE ACIMA 40 KM/H",
+      "statusInformado": 0
+    },
+    {
+      "nome": "EQUIPAMENTO INATIVO TRABALHANDO",
+      "statusInformado": 1
+    },
+    {
+      "nome": "FRENTE PÁTIO INDEVIDO _ TRANSB",
+      "statusInformado": 1
+    },
+    {
+      "nome": "ALARME_VEL_USINA_23KMH",
+      "statusInformado": 1
+    },
+    {
+      "nome": "OPERADOR INDEFINIDO _ TROCA DE TURNO",
+      "statusInformado": 1
+    },
+    {
+      "nome": "APONTAR_CENTRO_DE_CUSTO_CORRETO_CM",
+      "statusInformado": 1
+    },
+    {
+      "nome": "VELOCIDADE_CAN_25KMH_USINA",
+      "statusInformado": 1
+    },
+    {
+      "nome": "MUDAR_OP_MEC_TERC_CANAVIEIRO",
+      "statusInformado": 1
+    },
+    {
+      "nome": "SAIR_APONT_ABAST_INS_ML",
+      "statusInformado": 1
+    },
+    {
+      "nome": "ALARME_CANAV_VEL_USINA_23",
+      "statusInformado": 1
+    },
+    {
+      "nome": "ALARME_VEL_60KM/H_ RURAL",
+      "statusInformado": 1
+    },
+    {
+      "nome": "SEM OPERADOR _ TRABALHANDO",
+      "statusInformado": 1
+    },
+    {
+      "nome": "VELOCIDADE_EXCEDIDA_50_OFICINA_CAM",
+      "statusInformado": 1
+    },
+    {
+      "nome": "ABAST_INS_DESLIGAR_MOTOR_TPL",
+      "statusInformado": 1
+    },
+    {
+      "nome": "DESLIGAR_CHAVE_GERAL",
+      "statusInformado": 0
+    },
+    {
+      "nome": "VL _ 60 KM/H",
+      "statusInformado": 1
+    },
+    {
+      "nome": "FORCAR_BALANCA_ENTRADA_",
+      "statusInformado": 1
+    },
+    {
+      "nome": "INS_ABAST_DESL_MOTOR_TPL_",
+      "statusInformado": 1
+    },
+    {
+      "nome": "FRENTE PÁTIO INDEVIDO",
+      "statusInformado": 1
+    },
+    {
+      "nome": "ABAST_INS_DESL_MOTOR_PL_MEC",
+      "statusInformado": 0
+    },
+    {
+      "nome": "NÃO_APONTAR_AG_CARREGAMENTO",
+      "statusInformado": 1
+    },
+    {
+      "nome": "APONTAR_CENTRO_DE_CUSTO_CORRETO_PIPA",
+      "statusInformado": 1
+    },
+    {
+      "nome": "DIGITAR_OP_VL",
+      "statusInformado": 1
+    }
+  ]
+}

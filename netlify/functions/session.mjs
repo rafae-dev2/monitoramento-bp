@@ -243,6 +243,8 @@ async function registrarAcesso(ip, usuario, unidade, cliente, resultado, detalhe
 const ROTAS_DADOS = [
   '/estatistica/monitoramento',
   '/alarmeOnline',
+  '/tipo-alarme',
+  '/alarmeOnline/alarme-filtros',
   '/alarmeTempoEquipamento',
   '/canbusOnline',
   '/patrimonioOnline',
