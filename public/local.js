@@ -6,10 +6,10 @@
  * mesma troca que a função faz pode acontecer no aparelho do usuário.
  *
  * Regras de segurança deste módulo:
- *   - a senha só sai daqui rumo ao endpoint oficial de auth do portal;
- *   - nada é enviado para a Netlify no modo local;
- *   - o armazenamento só acontece se o usuário marcar "lembrar neste aparelho";
- *   - há um botão para apagar tudo ("esquecer este aparelho").
+ *   - a senha só fica em memória enquanto esta página estiver aberta e só segue ao endpoint de auth;
+ *   - senha, token e sessão não são gravados em localStorage nem sessionStorage;
+ *   - se o usuário marcar "lembrar", somente o nome de usuário é salvo localmente;
+ *   - versões antigas são limpas ao carregar; "esquecer este aparelho" apaga o usuário lembrado.
  */
 
 (() => {
@@ -28,23 +28,13 @@
     CD_CLIENT: 204,
   };
 
-  const CRED_KEY = 'bperes.cred.v1';
-  const CACHE_KEY = 'bperes.session.v1';
-  const CACHE_TTL = 5 * 24 * 60 * 60 * 1000; // token do portal dura 7 dias
+  const USER_KEY = 'bperes.user.v1';
+  const LEGACY_CRED_KEY = 'bperes.cred.v1';
+  const LEGACY_CACHE_KEY = 'bperes.session.v1';
+  const store = { user: '', password: '', session: null };
 
-  const store = { remember: true };
-
-  function storage() {
-    try {
-      return store.remember ? localStorage : sessionStorage;
-    } catch {
-      return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-    }
-  }
-
-  /* Ler window.localStorage já lança exceção quando o navegador esta em modo privado,
-     com storage bloqueado, ou quando a página roda dentro de iframe de terceiros. O
-     helper devolve um depósito em memória no lugar, para o app nunca quebrar por isto. */
+  /* Web Storage pode estar bloqueado em modo privado ou em iframes. O fallback é
+     deliberadamente só memória e nunca conserva senha/token após fechar a página. */
   const MEMORIA = {};
   function par(tipo) {
     try {
@@ -58,34 +48,72 @@
     }
   }
 
+  function nomeLegado(bruto) {
+    try {
+      const valor = bruto ? JSON.parse(bruto) : null;
+      return valor && valor.user ? String(valor.user) : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /* Migração única: remove senhas e sessões/token gravados por versões antigas.
+     Preserva apenas o nome de usuário que já estava marcado para ser lembrado. */
+  function limparArmazenamentoLegado() {
+    const local = par('l');
+    const sessao = par('s');
+    try {
+      const usuarioLocal = local.getItem(USER_KEY) || nomeLegado(local.getItem(LEGACY_CRED_KEY));
+      const usuarioSessao = sessao.getItem(USER_KEY) || nomeLegado(sessao.getItem(LEGACY_CRED_KEY));
+      store.user = usuarioLocal || usuarioSessao || '';
+      if (usuarioLocal && !local.getItem(USER_KEY)) local.setItem(USER_KEY, usuarioLocal);
+      for (const s of [local, sessao]) {
+        s.removeItem(LEGACY_CRED_KEY);
+        s.removeItem(LEGACY_CACHE_KEY);
+      }
+    } catch {
+      /* segue com o estado em memória quando o navegador bloqueia storage */
+    }
+  }
+
+  limparArmazenamentoLegado();
+
   function lerCredencial() {
     try {
-      const raw = par('l').getItem(CRED_KEY) || par('s').getItem(CRED_KEY);
-      return raw ? JSON.parse(raw) : null;
+      store.user = par('l').getItem(USER_KEY) || store.user || '';
+      return store.user ? { user: store.user } : null;
     } catch {
-      return null;
+      return store.user ? { user: store.user } : null;
     }
   }
 
   function salvarCredencial(user, password, remember) {
-    store.remember = !!remember;
-    const alvo = par(remember ? 'l' : 's');
-    const outro = par(remember ? 's' : 'l');
+    const local = par('l');
+    const sessao = par('s');
+    store.user = String(user || '').trim();
+    store.password = String(password || '');
+    store.session = null;
     try {
-      outro.removeItem(CRED_KEY);
-      outro.removeItem(CACHE_KEY);
-      alvo.setItem(CRED_KEY, JSON.stringify({ user, password }));
+      for (const s of [local, sessao]) {
+        s.removeItem(LEGACY_CRED_KEY);
+        s.removeItem(LEGACY_CACHE_KEY);
+        s.removeItem(USER_KEY);
+      }
+      if (remember && store.user) local.setItem(USER_KEY, store.user);
     } catch {
-      /* storage recusando ate a escrita em memoria nao e opcao: segue sem lembrar */
-      store.remember = false;
+      /* a sessão local continua somente em memória */
     }
   }
 
   function esquecer() {
+    store.user = '';
+    store.password = '';
+    store.session = null;
     for (const s of [par('l'), par('s')]) {
       try {
-        s.removeItem(CRED_KEY);
-        s.removeItem(CACHE_KEY);
+        s.removeItem(USER_KEY);
+        s.removeItem(LEGACY_CRED_KEY);
+        s.removeItem(LEGACY_CACHE_KEY);
       } catch {
         /* modo privado: nada a limpar */
       }
@@ -235,32 +263,15 @@
    * refaz o login quando o token vence ou quando force=true.
    */
   async function sessaoLocal(forcar) {
-    const cred = lerCredencial();
-    if (!cred || !cred.user || !cred.password) {
+    const user = store.user || ((lerCredencial() || {}).user || '');
+    if (!user || !store.password) {
       const e = new Error('sem credenciais neste aparelho');
       e.code = 'sem_credencial';
       throw e;
     }
-    store.remember = !!par('l').getItem(CRED_KEY);
-
-    if (!forcar) {
-      try {
-        const hit = JSON.parse(storage().getItem(CACHE_KEY) || 'null');
-        if (hit && hit.expiresAt > Date.now() && hit.session && hit.session.props) {
-          return hit.session;
-        }
-      } catch {
-        /* cache corrompido: refaz */
-      }
-    }
-
-    const session = await montarSessao(cred.user, cred.password);
-    try {
-      storage().setItem(CACHE_KEY, JSON.stringify({ session, expiresAt: Date.now() + CACHE_TTL }));
-    } catch {
-      /* sem storage: segue em memória */
-    }
-    return session;
+    if (!forcar && store.session && store.session.props && store.session.props.token) return store.session;
+    store.session = await montarSessao(user, store.password);
+    return store.session;
   }
 
   window.MonitoramentoLocal = {
@@ -268,6 +279,6 @@
     salvarCredencial,
     lerCredencial,
     esquecer,
-    temCredencial: () => !!lerCredencial(),
+    temCredencial: () => !!(store.user && store.password),
   };
 })();

@@ -85,15 +85,39 @@ O screenshot do usuário confirmou que o alvo é o **“Gráfico de operação�
 
 A integração de alertas passou 52 grupos de verificações integradas, incluindo a fala excepcional sob confirmação atual, a rejeição de descrição ausente/antiga e a distinção do alarme oficial “Motor Ocioso” com meia-chave. Os testes usam fixtures locais: não foram feitas chamadas ao SGPA ao vivo nem gravações no Supabase, e não houve verificação em aparelho Android físico. A bateria completa de testes da sessão, sintaxe e diff foi repetida antes da entrega.
 
-A versão local atual da central é 1.2.5, com cache PWA `bperes-shell-v20`. As alterações desta rodada continuam somente no diretório de trabalho: não houve APK compilado, commit, push ou deploy. O gráfico externo e a síntese Azure permanecem sem alteração.
+A rodada local 1.2.4 descrita acima resultou na versão 1.2.5, cuja publicação efetiva está registrada abaixo. Não houve APK compilado nessa rodada; o gráfico externo e a síntese Azure permanecem sem alteração.
 
-## Ajuste responsivo local 1.2.5 — 23/11/2026
+## Ajuste responsivo da versão 1.2.5 — 23/11/2026
 
 O painel de preferências agora tem um X acessível no topo, permanece disponível enquanto o conteúdo rola e retorna o foco a um controle visível do aplicativo ao fechar. A janela limita largura e altura à área visível; os controles se reorganizam em telas estreitas. A central impede que os cartões ativos encolham para caber à força: cada cartão mantém o espaço do conteúdo, quebra textos longos e a lista rola separadamente. A barra de ações do rodapé também se reorganiza em celular. Os toasts têm limite de altura e rolagem própria.
 
 “Ver no mapa” usa o código SGPA atual do equipamento e limpa quaisquer datas de rastro herdadas antes de enviar `rastroBI`; isso força a seleção da posição atual e o comportamento oficial de voo, zoom 20 e popup. O teste integrado confirma o ID textual, a ausência de `start`/`end`, a preservação das demais propriedades e que nenhum link externo é aberto. A animação é definida pelo micro-frontend SGPA; não foi executado teste interativo autenticado no portal nesta rodada.
 
 O teste integrado carrega a CSS real e verificou a janela e os cartões em 320×640, 412×915, 768×1024 e 1280×900, incluindo X visível, fechamento, ausência de overflow horizontal e cartões sem sobreposição. Os 52 grupos integrados passaram; as alterações desta rodada não chamam rede nem gravam dados de produção. A faixa paga de voz continua proibida conforme a instrução do usuário; não foi configurada síntese online. A alternativa F0 gratuita depende de autorização separada e credencial segura.
+
+## Publicação verificada da versão 1.2.5
+
+A versão **1.2.5** foi publicada no site Netlify existente `https://sgpa-solinftec-bpa.netlify.app/` e sincronizada com `origin/main` pelo commit `a852f7a`. O deploy `6b046c2d5408ad4644ee3a91` (build `6b046c2d5408ad4644ee3a8f`) foi confirmado como **ready/current**, contexto production; a Function `session` foi implantada. A versão servida é 1.2.5, o cache é `bperes-shell-v20` e os hashes dos arquivos críticos servidos conferiram com os arquivos locais. APK não compilado.
+
+## Rodada local 1.2.6 — implementada e testada, ainda não publicada
+
+Os toasts agora têm limite vertical de 40dvh/420px (38dvh/360px em telas estreitas), rolagem própria e deslocamento para o mais recente após sua criação. Em CSS real, o teste a 652×1050 confirmou cinco toasts roláveis, o mais novo inteiramente visível e sete alarmes preservados como ativos; os alarmes anteriores continuam acessíveis na Central/histórico.
+
+A Central tem busca acessível para Ativos e Histórico por frota/identificação, operador, nome/código do alarme e texto/detalhe, sem distinção de caixa ou acentuação. A filtragem não remove registros nem altera os contadores; ela percorre todo o histórico armazenado e mostra até 150 resultados por vez. Limpar a busca restaura os cartões.
+
+Ao retomar a página, o app verifica atualizações do service worker; `visibilitychange`, retorno de rede e `pageshow` persistido revalidam a sessão conforme a duração da suspensão, sincronizam as props e iniciam um ciclo de alertas. Quando um novo service worker controlador assume, a página recarrega uma única vez. A sessão SGPA continua mediada no servidor; nenhum token novo é armazenado indefinidamente no cliente. Testes de sessão com fixtures confirmaram renovação no `pageshow`, ausência de recarga redundante e uma única recarga após `controllerchange`.
+
+O PWA sozinho não garante polling contínuo quando o navegador suspende ou fecha a página: timers em abas ocultas podem sofrer throttling. Periodic Background Sync tem disponibilidade limitada e a cadência é decidida pelo navegador. A entrega independente exige Web Push: service worker ativo, permissão do usuário, inscrição do dispositivo e servidor para consultar o SGPA e enviar o push. Fontes oficiais: [Push API](https://developer.mozilla.org/en-US/docs/Web/API/Push_API), [Periodic Background Sync](https://developer.mozilla.org/en-US/docs/Web/API/Web_Periodic_Background_Synchronization_API), [uso de notificações](https://developer.mozilla.org/en-US/docs/Web/API/Notifications_API/Using_the_Notifications_API) e [throttling de timers no Chrome](https://developer.chrome.com/blog/timer-throttling-in-chrome-88).
+
+A rodada local 1.2.6 usa cache `bperes-shell-v23`. Passaram 54 grupos integrados da Central, 25 testes fixture-only de Web Push, sessão/UI, credenciais locais, sintaxe e `git diff --check`. Nenhum teste chamou SGPA/Supabase de produção ou enviou Push real. As alterações 1.2.6 ainda não foram commitadas, sincronizadas ou publicadas. O usuário autorizou a publicação e sincronização. A migração e o segredo Vault foram aplicados; `SUPABASE_URL` foi aceita em Functions/Production. As outras quatro variáveis permanecem pendentes após respostas 403/erro de conexão do Netlify. Ainda não houve commit, push nem deploy. Nenhum gráfico, voz paga ou F0 foi adicionado/configurado; nenhum APK foi compilado.
+
+## Web Push da versão 1.2.6 — implementação local
+
+O botão “Ativar notificações Push neste aparelho” é o único fluxo que pede permissão ao navegador. A inscrição, categorias, tipos individuais, frentes/grupos, equipamentos e seleção do mapa são sincronizados por dispositivo. Um tipo SGPA explicitamente selecionado prevalece sobre uma categoria desligada. O servidor envia notificações apenas para alarmes oficiais ativos do `/alarmeOnline`; alertas calculados localmente continuam sem Push, som, vibração ou pop-up do sistema. O motor ocioso sem apontamento permanece somente a exceção de fala local previamente autorizada.
+
+O monitor Scheduled Function roda uma vez por minuto, com tolerância de até aproximadamente um intervalo mais a latência do serviço Push; não garante entrega instantânea. Antes de autenticar, ele consulta a RPC `has_subscriptions` e não chama o SGPA enquanto nenhum aparelho estiver inscrito. A primeira sincronização cria baseline silenciosa para alarmes já ativos; a deduplicação por ocorrência e dispositivo persiste no Supabase. A chave privada VAPID e o segredo da RPC permanecem fora do cliente. Quando a notificação é tocada, o PWA envia o `cdEquipamento` textual às props do mapa incorporado, inclusive quando o app estava fechado, sem abrir URL externa.
+
+O Netlify Personal tinha 662.4/1,000 créditos mensais restantes e 270.1 créditos sem expiração no retrato consultado em 23/11/2026; a recarga automática estava desligada. A tarifa oficial é 10 créditos por GB-hora e a função recebe 1 GB por padrão; com 43,200 execuções mensais, cada segundo médio de duração equivale a aproximadamente 120 créditos de compute, além do tráfego e dos outros usos do site. O gasto real deve ser medido após ativação. [12] [13]
 
 ## Referências
 
@@ -108,3 +132,5 @@ O teste integrado carrega a CSS real e verificou a janela e os cartões em 320×
 [9]: https://cloud.google.com/text-to-speech/pricing "Google Cloud Text-to-Speech: preços"
 [10]: https://cloud.google.com/text-to-speech/docs/list-voices-and-types "Google Cloud Text-to-Speech: tipos e lista de vozes"
 [11]: https://solinftec-frontends.saas-solinftec.com/solinftec-pwa-mapv4-prod/assets/index-38ecfd88.js "Microfrontend de mapa SGPA: contrato de mensagens e dados de alarmes"
+[12]: https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/ "Netlify credits and compute"
+[13]: https://docs.netlify.com/build/functions/usage-and-billing/ "Netlify Functions Usage and Billing"

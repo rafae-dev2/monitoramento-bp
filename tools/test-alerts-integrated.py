@@ -25,10 +25,14 @@ hooks = """
       cfg.popup = false; cfg.som = false; cfg.voz = false; cfg.vibrar = false; cfg.usarStream = false; cfg.notificacao = false;
       rajada = {ts: 0, voz: 0};
       ctx.audit = false;
-      if (el.toasts) el.toasts.innerHTML = '';
+      buscaCentral = '';
+      if (el.busca) el.busca.value = '';
+      if (el.buscaLimpar) el.buscaLimpar.classList.add('hide');
+      if (el.toasts) { el.toasts.innerHTML = ''; el.toasts.scrollTop = 0; }
     },
     filaAudit: () => filaAudit.length,
     estados: () => [...estados.values()],
+    historico: () => hist.slice(),
   };
 """
 source = source.replace('  window.MonitoramentoAlertas = {', hooks + '\n  window.MonitoramentoAlertas = {')
@@ -448,6 +452,72 @@ with sync_playwright() as pw:
     page.set_viewport_size({'width': 412, 'height': 915})
     page.locator('#cfg-fechar-x').click()
     page.evaluate('MonitoramentoAlertas.abrirPainel()')
+
+    page.set_viewport_size({'width': 652, 'height': 1050})
+    page.evaluate("""() => {
+      __test.reset();
+      __test.setCtx({api:'https://fixture.invalid',buId:1,proxy:false,audit:false});
+      MonitoramentoAlertas.configurar({popup:true,notificacao:false,voz:false,som:false,vibrar:false});
+      __test.espelharAlarmes(Array.from({length:7},(_,i)=>({
+        cdEquipamento:`TOAST-${i}`, cdId:`TOAST-EVENT-${i}`, cdTpAlarme:12480,
+        descTpAlarme:'Alerta oficial de teste com texto longo',
+        descEquipamento:`${8000+i} - Equipamento de teste de pop-up ${i}`,
+        nomeOperador:'Operador de teste', descGrupoEquipamento:'Frente de teste', fgOnline:true
+      })));
+    }""")
+    page.wait_for_function("""() => {
+      const box = document.querySelector('#toasts');
+      return box && box.scrollHeight > box.clientHeight && box.scrollTop < 0;
+    }""", timeout=3000)
+    toast_layout = page.evaluate("""() => {
+      const box = document.querySelector('#toasts');
+      const r = box.getBoundingClientRect();
+      const newest = box.lastElementChild.getBoundingClientRect();
+      return {count:box.children.length,top:r.top,bottom:r.bottom,left:r.left,right:r.right,
+        scrollHeight:box.scrollHeight,clientHeight:box.clientHeight,scrollTop:box.scrollTop,
+        newestTop:newest.top,newestBottom:newest.bottom,active:MonitoramentoAlertas.ativos().length,history:__test.historico().length};
+    }""")
+    assert toast_layout['count'] == 5 and toast_layout['active'] == 7 and toast_layout['history'] == 7, toast_layout
+    assert toast_layout['scrollHeight'] > toast_layout['clientHeight'] and toast_layout['scrollTop'] < 0, toast_layout
+    assert toast_layout['top'] >= 0 and toast_layout['bottom'] <= 1050, toast_layout
+    assert toast_layout['left'] >= 0 and toast_layout['right'] <= 652, toast_layout
+    assert toast_layout['newestTop'] >= toast_layout['top'] - 1 and toast_layout['newestBottom'] <= toast_layout['bottom'] + 1, toast_layout
+    print('OK: toasts limitados à tela de 652×1050; o mais novo permanece visível e os sete alertas continuam ativos')
+
+    page.set_viewport_size({'width': 412, 'height': 915})
+    page.evaluate("""() => {
+      __test.reset();
+      __test.setCtx({api:'https://fixture.invalid',buId:1,proxy:false,audit:false});
+      MonitoramentoAlertas.configurar({popup:false,notificacao:false,voz:false,som:false,vibrar:false});
+      __test.espelharAlarmes([
+        {cdEquipamento:'BP-8833',cdId:'SEARCH-SPEED',cdTpAlarme:5,descTpAlarme:'VELOCIDADE EXCEDIDA',descEquipamento:'8833 - Transbordo BP 8833',nomeOperador:'Cristiano Ferreira',descGrupoEquipamento:'Frente Norte',vlAlarme:85,fgOnline:true},
+        {cdEquipamento:'BP-2211',cdId:'SEARCH-RPM',cdTpAlarme:4,descTpAlarme:'RPM MÁXIMA MOTOR',descEquipamento:'2211 - Trator BP 2211',nomeOperador:'Maria Silva',descGrupoEquipamento:'Frente Sul',vlAlarme:2100,fgOnline:true}
+      ]);
+      MonitoramentoAlertas.abrirPainel();
+    }""")
+    assert page.locator('#alertas-busca').get_attribute('aria-label') == 'Buscar por frota, alerta ou operador'
+    page.fill('#alertas-busca', 'cristiano')
+    assert page.locator('#lista-ativos .alerta').count() == 1
+    assert '8833' in page.locator('#lista-ativos').inner_text()
+    page.fill('#alertas-busca', 'rpm maxima')
+    assert page.locator('#lista-ativos .alerta').count() == 1
+    page.fill('#alertas-busca', '8833')
+    assert page.locator('#lista-ativos .alerta').count() == 1
+    assert page.locator('#cont-ativos').inner_text() == '2', 'A busca não deve reduzir o contador total de ativos'
+    assert page.locator('#cont-hist').inner_text() == '2', 'A busca não deve reduzir o contador total do histórico'
+    page.locator('.aba[data-aba="historico"]').click()
+    page.fill('#alertas-busca', 'maria silva')
+    assert page.locator('#lista-historico .alerta').count() == 1
+    assert 'Maria Silva' in page.locator('#lista-historico').inner_text()
+    page.fill('#alertas-busca', '2.100 rpm')
+    assert page.locator('#lista-historico .alerta').count() == 1, 'A busca deve incluir texto/valor do alerta no histórico'
+    page.click('#alertas-busca-limpar')
+    assert page.locator('#lista-historico .alerta').count() == 2, 'Limpar a busca deve restaurar todo o histórico exibido'
+    assert page.evaluate('document.activeElement.id') == 'alertas-busca'
+    page.locator('.aba[data-aba="ativos"]').click()
+    assert page.locator('#lista-ativos .alerta').count() == 2
+    print('OK: busca da Central filtra frota, alarme, texto e operador em Ativos/Histórico, sem alterar contagens nem registros')
+
     print('OK: chaves por categoria/tipo, busca, persistência, X e cartões roláveis sem sobreposição em celular, tablet e computador')
 
     page.evaluate("""() => {
@@ -528,4 +598,4 @@ with sync_playwright() as pw:
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+9} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+11} grupos de verificações.')

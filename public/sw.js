@@ -2,7 +2,7 @@
  * Só cacheamos o casco do app (HTML/CSS/JS/ícones). Sessão e dados do portal
  * passam sempre pela rede e NUNCA entram no cache.
  */
-const SHELL = 'bperes-shell-v20';
+const SHELL = 'bperes-shell-v23';
 const ASSETS = [
   '/',
   '/index.html',
@@ -70,17 +70,66 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request)));
 });
 
+self.addEventListener('push', (e) => {
+  if (!e.data) return;
+  let payload;
+  try {
+    payload = e.data.json();
+  } catch {
+    return;
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+  const texto = (valor, padrao, limite) => typeof valor === 'string' && valor.trim()
+    ? valor.trim().slice(0, limite)
+    : padrao;
+  const idString = (valor) => typeof valor === 'string' || typeof valor === 'number'
+    ? String(valor).trim().slice(0, 160)
+    : '';
+  const dados = payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data) ? payload.data : {};
+  const opcoes = {
+    body: texto(payload.body, 'Um alarme oficial SGPA selecionado requer atenção.', 500),
+    tag: texto(payload.tag, 'alerta-sgpa', 128),
+    icon: '/icons/icon-192.png',
+    badge: '/icons/favicon-32.png',
+    actions: [{ action: 'ver-no-mapa', title: 'Ver no mapa' }],
+    data: {
+      equipmentId: idString(dados.equipmentId),
+      occurrenceId: idString(dados.occurrenceId),
+    },
+  };
+  e.waitUntil(self.registration.showNotification(texto(payload.title, 'Alerta oficial SGPA', 120), opcoes));
+});
+
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const dados = e.notification.data || {};
-  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (lista) => {
+  const dados = e.notification && e.notification.data && typeof e.notification.data === 'object'
+    ? e.notification.data
+    : {};
+  // `equipamento` preserva os avisos locais existentes; Push usa `equipmentId`.
+  const equipamento = typeof dados.equipmentId === 'string'
+    ? dados.equipmentId
+    : typeof dados.equipamento === 'string' ? dados.equipamento : '';
+  const mensagem = { type: 'alerta-notificacao', equipamento };
+  e.waitUntil((async () => {
+    const lista = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const origem = self.location.origin;
-    const app = lista.find((c) => new URL(c.url).origin === origem);
+    const destino = new URL('/', origem);
+    if (/^[A-Za-z0-9_-]{1,64}$/.test(equipamento)) destino.searchParams.set('focusEquipment', equipamento);
+    const app = lista.find((c) => {
+      try { return new URL(c.url).origin === origem; } catch { return false; }
+    });
     if (app) {
       await app.focus();
-      app.postMessage({ type: 'alerta-notificacao', equipamento: dados.equipamento });
+      app.postMessage(mensagem);
       return;
     }
-    return self.clients.openWindow('/');
-  }));
+    const aberto = await self.clients.openWindow(destino.href);
+    if (aberto) {
+      try {
+        if (new URL(aberto.url).origin === origem) aberto.postMessage(mensagem);
+      } catch {
+        /* a raiz já foi aberta; não encaminha mensagem fora da origem do app */
+      }
+    }
+  })());
 });

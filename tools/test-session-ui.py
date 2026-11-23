@@ -52,15 +52,43 @@ try:
     with sync_playwright() as pw:
         browser = pw.chromium.launch(executable_path='/usr/bin/chromium', args=['--no-sandbox', '--disable-dev-shm-usage'])
         context = browser.new_context(viewport={'width': 412, 'height': 915}, locale='pt-BR', service_workers='block')
+        context.add_init_script("""(() => {
+          window.__swUpdateCalls = 0;
+          const handlers = {};
+          const registration = {update: () => { window.__swUpdateCalls += 1; return Promise.resolve(); }};
+          const serviceWorker = {
+            controller: {},
+            addEventListener: (name, fn) => { handlers[name] = fn; },
+            register: () => Promise.resolve(registration),
+            getRegistration: () => Promise.resolve(registration),
+          };
+          Object.defineProperty(navigator, 'serviceWorker', {configurable:true, value:serviceWorker});
+          window.__fireSwControllerChange = () => handlers.controllerchange && handlers.controllerchange();
+          window.__fireSwMessage = (data) => handlers.message && handlers.message({data});
+        })();""")
         page = context.new_page()
+        navegacoes_principais = []
+        page.on('framenavigated', lambda frame: navegacoes_principais.append(frame.url) if frame == page.main_frame else None)
         page.route('**/.netlify/functions/session*', session_route)
+        page.route('**/alerts.js', lambda route: route.fulfill(
+            status=200,
+            content_type='application/javascript',
+            body='window.__alertCycleCalls=0;window.__alertsStarted=false;window.MonitoramentoAlertas={iniciar:()=>{window.__alertsStarted=true;},atualizarSessao:()=>{},ciclo:()=>{window.__alertCycleCalls+=1;return Promise.resolve();}};',
+        ))
         page.route('https://map.fixture.invalid/**', lambda route: route.fulfill(
             status=200,
             content_type='text/html',
             body='<!doctype html><html><body><script>window.addEventListener("message",e=>window.__props=e.data)</script>map fixture</body></html>',
         ))
-        page.goto(origin + '/?alertas=0', wait_until='domcontentloaded')
+        page.goto(origin + '/?alertas=1&focusEquipment=8833', wait_until='domcontentloaded')
         page.wait_for_function("document.querySelector('#map').getAttribute('src') === 'https://map.fixture.invalid/index.html'", timeout=5000)
+        page.wait_for_function('window.__alertsStarted === true', timeout=5000)
+        mapa = next(frame for frame in page.frames if frame.url.startswith('https://map.fixture.invalid/'))
+        mapa.wait_for_function("window.__props && window.__props.data.rastroBI.equipment === '8833'", timeout=5000)
+        page.evaluate("window.__fireSwMessage({type:'alerta-notificacao',equipamento:'4462'})")
+        mapa.wait_for_function("window.__props && window.__props.data.rastroBI.equipment === '4462'", timeout=3000)
+        print('OK: clique Push centraliza no mapa incorporado, com foco inicial por URL e sem depender de alerta local ativo.')
+        navegacoes_apos_boot = len(navegacoes_principais)
         assert page.locator('#session-status').get_attribute('role') == 'status'
         assert page.locator('#session-status').get_attribute('aria-live') == 'polite'
 
@@ -76,6 +104,28 @@ try:
         assert len(sessoes) == 3, sessoes
         assert 'fresh=1' in sessoes[1] and 'fresh=1' in sessoes[2], sessoes
         print('OK: Nova sessão recupera a interface e remove o aviso após receber a sessão renovada.')
+
+        page.evaluate("""() => {
+          const event = new Event('pageshow');
+          Object.defineProperty(event, 'persisted', {value:true});
+          window.dispatchEvent(event);
+        }""")
+        page.wait_for_function("window.__swUpdateCalls >= 3", timeout=3000)
+        page.wait_for_function('window.__alertCycleCalls >= 1', timeout=3000)
+        page.wait_for_function("document.querySelector('#session-status').classList.contains('hide')", timeout=3000)
+        page.wait_for_timeout(100)
+        assert len(sessoes) == 4 and 'fresh=1' in sessoes[3], sessoes
+        assert page.evaluate('window.__alertCycleCalls') == 1, 'A retomada deve iniciar um novo ciclo da Central'
+        assert len(navegacoes_principais) == navegacoes_apos_boot, 'pageshow persistido sincroniza sem recarga redundante'
+        print('OK: pageshow do bfcache força revalidação da sessão e verificação do service worker sem recarregar a página')
+
+        navegacoes_antes_update = len(navegacoes_principais)
+        with page.expect_navigation(wait_until='domcontentloaded', timeout=5000):
+            page.evaluate('window.__fireSwControllerChange()')
+        page.wait_for_function("document.querySelector('#map').getAttribute('src') === 'https://map.fixture.invalid/index.html'", timeout=5000)
+        assert len(navegacoes_principais) == navegacoes_antes_update + 1, navegacoes_principais
+        assert len(sessoes) == 5 and 'fresh=1' not in sessoes[4], sessoes
+        print('OK: novo controller do service worker recarrega uma vez e a app volta a solicitar sessão/mapa')
         browser.close()
 finally:
     server.shutdown()

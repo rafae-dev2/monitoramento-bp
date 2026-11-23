@@ -75,8 +75,8 @@
           <img class="marca" src="/icons/logo-mark.png" alt="" width="56" height="56" />
           <h2>Entrar no monitoramento</h2>
           <p class="fine">
-            A sessão automática do servidor ainda não está configurada. Informe uma vez as credenciais
-            que você usa no portal da Solinftec — elas vão direto para o login oficial do portal.
+            A sessão automática do servidor ainda não está configurada. Informe as credenciais que você
+            usa no portal da Solinftec; no modo local, a senha fica apenas na memória desta aba durante a sessão.
           </p>
           <label class="campo">
             <span>Usuário</span>
@@ -84,11 +84,11 @@
           </label>
           <label class="campo">
             <span>Senha</span>
-            <input id="login-pass" type="password" autocomplete="current-password" />
+            <input id="login-pass" type="password" autocomplete="off" />
           </label>
           <label class="chk">
             <input id="login-remember" type="checkbox" checked />
-            <span>Lembrar neste aparelho (abre direto da próxima vez)</span>
+            <span>Lembrar usuário neste aparelho (a senha não é salva)</span>
           </label>
           <p id="login-error" class="msg"></p>
           <p id="login-note" class="fine"></p>
@@ -124,8 +124,8 @@
           <p class="fine">
             PWA instalável que abre direto no monitoramento
             <code>#!/details/analytic-map-v4</code> da unidade Branco Peres, usando a sessão que o
-            próprio portal concede ao seu usuário. A senha fica apenas nas variáveis de ambiente do
-            servidor (Netlify) — nunca neste arquivo.
+            próprio portal concede ao seu usuário. No login automático, a senha fica como secret no
+            servidor (Netlify); no modo local, senha e token ficam apenas em memória durante esta aba.
           </p>
           <p id="about-meta" class="fine"></p>
           <p class="fine">

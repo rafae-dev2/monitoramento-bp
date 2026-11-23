@@ -9,10 +9,12 @@
 --
 -- Como usar:
 --   Supabase → SQL Editor → colar este arquivo → Run.
---   Depois, em Netlify → Environment variables, adicione:
---     SUPABASE_URL   = https://<projeto>.supabase.co
---     SUPABASE_KEY   = <service_role key>  (só no servidor; nunca no front)
---   e descomente o bloco "auditoria" em netlify/functions/session.mjs.
+--   Depois, em Netlify → Environment variables, adicione as variáveis necessárias
+--   à função de sessão conforme docs/VARIAVEIS-NETLIFY.md. `SUPABASE_KEY` é uma
+--   configuração legada e não deve ser confundida com as chaves da RPC de Push.
+--   Nunca inclua `service_role` em código de navegador. A infraestrutura de Web
+--   Push usa SUPABASE_ANON_KEY + segredo server-side no Vault e é criada pela
+--   migração separada supabase/migrations/20261123162425_pwa_push_infrastructure.sql.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -42,9 +44,9 @@ create index if not exists pwa_acessos_data_idx
 
 alter table public.pwa_acessos enable row level security;
 
--- Sem políticas de SELECT/INSERT anônimas: só a service_role (a Netlify Function) escreve.
--- Se quiser ler no Supabase Dashboard, basta autenticar-se como service_role ou criar
--- uma policy própria para o seu papel.
+-- Acesso depende das policies efetivamente aplicadas no projeto. O serviço legacy
+-- não deve usar service_role no navegador. Web Push usa tabelas privadas e RPC
+-- autenticada separadamente; não compartilha permissões com este histórico.
 
 -- Visão pronta para um painel simples: acessos por dia por usuário.
 create or replace view public.pwa_acessos_diario as
@@ -164,3 +166,14 @@ order by total desc;
 --   'pwa_acessos_180d', '15 3 * * *',
 --   $$delete from public.pwa_acessos where criado_em < now() - interval '180 days'$$
 -- );
+
+-- ---------------------------------------------------------------------------
+-- 6. Web Push (implantado por migração separada)
+-- ---------------------------------------------------------------------------
+-- Não copie as tabelas de inscrição para `public` nem aplique políticas de leitura
+-- anônima: endpoint, p256dh e auth são segredos de entrega por dispositivo. Aplique
+-- a migração versionada `supabase/migrations/20261123162425_pwa_push_infrastructure.sql`.
+-- Ela cria o schema privado pwa_private, RLS sem políticas diretas, uma baseline
+-- silenciosa, deduplicação por ocorrência/dispositivo e a RPC `public.pwa_push_rpc`.
+-- Antes da ativação, armazene `pwa_push_rpc_auth` no Vault e cadastre a mesma chave
+-- como `PUSH_DB_SECRET` no Netlify. A chave VAPID privada permanece só no Netlify.

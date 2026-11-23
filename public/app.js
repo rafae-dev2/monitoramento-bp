@@ -45,8 +45,13 @@
   let lastSessionRenewalAt = 0;
   let hiddenSince = 0;
   let lastOnlineRecoveryAt = 0;
+  let lastResumeSyncAt = 0;
+  let serviceWorkerRegistration = null;
   let sessionRetryDelay = 30_000;
   let alertasLigados = false;
+  let pendingEquipmentFocus = normalizarFocoEquipamento(new URLSearchParams(location.search).get('focusEquipment'));
+  let focusHandshakeUntil = 0;
+  let focusRevision = 0;
   const ALERTAS_ON =
     new URLSearchParams(location.search).get('alertas') !== '0' &&
     typeof window !== 'undefined' &&
@@ -206,10 +211,67 @@
     if (!session) return;
     try {
       const origin = new URL(session.mapUrl, location.href).origin;
-      el.map.contentWindow.postMessage({ type: 'props', data: session.props }, origin);
+      const props = JSON.parse(JSON.stringify(session.props));
+      const equipamento = normalizarFocoEquipamento(pendingEquipmentFocus);
+      if (equipamento) {
+        const rastroBI = Object.assign({}, props.rastroBI || {}, { equipment: equipamento });
+        delete rastroBI.start;
+        delete rastroBI.end;
+        props.rastroBI = rastroBI;
+      }
+      el.map.contentWindow.postMessage({ type: 'props', data: props }, origin);
     } catch (e) {
       console.warn('postMessage falhou', e);
     }
+  }
+
+  function normalizarFocoEquipamento(value) {
+    const id = String(value || '').trim();
+    return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : '';
+  }
+
+  function limparFocoPendente(id) {
+    if (pendingEquipmentFocus === id) {
+      pendingEquipmentFocus = '';
+      focusRevision++;
+    }
+    try {
+      const url = new URL(location.href);
+      if (url.searchParams.get('focusEquipment') !== id) return;
+      url.searchParams.delete('focusEquipment');
+      history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+    } catch {
+      /* o foco já foi aplicado; a URL pode permanecer se o History API estiver indisponível */
+    }
+  }
+
+  function focarEquipamentoNotificado(value) {
+    const id = normalizarFocoEquipamento(value);
+    if (!id) {
+      if (ALERTAS_ON && alertasLigados && window.MonitoramentoAlertas) MonitoramentoAlertas.abrirPainel();
+      return;
+    }
+    pendingEquipmentFocus = id;
+    const revision = ++focusRevision;
+    if (!session) return; // a sessão/mapa aplicará o foco quando terminar de carregar
+    sendProps();
+    if (Date.now() < focusHandshakeUntil) return; // os reenvios iniciais já carregam o foco
+    let tentativas = 0;
+    const reenviar = () => {
+      if (revision !== focusRevision) return;
+      if (session) sendProps();
+      tentativas++;
+      if (tentativas >= 6) limparFocoPendente(id);
+      else setTimeout(reenviar, 600);
+    };
+    setTimeout(reenviar, 600);
+  }
+
+  if (navigator.serviceWorker) {
+    navigator.serviceWorker.addEventListener('message', (ev) => {
+      if (!ev.data || ev.data.type !== 'alerta-notificacao') return;
+      focarEquipamentoNotificado(ev.data.equipamento);
+    });
   }
 
   async function openEmbeddedMap(force) {
@@ -242,12 +304,17 @@
     el.who.textContent = [w.usuario, w.unidade].filter(Boolean).join(' · ') +
       (session.modo === 'local' ? ' · local' : '');
 
+    focusHandshakeUntil = Date.now() + 4100;
     el.map.onload = () => {
       // o portal também envia mais de uma vez; isso cobre a ordem de boot do Vue
       sendProps();
       setTimeout(sendProps, 700);
       setTimeout(sendProps, 2200);
-      setTimeout(sendProps, 4200);
+      setTimeout(() => {
+        sendProps();
+        const equipamento = pendingEquipmentFocus;
+        if (equipamento) limparFocoPendente(equipamento);
+      }, 4200);
       setTimeout(() => hide(el.boot), 2500);
       // o motor de alertas começa junto com o mapa (mesma sessão, mesmo token)
       setTimeout(ligarAlertas, 1200);
@@ -319,8 +386,8 @@
     const ruím = motivo && motivo.indexOf('entre com seu usuário') !== 0;
     el.loginError.textContent = ruím ? motivo : '';
     el.loginNote.textContent =
-      'Fica salvo apenas neste aparelho e só é enviado para o servidor de login da Solinftec. ' +
-      'Para usar em vários aparelhos, o ideal é cadastrar SOLINF_USER e SOLINF_PASS no Netlify.';
+      'A senha fica somente na memória enquanto esta aba estiver aberta. Se marcar abaixo, apenas o usuário será lembrado; senha e token SGPA não são gravados no armazenamento do navegador. ' +
+      'Para login automático, mantenha SOLINF_USER e SOLINF_PASS como secrets no Netlify.';
     const cred = window.MonitoramentoLocal && MonitoramentoLocal.lerCredencial();
     if (cred && cred.user) el.loginUser.value = cred.user;
     show(el.login);
@@ -423,22 +490,52 @@
     }
   });
 
-  // Ao voltar de uma suspensão longa, autentica de novo; em retornos curtos, reusa o cache.
+  function verificarAtualizacaoServiceWorker() {
+    if (!('serviceWorker' in navigator)) return;
+    const registro = serviceWorkerRegistration
+      ? Promise.resolve(serviceWorkerRegistration)
+      : navigator.serviceWorker.getRegistration();
+    registro.then((r) => {
+      if (!r || typeof r.update !== 'function') return;
+      serviceWorkerRegistration = r;
+      return r.update();
+    }).catch(() => {});
+  }
+
+  function sincronizarAoRetomar(forcar, ignorarCooldown) {
+    verificarAtualizacaoServiceWorker();
+    if (!EMBEDAVEL.has(TELA) || !session) return;
+    const agora = Date.now();
+    if (!ignorarCooldown && agora - lastResumeSyncAt < 5000) return;
+    lastResumeSyncAt = agora;
+    const suspensa = hiddenSince > 0 && agora - hiddenSince >= RESUME_RENEW_MS;
+    hiddenSince = 0;
+    const renovar = !!forcar || suspensa || !lastSessionRenewalAt || agora - lastSessionRenewalAt >= FORCE_RENEW_MS;
+    sincronizarSessao(renovar).then(() => {
+      if (ALERTAS_ON && alertasLigados && window.MonitoramentoAlertas &&
+          typeof window.MonitoramentoAlertas.ciclo === 'function') {
+        return Promise.resolve(window.MonitoramentoAlertas.ciclo()).catch(() => {});
+      }
+    }).catch(() => {});
+  }
+
+  // Ao voltar de suspensão, bfcache ou rede, revalida a sessão e sincroniza os alertas.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') {
       hiddenSince = Date.now();
       return;
     }
-    if (!EMBEDAVEL.has(TELA) || !session) return;
-    const suspensa = hiddenSince > 0 && Date.now() - hiddenSince >= RESUME_RENEW_MS;
-    hiddenSince = 0;
-    sincronizarSessao(suspensa || !lastSessionRenewalAt || Date.now() - lastSessionRenewalAt >= FORCE_RENEW_MS).catch(() => {});
+    sincronizarAoRetomar(false, false);
+  });
+
+  window.addEventListener('pageshow', (ev) => {
+    if (ev.persisted) sincronizarAoRetomar(true, true);
   });
 
   window.addEventListener('online', () => {
-    if (!EMBEDAVEL.has(TELA) || !session || Date.now() - lastOnlineRecoveryAt < 5 * 60_000) return;
+    if (!EMBEDAVEL.has(TELA) || !session || Date.now() - lastOnlineRecoveryAt < 5000) return;
     lastOnlineRecoveryAt = Date.now();
-    sincronizarSessao(true).catch(() => {});
+    sincronizarAoRetomar(true, true);
   });
 
   /* --------------------------- instalação --------------------------- */
@@ -459,7 +556,21 @@
   window.addEventListener('appinstalled', () => hide(btnInstall));
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    let jaControlado = !!navigator.serviceWorker.controller;
+    let recarregamentoPendente = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!jaControlado) {
+        jaControlado = true;
+        return;
+      }
+      if (recarregamentoPendente) return;
+      recarregamentoPendente = true;
+      window.location.reload();
+    });
+    navigator.serviceWorker.register('/sw.js').then((registro) => {
+      serviceWorkerRegistration = registro;
+      if (typeof registro.update === 'function') registro.update().catch(() => {});
+    }).catch(() => {});
   }
 
   /* ------------------------------ boot ------------------------------ */

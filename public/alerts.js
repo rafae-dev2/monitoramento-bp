@@ -31,11 +31,12 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.2.5';
+  const VERSAO = '1.2.6';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
   const KEY_ACK = 'bperes.alertas.ack.v2';
+  const KEY_PUSH_DEVICE = 'bperes.push.deviceId.v1';
   const MAX_HIST = 600;
   const MONITORAMENTO_API = 'https://api-usa.saas-solinftec.com/monitoramento/v2';
 
@@ -94,6 +95,7 @@
     frentes: [],
     equipamentos: '',
     seguirSelecaoMapa: false,
+    selecaoMapa: [],
     popup: true,
     som: true,
     voz: true,
@@ -115,7 +117,7 @@
   let cfg = policy.normalizeCfg(carregar(KEY_CFG, PADRAO));
   let hist = carregar(KEY_HIST, []);
   let acks = carregar(KEY_ACK, {});
-  let ctx = { selecao: new Set(), props: null };
+  let ctx = { selecao: new Set(Array.isArray(cfg.selecaoMapa) ? cfg.selecaoMapa.map(String) : []), props: null };
   let timer = null;
   let correndo = false;
   let proximo = 0;
@@ -132,7 +134,15 @@
   let carregandoCatalogo = null;
   let atualizandoCatalogo = false;
   let atualizacaoVelocidade = null;
+  let buscaCentral = '';
   const alarmesVelocidadePendentes = new Map();
+  let pushStatusText = 'As notificações Push ainda não foram verificadas neste aparelho.';
+  let pushSubscribed = false;
+  let pushRegistered = false;
+  let pushBusy = false;
+  let pushSyncTimer = null;
+  let pushSyncRunning = false;
+  let pushSyncAgain = false;
 
   const estado = {
     ligado: false,
@@ -165,6 +175,291 @@
       localStorage.setItem(chave, JSON.stringify(valor));
     } catch {
       /* storage cheio ou bloqueado: segue sem persistir */
+    }
+  }
+
+  function pushSuportado() {
+    return typeof window !== 'undefined' && window.isSecureContext !== false &&
+      typeof Notification !== 'undefined' && !!navigator.serviceWorker &&
+      typeof navigator.serviceWorker.ready !== 'undefined';
+  }
+
+  function renderPushStatus() {
+    const status = $('push-status');
+    const ativar = $('push-ativar');
+    const desligar = $('push-desligar');
+    if (status) status.textContent = pushStatusText;
+    if (ativar) {
+      ativar.classList.toggle('hide', pushRegistered);
+      ativar.disabled = pushBusy || !pushSuportado() || (typeof Notification !== 'undefined' && Notification.permission === 'denied');
+      ativar.textContent = pushBusy ? 'Aguarde…' : 'Ativar notificações Push neste aparelho';
+    }
+    if (desligar) {
+      desligar.classList.toggle('hide', !pushSubscribed && !pushRegistered);
+      desligar.disabled = pushBusy;
+    }
+  }
+
+  function idDispositivoPush() {
+    try {
+      const salvo = localStorage.getItem(KEY_PUSH_DEVICE);
+      if (salvo && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(salvo)) return salvo;
+      const cryptoApi = window.crypto;
+      let id;
+      if (cryptoApi && typeof cryptoApi.randomUUID === 'function') id = cryptoApi.randomUUID();
+      else {
+        const bytes = new Uint8Array(16);
+        if (cryptoApi && typeof cryptoApi.getRandomValues === 'function') cryptoApi.getRandomValues(bytes);
+        else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+        id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+      }
+      localStorage.setItem(KEY_PUSH_DEVICE, id);
+      return id;
+    } catch {
+      throw new Error('Não foi possível preparar este aparelho para Push.');
+    }
+  }
+
+  function preferenciasPush() {
+    const categorias = {};
+    const tipos = {};
+    for (const [k, v] of Object.entries(cfg.notificarCategorias || {})) categorias[String(k)] = !!v;
+    for (const [k, v] of Object.entries(cfg.tiposNotificacao || {})) tipos[String(k)] = !!v;
+    const frentes = Array.isArray(cfg.frentes) ? [...new Set(cfg.frentes.map(String))] : [];
+    const selecaoMapa = Array.isArray(cfg.selecaoMapa) ? [...new Set(cfg.selecaoMapa.map(String))] : [];
+    return {
+      notificarCategorias: categorias,
+      tiposNotificacao: tipos,
+      frentes,
+      equipamentos: String(cfg.equipamentos || ''),
+      seguirSelecaoMapa: !!cfg.seguirSelecaoMapa,
+      selecaoMapa,
+    };
+  }
+
+  function vapidBytes(chave) {
+    const base64 = String(chave || '').replace(/-/g, '+').replace(/_/g, '/');
+    const preenchido = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    const binario = atob(preenchido);
+    const bytes = new Uint8Array(binario.length);
+    for (let i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
+    return bytes;
+  }
+
+  async function requisitarChavePush() {
+    let resposta;
+    try {
+      resposta = await fetch('/api/push', { method: 'GET', headers: { accept: 'application/json' }, cache: 'no-store' });
+      if (!resposta.ok) throw new Error('indisponível');
+      const dados = await resposta.json();
+      if (!dados || typeof dados.vapidPublicKey !== 'string' || !dados.vapidPublicKey) throw new Error('indisponível');
+      return dados.vapidPublicKey;
+    } catch {
+      throw new Error('O serviço de notificações Push está indisponível no momento.');
+    }
+  }
+
+  async function enviarPreferenciaPush(corpo) {
+    let resposta;
+    let dados;
+    try {
+      resposta = await fetch('/api/push', {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json' },
+        body: JSON.stringify(corpo),
+        cache: 'no-store',
+      });
+      dados = await resposta.json();
+    } catch {
+      throw new Error('Não foi possível concluir a operação de Push agora.');
+    }
+    if (!resposta.ok || !dados || dados.ok !== true) throw new Error('Não foi possível concluir a operação de Push agora.');
+    return dados;
+  }
+
+  async function registroPush() {
+    if (!pushSuportado()) throw new Error('Este navegador ou aparelho não oferece suporte a notificações Push.');
+    let registro;
+    try {
+      registro = await navigator.serviceWorker.ready;
+    } catch {
+      throw new Error('O serviço de notificações deste aparelho não está disponível.');
+    }
+    if (!registro || !registro.pushManager) throw new Error('Este navegador ou aparelho não oferece suporte a notificações Push.');
+    return registro;
+  }
+
+  async function syncPushAgora() {
+    if (!pushSubscribed) return;
+    if (pushSyncRunning) {
+      pushSyncAgain = true;
+      return;
+    }
+    pushSyncRunning = true;
+    try {
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+        pushSubscribed = false;
+        pushRegistered = false;
+        pushStatusText = typeof Notification !== 'undefined' && Notification.permission === 'denied'
+          ? 'A permissão foi bloqueada nas configurações do navegador. O Push não está ativo neste aparelho.'
+          : 'O Push não está ativo neste aparelho.';
+        return;
+      }
+      const registro = await registroPush();
+      const subscription = await registro.pushManager.getSubscription();
+      if (!subscription) {
+        pushSubscribed = false;
+        pushRegistered = false;
+        pushStatusText = 'Não há uma assinatura Push ativa neste aparelho.';
+        return;
+      }
+      pushStatusText = 'Sincronizando as preferências deste aparelho…';
+      renderPushStatus();
+      await enviarPreferenciaPush({ action: 'sync', deviceId: idDispositivoPush(), preferences: preferenciasPush() });
+      pushRegistered = true;
+      pushStatusText = 'Push ativo neste aparelho. As preferências foram sincronizadas.';
+    } catch {
+      pushRegistered = false;
+      pushStatusText = 'O Push está autorizado neste aparelho, mas não foi possível sincronizar as preferências. Tente novamente.';
+    } finally {
+      pushSyncRunning = false;
+      renderPushStatus();
+      if (pushSyncAgain) {
+        pushSyncAgain = false;
+        agendarSyncPush(0);
+      }
+    }
+  }
+
+  function agendarSyncPush(atraso = 650) {
+    if (!pushSubscribed) return;
+    clearTimeout(pushSyncTimer);
+    pushSyncTimer = setTimeout(() => { syncPushAgora(); }, atraso);
+  }
+
+  async function inicializarPush() {
+    if (!pushSuportado()) {
+      pushStatusText = 'Notificações Push não estão disponíveis neste navegador ou aparelho.';
+      renderPushStatus();
+      return;
+    }
+    pushStatusText = 'Verificando a assinatura Push deste aparelho…';
+    renderPushStatus();
+    try {
+      const registro = await registroPush();
+      const subscription = await registro.pushManager.getSubscription();
+      pushSubscribed = !!subscription;
+      pushRegistered = false;
+      if (pushSubscribed) {
+        if (Notification.permission === 'granted') {
+          pushStatusText = 'Assinatura Push encontrada. Sincronizando as preferências deste aparelho…';
+          renderPushStatus();
+          await syncPushAgora();
+        } else {
+          pushStatusText = 'Há uma assinatura local, mas a permissão está bloqueada ou não concedida. Desligue o Push aqui ou ajuste a permissão no navegador.';
+        }
+      } else {
+        pushStatusText = Notification.permission === 'denied'
+          ? 'A permissão de notificações está bloqueada no navegador. Altere-a nas configurações para ativar Push.'
+          : Notification.permission === 'granted'
+            ? 'A permissão está concedida, mas este aparelho ainda não está inscrito no Push.'
+            : 'Push desativado. A permissão só será solicitada se você clicar em “Ativar notificações Push neste aparelho”.';
+      }
+    } catch {
+      pushSubscribed = false;
+      pushStatusText = 'Não foi possível verificar o Push neste aparelho. Tente novamente mais tarde.';
+    }
+    renderPushStatus();
+  }
+
+  async function ativarPush() {
+    if (pushBusy) return;
+    if (!pushSuportado()) {
+      pushStatusText = 'Notificações Push não estão disponíveis neste navegador ou aparelho.';
+      renderPushStatus();
+      return;
+    }
+    pushBusy = true;
+    renderPushStatus();
+    let assinaturaLocal = null;
+    try {
+      let permissao = Notification.permission;
+      if (permissao === 'default') {
+        try {
+          // Único ponto que pode solicitar permissão: ação explícita no botão de opt-in.
+          permissao = await Notification.requestPermission();
+        } catch {
+          permissao = 'denied';
+        }
+      }
+      if (permissao !== 'granted') {
+        pushSubscribed = false;
+        pushRegistered = false;
+        pushStatusText = permissao === 'denied'
+          ? 'A permissão foi negada. Para ativar Push, altere-a nas configurações do navegador.'
+          : 'A permissão não foi concedida; nenhum cadastro Push foi feito.';
+        return;
+      }
+      const registro = await registroPush();
+      let subscription = await registro.pushManager.getSubscription();
+      if (!subscription) {
+        const chave = await requisitarChavePush();
+        try {
+          subscription = await registro.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidBytes(chave) });
+        } catch {
+          throw new Error('Não foi possível criar uma assinatura Push neste aparelho.');
+        }
+      }
+      assinaturaLocal = subscription;
+      pushSubscribed = !!subscription;
+      const dadosSubscription = subscription && typeof subscription.toJSON === 'function' ? subscription.toJSON() : null;
+      if (!dadosSubscription) throw new Error('Não foi possível preparar a assinatura Push deste aparelho.');
+      await enviarPreferenciaPush({
+        action: 'subscribe',
+        deviceId: idDispositivoPush(),
+        subscription: dadosSubscription,
+        preferences: preferenciasPush(),
+      });
+      pushSubscribed = true;
+      pushRegistered = true;
+      pushStatusText = 'Notificações Push ativadas neste aparelho. Preferências sincronizadas.';
+    } catch (erro) {
+      pushSubscribed = !!assinaturaLocal && typeof Notification !== 'undefined' && Notification.permission === 'granted';
+      pushRegistered = false;
+      pushStatusText = erro && erro.message === 'O serviço de notificações Push está indisponível no momento.'
+        ? erro.message
+        : 'Não foi possível ativar o Push agora. Tente novamente mais tarde.';
+    } finally {
+      pushBusy = false;
+      renderPushStatus();
+    }
+  }
+
+  async function desligarPush() {
+    if (pushBusy) return;
+    pushBusy = true;
+    renderPushStatus();
+    try {
+      let subscription = null;
+      if (pushSuportado()) {
+        const registro = await registroPush();
+        subscription = await registro.pushManager.getSubscription();
+      }
+      await enviarPreferenciaPush({ action: 'unsubscribe', deviceId: idDispositivoPush() });
+      if (subscription) {
+        try { await subscription.unsubscribe(); } catch { /* o servidor já desativou este aparelho */ }
+      }
+      pushSubscribed = false;
+      pushRegistered = false;
+      pushStatusText = 'Notificações Push desligadas neste aparelho.';
+    } catch {
+      pushStatusText = 'Não foi possível desligar o Push agora. A assinatura deste aparelho não foi alterada.';
+    } finally {
+      pushBusy = false;
+      renderPushStatus();
     }
   }
 
@@ -1544,6 +1839,10 @@
         <button id="btn-cfg" class="icone" title="Preferências de alertas">⚙️</button>
       </div>
     </div>
+    <div class="busca-central" role="search">
+      <input id="alertas-busca" type="search" aria-label="Buscar por frota, alerta ou operador" aria-controls="lista-ativos lista-historico" placeholder="Frota, alerta ou operador" autocomplete="off">
+      <button id="alertas-busca-limpar" class="icone hide" type="button" title="Limpar busca" aria-label="Limpar busca">✕</button>
+    </div>
     <div class="linha-status">
       <span class="dot" id="dot-ciclo" title="estado da conexão"></span>
       <span id="alertas-proximo">—</span>
@@ -1573,6 +1872,12 @@
     <h2 id="cfg-titulo">Preferências de alertas</h2>
     <p class="fine">Alertas calculados localmente ficam na central e no histórico. Só “Motor ocioso sem apontamento”, quando confirmado por uma descrição atual do SGPA, pode ser falado como exceção; não gera notificação do sistema. Os demais cálculos locais não são falados nem notificados. A amostra manual do botão de teste não envia notificação do sistema.</p>
     <div class="fonte-oficial"><strong>Velocidade: somente SGPA</strong><span>O app notifica quando o SGPA emitir o alarme. Os limites são os cadastrados no portal, não um cálculo genérico do aplicativo.</span></div>
+    <section class="push-optin" aria-labelledby="push-optin-titulo">
+      <div class="push-optin-cabecalho"><span class="push-simbolo" aria-hidden="true">◉</span><div><h3 id="push-optin-titulo">Notificações Push neste aparelho</h3><span class="push-dispositivo">Ativação individual, controlada por você</span></div></div>
+      <p>O Push envia apenas alarmes oficiais SGPA selecionados — não envia cálculos locais. Categorias e tipos, frentes, equipamentos e o escopo da seleção do mapa se aplicam por dispositivo. A entrega usa polling do backend, com até 1 minuto de intervalo; não é instantânea.</p>
+      <p id="push-status" class="push-status" role="status" aria-live="polite">Verificando disponibilidade…</p>
+      <div class="push-acoes"><button id="push-ativar" class="primary" type="button">Ativar notificações Push neste aparelho</button><button id="push-desligar" class="push-desligar hide" type="button">Desligar notificações Push neste aparelho</button></div>
+    </section>
     <p class="rotulo">Quais alertas devem notificar</p>
     <div id="cfg-categorias" class="alert-switch-list"></div>
     <details class="catalogo-detalhes">
@@ -1647,6 +1952,8 @@
       escopo: $('alertas-escopo'),
       ativos: $('lista-ativos'),
       historico: $('lista-historico'),
+      busca: $('alertas-busca'),
+      buscaLimpar: $('alertas-busca-limpar'),
       contAtivos: $('cont-ativos'),
       contHist: $('cont-hist'),
       dot: $('dot-ciclo'),
@@ -1657,6 +1964,18 @@
     };
 
     const p = el.painel;
+    el.busca.addEventListener('input', () => {
+      buscaCentral = el.busca.value;
+      el.buscaLimpar.classList.toggle('hide', !norm(buscaCentral));
+      renderAtivos();
+    });
+    el.buscaLimpar.onclick = () => {
+      el.busca.value = '';
+      buscaCentral = '';
+      el.buscaLimpar.classList.add('hide');
+      renderAtivos();
+      el.busca.focus();
+    };
     $('alertas-fechar').onclick = fecharPainel;
     p.querySelector('.veu').onclick = fecharPainel;
     for (const b of p.querySelectorAll('.aba')) {
@@ -1692,6 +2011,8 @@
     $('cfg-fechar').onclick = fecharConfig;
     $('cfg-fechar-x').onclick = fecharConfig;
     $('cfg-salvar').onclick = lerConfig;
+    $('push-ativar').onclick = ativarPush;
+    $('push-desligar').onclick = desligarPush;
     $('cfg-vozel').onchange = () => {
       configurar(preferenciaVoz($('cfg-vozel').value));
       escolherVoz();
@@ -1708,6 +2029,7 @@
     el.cfg.addEventListener('click', (ev) => {
       if (ev.target === el.cfg) fecharConfig();
     });
+    renderPushStatus();
   }
 
   function abrirPainel() {
@@ -1816,23 +2138,46 @@
     setTimeout(() => d.remove(), 200);
   }
 
+  function correspondeBuscaCentral(campos) {
+    const query = norm(buscaCentral);
+    if (!query) return true;
+    const texto = (Array.isArray(campos) ? campos : [campos])
+      .filter((v) => v !== null && v !== undefined)
+      .join(' ');
+    return norm(texto).includes(query);
+  }
+
   function renderAtivos() {
     if (!el.ativos) return;
-    const lista = [...ativos.values()].sort((x, y) => y.severidade - x.severidade || y.ts - x.ts);
+    const lista = [...ativos.values()]
+      .sort((x, y) => y.severidade - x.severidade || y.ts - x.ts)
+      .filter((a) => correspondeBuscaCentral([
+        a.numero, a.e && a.e.id, a.e && a.e.nome, a.e && a.e.tipo, a.e && a.e.frente,
+        a.operador, a.nomeAlarme, a.tipoAlarme, a.regra, a.texto, a.detalhe,
+      ]));
     el.ativos.innerHTML = '';
     if (!lista.length) {
-      el.ativos.innerHTML =
-        '<div class="vazio">Nenhum alerta ativo agora.<br><span class="fine">A central continua lendo o portal a cada ' +
-        cfg.intervaloSeg + 's e os eventos do mapa em tempo real.</span></div>';
+      el.ativos.innerHTML = norm(buscaCentral)
+        ? '<div class="vazio">Nenhum alerta ativo corresponde à busca.</div>'
+        : '<div class="vazio">Nenhum alerta ativo agora.<br><span class="fine">A central continua lendo o portal a cada ' +
+          cfg.intervaloSeg + 's e os eventos do mapa em tempo real.</span></div>';
     }
     for (const a of lista) el.ativos.appendChild(card(a, true));
-    el.contAtivos.textContent = String(lista.length);
+    el.contAtivos.textContent = String(ativos.size);
     el.contHist.textContent = String(hist.length);
 
     if (el.historico && !el.historico.classList.contains('hide')) {
       el.historico.innerHTML = '';
-      if (!hist.length) el.historico.innerHTML = '<div class="vazio">Sem histórico neste aparelho.</div>';
-      for (const h of hist.slice(0, 150)) {
+      const resultados = hist.filter((h) => correspondeBuscaCentral([
+        h.equipamento, h.descricao, h.nomeAlarme, h.tipoAlarme, h.regra,
+        h.texto, h.detalhe, h.operador, h.frente,
+      ]));
+      if (!resultados.length) {
+        el.historico.innerHTML = norm(buscaCentral)
+          ? '<div class="vazio">Nenhum item no histórico corresponde à busca.</div>'
+          : '<div class="vazio">Sem histórico neste aparelho.</div>';
+      }
+      for (const h of resultados.slice(0, 150)) {
         const r = REGRAS[h.regra] || REGRAS.generico;
         const d = document.createElement('div');
         d.className = 'alerta menor';
@@ -1865,6 +2210,7 @@
       if (alvo.classList.contains('aviso')) break;
       alvo.remove();
     }
+    rolarToastMaisNovo();
     const t = setTimeout(() => fecharCard(d), (a.severidade >= 3 ? 26 : 18) * 1000);
     d.addEventListener('mouseenter', () => {
       clearTimeout(t);
@@ -1875,12 +2221,20 @@
     });
   }
 
+  function rolarToastMaisNovo() {
+    if (!el.toasts) return;
+    requestAnimationFrame(() => {
+      if (el.toasts) el.toasts.scrollTop = -el.toasts.scrollHeight;
+    });
+  }
+
   function mostrarAviso(txt, tipo) {
     if (!el.toasts) return;
     const d = document.createElement('div');
     d.className = 'aviso ' + (tipo || '');
     d.textContent = txt;
     el.toasts.appendChild(d);
+    rolarToastMaisNovo();
     setTimeout(() => fecharCard(d), 4200);
   }
 
@@ -2194,6 +2548,7 @@
     const ponteVoz = ponteNativa();
     if (gerenciarVozes) gerenciarVozes.classList.toggle('hide', !(ponteVoz && typeof ponteVoz.gerenciarVozes === 'function'));
     preencherVozes();
+    renderPushStatus();
 
     const box = $('cfg-frentes');
     box.innerHTML = '';
@@ -2262,13 +2617,6 @@
     const sel = $('cfg-vozel');
     if (sel) Object.assign(patch, preferenciaVoz(sel.value));
     configurar(patch);
-    if (patch.notificacao && typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      try {
-        Notification.requestPermission();
-      } catch {
-        /* o usuário autoriza depois */
-      }
-    }
     fecharConfig();
     mostrarAviso('Preferências salvas. ' + (patch.ativo ? 'Central ligada.' : 'Central desligada.'), 'info');
     cicloImediato();
@@ -2361,6 +2709,7 @@
         const novaSelecao = !ctx.selecao.has(id);
         ctx.selecao.add(id);
         if (ctx.selecao.size > 30) ctx.selecao.delete(ctx.selecao.values().next().value);
+        configurar({ selecaoMapa: [...ctx.selecao] });
         if (cfg.seguirSelecaoMapa && novaSelecao) {
           reconciliarEscopo();
           renderAtivos();
@@ -2377,13 +2726,20 @@
 
   function configurar(patch) {
     const antes = cfg;
+    const pushAntes = JSON.stringify(preferenciasPush());
     patch = patch || {};
-    const escopoAlterado = ['frentes', 'equipamentos', 'seguirSelecaoMapa'].some((k) => Object.prototype.hasOwnProperty.call(patch, k));
+    const escopoAlterado = ['frentes', 'equipamentos', 'seguirSelecaoMapa', 'selecaoMapa'].some((k) => Object.prototype.hasOwnProperty.call(patch, k));
+    const selecaoMapa = Object.prototype.hasOwnProperty.call(patch, 'selecaoMapa')
+      ? (Array.isArray(patch.selecaoMapa) ? [...new Set(patch.selecaoMapa.map(String))] : [])
+      : (Array.isArray(cfg.selecaoMapa) ? [...new Set(cfg.selecaoMapa.map(String))] : []);
     cfg = policy.normalizeCfg(Object.assign({}, cfg, patch, {
       notificarCategorias: Object.assign({}, cfg.notificarCategorias, patch.notificarCategorias),
       tiposNotificacao: Object.assign({}, cfg.tiposNotificacao, patch.tiposNotificacao),
+      selecaoMapa,
     }));
     cfg.incluirOutros = cfg.notificarCategorias.generico;
+    if (!Array.isArray(ctx.selecao)) ctx.selecao = new Set(selecaoMapa);
+    if (Object.prototype.hasOwnProperty.call(patch, 'selecaoMapa')) ctx.selecao = new Set(selecaoMapa);
     if (escopoAlterado) {
       reconciliarEscopo();
       renderAtivos();
@@ -2395,6 +2751,7 @@
     if (cfg.intervaloSeg < 30) cfg.intervaloSeg = 30;
     if (cfg.amostras < 1) cfg.amostras = 1;
     salvar(KEY_CFG, cfg);
+    if (JSON.stringify(preferenciasPush()) !== pushAntes) agendarSyncPush();
     if (timer) {
       clearTimeout(timer);
       agendar();
@@ -2409,7 +2766,9 @@
         ? Object.assign(contextoDa(novoCtx), { renovar: novoCtx.renovar })
         : novoCtx || {};
     ctx = Object.assign({ selecao: new Set() }, ctx, base);
-    if (!ctx.selecao) ctx.selecao = new Set();
+    const selecaoPersistida = Array.isArray(cfg.selecaoMapa) ? cfg.selecaoMapa.map(String) : [];
+    const selecaoAtual = ctx.selecao instanceof Set ? [...ctx.selecao] : Array.isArray(ctx.selecao) ? ctx.selecao.map(String) : [];
+    ctx.selecao = new Set([...selecaoPersistida, ...selecaoAtual]);
     if (!el.painel) montar();
     if (!iniciar.escutou) {
       iniciar.escutou = true;
@@ -2450,14 +2809,9 @@
           if (agora() - (estado.ultimoCiclo || 0) > cfg.intervaloSeg * 1000 + 5000) cicloImediato();
         }
       });
-      if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', (ev) => {
-        if (!ev.data || ev.data.type !== 'alerta-notificacao') return;
-        const a = [...ativos.values()].find((item) => item.e.id === String(ev.data.equipamento));
-        if (a) abrirNoMapa(a);
-        else abrirPainel();
-      });
     }
     configurar({});
+    inicializarPush();
     carregarCatalogo().catch(() => {});
     abrirStream();
     cicloImediato();
