@@ -1,0 +1,28 @@
+.env
+.env.local
+node_modules/
+.netlify/
+*.log
+.DS_Store
+
+# --- segredos e artefatos locais (nunca publicar) ---
+.env
+.env.local
+*.jks
+*.keystore
+*.apk
+*.zip
+android/out/
+android/build/
+netlify/functions/.netlify/
+
+# --- evidência com dado pessoal (print, dump de API, relatório de teste) ---
+docs/evidencia-*.png
+docs/alerta-*.png
+docs/chapa-*.png
+docs/*relatorio*.txt
+docs/*.json
+!docs/mapa-dados-ao-vivo.json
+out/
+*.log
+__pycache__/

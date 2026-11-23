@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Monitoramento BP — Branco Peres</title>
+    <meta
+      name="description"
+      content="Atalho instalável para a tela de monitoramento (mapa analítico v4) do portal Solinftec da unidade Branco Peres, com sessão automática."
+    />
+    <meta name="theme-color" content="#0f1720" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Monitoramento" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/icons/favicon-48.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon-180.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180.png" />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/alerts.css" />
+  </head>
+  <body>
+    <header id="bar">
+      <div id="brand">
+        <img id="brand-logo" src="/icons/logo-mark.png" alt="Branco Peres" width="30" height="30" />
+        <span id="brand-nome">Monitoramento <b>BP</b></span>
+        <span id="who"></span>
+      </div>
+      <div id="actions">
+        <button id="btn-install" class="hide" title="Instalar este app">Instalar</button>
+        <button id="btn-alertas" title="Central de alertas" aria-label="Central de alertas">🔔<span id="alert-badge" class="hide"></span></button>
+        <button id="btn-reload" title="Recarregar o mapa" aria-label="Recarregar">⟳</button>
+        <button id="btn-menu" title="Opções" aria-label="Opções">⚙</button>
+      </div>
+    </header>
+
+    <main id="stage">
+      <iframe
+        id="map"
+        title="Monitoramento — mapa analítico v4"
+        allow="fullscreen; clipboard-write"
+        referrerpolicy="strict-origin-when-cross-origin"
+      ></iframe>
+
+      <div id="boot">
+        <div class="card">
+          <img class="marca" src="/icons/logo-mark.png" alt="" width="64" height="64" />
+          <div class="spin"></div>
+          <p id="boot-msg">Preparando sua sessão…</p>
+          <p class="fine" id="boot-sub">tela: mapa analítico v4 (analytic-map-v4)</p>
+        </div>
+      </div>
+
+      <div id="error" class="hide">
+        <div class="card">
+          <img class="marca" src="/icons/logo-mark.png" alt="" width="56" height="56" />
+          <h2>Não foi possível abrir o monitoramento</h2>
+          <p id="err-msg" class="msg"></p>
+          <p id="err-tip" class="fine"></p>
+          <ol id="err-guide" class="guide hide"></ol>
+          <div class="row">
+            <button id="btn-retry" class="primary">Tentar de novo</button>
+            <a id="btn-portal" class="btn" target="_blank" rel="noopener">Abrir no portal</a>
+          </div>
+        </div>
+      </div>
+
+      <div id="login" class="hide">
+        <div class="card">
+          <img class="marca" src="/icons/logo-mark.png" alt="" width="56" height="56" />
+          <h2>Entrar no monitoramento</h2>
+          <p class="fine">
+            A sessão automática do servidor ainda não está configurada. Informe uma vez as credenciais
+            que você usa no portal da Solinftec — elas vão direto para o login oficial do portal.
+          </p>
+          <label class="campo">
+            <span>Usuário</span>
+            <input id="login-user" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" />
+          </label>
+          <label class="campo">
+            <span>Senha</span>
+            <input id="login-pass" type="password" autocomplete="current-password" />
+          </label>
+          <label class="chk">
+            <input id="login-remember" type="checkbox" checked />
+            <span>Lembrar neste aparelho (abre direto da próxima vez)</span>
+          </label>
+          <p id="login-error" class="msg"></p>
+          <p id="login-note" class="fine"></p>
+          <div class="row">
+            <button id="btn-entrar" class="primary">Entrar</button>
+            <button id="btn-login-cancelar" class="btn">Cancelar</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="menu" class="hide" role="menu">
+        <div class="sheet">
+          <h3>Opções</h3>
+          <button data-act="alertas">🔔 Central de alertas</button>
+          <button data-act="regras">🎯 Regras e limiares dos alertas</button>
+          <button data-act="teste">🗣️ Testar pop-up e voz</button>
+          <button data-act="reload">Recarregar o mapa</button>
+          <button data-act="portal">Abrir a tela oficial do portal (nova aba)</button>
+          <button data-act="monitplus">Abrir Monit+ (portal)</button>
+          <button data-act="fullscreen">Tela cheia</button>
+          <button data-act="fresh">Nova sessão (refaz o login automático)</button>
+          <button data-act="credencial">Entrar com minha senha neste aparelho</button>
+          <button data-act="esquecer">Esquecer este aparelho (apagar credenciais)</button>
+          <button data-act="about">Sobre</button>
+          <button data-act="close" class="close">Fechar</button>
+        </div>
+      </div>
+
+      <div id="about" class="hide">
+        <div class="card">
+          <img class="marca" src="/icons/logo-mark.png" alt="" width="72" height="72" />
+          <h2>Monitoramento BP</h2>
+          <p class="fine">
+            PWA instalável que abre direto no monitoramento
+            <code>#!/details/analytic-map-v4</code> da unidade Branco Peres, usando a sessão que o
+            próprio portal concede ao seu usuário. A senha fica apenas nas variáveis de ambiente do
+            servidor (Netlify) — nunca neste arquivo.
+          </p>
+          <p id="about-meta" class="fine"></p>
+          <p class="fine">
+            A Central de Alertas vigia a telemetria oficial do portal e avisa, com pop-up e voz, quando
+            um equipamento <b>excede a velocidade</b>, atinge a <b>RPM máxima do motor</b>, fica
+            <b>em troca de turno além do limite</b> ou fica com <b>motor ocioso</b>. Os limites ficam no
+            ⚙ → Regras e limiares.
+          </p>
+          <button data-act="close-about" class="primary">Entendi</button>
+        </div>
+      </div>
+    </main>
+
+    <script src="/local.js"></script>
+    <script src="/alerts.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

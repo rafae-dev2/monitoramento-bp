@@ -1,0 +1,33 @@
+# Monitoramento BP — PWA para Netlify
+# Deploy: arraste a pasta / use `netlify deploy --build` ou conecte o Git.
+# Nada aqui contém senha: as credenciais ficam em Netlify → Site settings → Environment variables.
+
+[build]
+  publish = "public"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[dev]
+  command = "npx http-server public -p 8888"
+  targetPort = 8888
+
+# Sessão nunca é cacheada pelo navegador.
+[[headers]]
+  for = "/.netlify/functions/*"
+  [headers.values]
+    Cache-Control = "no-store"
+    X-Content-Type-Options = "nosniff"
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Content-Type-Options = "nosniff"
+    Permissions-Policy = "geolocation=(), camera=(), microphone=(), interest-cohort=()"

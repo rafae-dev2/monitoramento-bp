@@ -1,0 +1,11 @@
+MONITORAMENTO BP — instalar em 1 minuto
+
+1. Passe o arquivo MonitoramentoBP.apk para o celular/tablet (WhatsApp, e-mail, Drive ou cabo USB).
+2. Toque no arquivo. Se o Android avisar "aplicativo desconhecido", autorize a instalação.
+3. Abra "Monitoramento BP" na tela inicial.
+4. Digite usuario e senha do portal UMA vez. Depois disso o app cai direto no mapa.
+
+Nada no app guarda sua senha: quem segura o login e a sessão é o próprio portal da Solinftec.
+Se um dia o login voltar a aparecer, a sessão expirou no servidor — digite de novo e pronto.
+O manual completo está em LEIA-ME-ANDROID.pdf. Guarde a pasta keystore/ (sem ela não dá para
+atualizar o app por cima).

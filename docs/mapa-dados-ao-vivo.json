@@ -1,0 +1,931 @@
+{
+  "meta": {
+    "analise": "Engenharia reversa do bundle mapv4 (Vue 2.7.10 + Vuetify + Mapbox GL + deck.gl) da Solinftec",
+    "arquivos_analisados": [
+      "/home/ubuntu/solinftec/mapv4.js (4.115.544 bytes; bundle == assets/index-38ecfd88.js referenciado pelo PWA)",
+      "/home/ubuntu/solinftec/pwa_mapv4_index.html",
+      "/home/ubuntu/solinftec/work/assets/monitoringWorker-190e5647.js (baixado via HTTP 200 de https://solinftec-frontends.saas-solinftec.com/solinftec-pwa-mapv4-prod/assets/monitoringWorker-190e5647.js, 77.950 bytes)",
+      "/home/ubuntu/solinftec/work/assets/subscribeLiveWorker-8212adab.js (baixado via HTTP 200, 74.796 bytes)"
+    ],
+    "gerado_em": "2026-11-23",
+    "observacao": "Nenhum endpoint foi inventado. Toda URL listada aparece literalmente no codigo. Onde o host base vem de prop (urlSgp/urlSgpa/urlServiceGo/urlTileServiceGo), o placeholder e o default embutido no bundle sao mostrados junto."
+  },
+  "resumo_executivo": "Fonte ao vivo real = POST {monitoramento/v2}/subscribe-live (NDJSON em worker, reconnect 1s), precedido de POST {monitoramento/v2}/actual-state (snapshot) e POST {monitoramento/v2}/actual-state-alarme (alarmes). Nada de WebSocket/EventSource. Frequencia de dados e push do servidor; os setInterval do bundle sao de reconexao (1000ms), flush de worker (3000ms), debounce de re-fetch (2000/1000ms) e timers de UI (1000/2000/3000/5000ms). Alarme no mapa = halo pulsante colorido por vlAlarme + icone mdi-alert + som alarm/alarm.mp3; painel historico usa {urlSgpa}/alarmeOnline/*. PostMessage: so recebe 'props' (com validacao estrita) e so emite 4 eventos de botao (event-online-message / event-online-command / event-calibration-rtk / event-meteorology-click) como STRING JSON para parent.window com payload {cdEquipamento, descEquipamento}. NAO ha exportacao de selecao nem comando entrante de centralizar; a unica via suportada para centralizar/abrir equipamento e props.rastroBI={equipment:<cd>}, e o gancho local util e window.mapref (com mapref.__deck).",
+  "fontes_de_dados": {
+    "resumo": "O mapa tem TRES fontes ao vivo, todas via fetch HTTP. NAO existe WebSocket, EventSource nem socket.io no bundle (contagem provada abaixo). (1) SNAPSHOT: POST {monitoramento/v2}/actual-state, disparado por configuracao de filtros, nao por timer. (2) STREAM PRINCIPAL (o 'ao vivo' real): POST {monitoramento/v2}/subscribe-live, resposta chunked em NDJSON mantida aberta dentro de um Web Worker, com reconexao automatica a cada 1000ms. (3) STREAM SECUNDARIO para robo Solix / Beekike / Refill: POST {framestream}/v3/aggregate/stream e {framestream}/v3/telemetry/generic?frameTypes=..., tambem chunked com linhas 'data: {...}', agregado no worker e emitido em lotes de 3000ms.",
+    "nota_worker": "assets/monitoringWorker-190e5647.js e instanciado pela fabrica j8() e, por dentro, instancia um segundo worker subscribeLiveWorker-8212adab.js (classe Ai) para segurar a conexao longa; o worker pai repassa os frames ao main thread como {type:'onProcessing', payload:[...]}. A variavel de estado tem nome historico 'hasKafkaStream', ou seja, do outro lado existe um produtor Kafka, mas o transporte visto pelo navegador e HTTP/NDJSON.",
+    "transporte_nao_usado": {
+      "WebSocket": 0,
+      "EventSource": 0,
+      "socket.io": 0,
+      "framestream": 3,
+      "comentario": "busca literal em mapv4.js; 'framestream' aparece so como host de URL"
+    },
+    "entradas": [
+      {
+        "papel": "snapshot inicial de todos os equipamentos (posicao/estado/operador/operacao)",
+        "url": "https://api-usa.saas-solinftec.com/monitoramento/v2/actual-state?buId={cdUnidadeRegional}&language={locale}",
+        "metodo": "POST (dentro de monitoringWorker-190e5647.js)",
+        "headers": "Content-Type: application/json | request-origin: sgp-front | X-Auth-Token: {token}",
+        "corpo_ou_query": "body = JSON.stringify({cdCliente:[cdCliente], cdUnidade:cdUnidadeRegional[], cdEquipamento:[...], cdGrupoEquipamento:[...], fgTpEquipamento:[...], cdEquipe:[...], cdOperacao:[...], cdGrupoAtividade:[...], cdGrupoOperacao:[...], cdOperador:[...], cdLocation:[...], isTelemetria:bool, restrictOnEmptyCdEquipamento:!useWorkOrder})",
+        "frequencia_ms": "sem timer. 1x no created(); re-dispara por watch 'updateActualState' com debounce 2000ms, watch 'equipmentFilter' debounce 1000ms, watch 'locations' imediato",
+        "campos_vistos": [
+          "geohash",
+          "cdCliente",
+          "cdEquipamento",
+          "fgTpEquipamento",
+          "coordinates (derivada)",
+          "id (derivada)"
+        ],
+        "trecho": "jr = \"https://api-usa.saas-solinftec.com/monitoramento/v2\", nt = self; nt.addEventListener(\"message\", async e => { if (e.data?.type === \"loadActualState\") { const {token:a, body:o, locale:s, cdUnit:f} = e.data.payload, p = jr + `/actual-state?buId=${f}&language=${s}`, v = \"POST\", g = {\"Content-Type\":\"application/json\",\"request-origin\":\"sgp-front\",\"X-Auth-Token\":a}; const h = await Xs(p, v, o, g); nt.postMessage({type:\"onActualState\", payload:h}) } })"
+      },
+      {
+        "papel": "STREAM AO VIVO de posicao + alarme (conexao longa NDJSON)",
+        "url": "https://api-usa.saas-solinftec.com/monitoramento/v2/subscribe-live?buId={cdUnit}&language={locale}",
+        "metodo": "POST (dentro de subscribeLiveWorker-8212adab.js)",
+        "headers": "X-Auth-Token: {token} | content-type: application/x-ndjson",
+        "corpo_ou_query": "mesmo body do actual-state (payload.body do getter 'payload')",
+        "resposta": "chunked; separada por '\\n'; cada linha e um JSON com {type:'monitoramento'|'alarme', ...}; geohash decodificado para [lon,lat]",
+        "frequencia_ms": "stream contínuo (push do servidor); reconexao com setTimeout 1000ms em erro; sem polling",
+        "campos_vistos": [
+          "type",
+          "cdCliente",
+          "cdEquipamento",
+          "geohash",
+          "id (derivada)",
+          "deleted",
+          "fgOnline"
+        ],
+        "trecho": "const Ci = async (e, t, r, n, i) => { const s = await fetch(e + `/subscribe-live?buId=${i.cdUnit}&language=${i.locale}`, {method:\"POST\", headers:{\"X-Auth-Token\":r,\"content-type\":\"application/x-ndjson\"}, body:t, signal:n}); const o = s.body?.getReader(); for(;;){ const {done:f, value:p} = await o.read(); if(f) break; const h = v.split(\"\\n\").map(b => { if (b.length>0) try { return JSON.parse(b) } catch {} }).filter(Boolean); Uo(h) } } catch(s){ Bo(s) && setTimeout(() => { n.aborted || Ci(e,t,r,n,{locale:i.locale,cdUnit:i.cdUnit}) }, 1e3) }"
+      },
+      {
+        "papel": "STREAM ao vivo de robo Solix (posicao/heading/telemetria) desenhado em camada proprio",
+        "url": "https://api-usa.saas-solinftec.com/framestream/v3/aggregate/stream (P) | https://apis-development.saas-solinftec.com/framestream/v3/aggregate/stream (H/D)",
+        "metodo": "POST (dentro de worker inline criado de blob WN via Fce())",
+        "headers": "x-auth-token: {token} | Content-Type: application/json",
+        "corpo_ou_query": "{filters:{client_id:cdCliente, equipment_ids:[cdEquipamento...]}, response_fields:[...], emitMostRecentOnly:bool}",
+        "response_fields_solix": [
+          "heading",
+          "latitude",
+          "longitude",
+          "fleet",
+          "equipment_id"
+        ],
+        "response_fields_telemetria_solixlayer": [
+          "heading",
+          "latitude",
+          "longitude",
+          "fleet",
+          "equipment_id",
+          "stop_reasons",
+          "stream_number_spectators",
+          "order_id",
+          "order_status",
+          "base_station",
+          "lh_link_type",
+          "lh_jitter",
+          "lh_latency"
+        ],
+        "frequencia_ms": "leitura em streaming continuo (linhas 'data:' decodificadas com TextDecoderStream); o worker acumula por 'fleet' num Map e faz flush com setInterval de 3000ms (u=3e3). Reconnect em erro: window.setTimeout 1000ms. Ha um parametro opcional dataUpdateInterval em PD() validado como >=1000ms, mas o SolixLayer nao o passa (usa 3000).",
+        "campos_vistos": [
+          "fleet",
+          "equipment_id",
+          "heading",
+          "latitude",
+          "longitude"
+        ],
+        "trecho": "const jN = {P:\"https://api-usa.saas-solinftec.com/framestream\", H:\"https://apis-development.saas-solinftec.com/framestream\", D:\"https://apis-development.saas-solinftec.com/framestream\"}; async function M(){ await b(), c=new Fce, c.addEventListener(\"message\",s), c.postMessage({url:`${jN[UN()]}/v3/aggregate/stream`, token:zN(), body:{filters:{client_id:n,equipment_ids:a},response_fields:i}, emitMostRecentOnly:r}) } // worker inline: let u=3e3; ... setInterval(()=>{ e.size>0 && (self.postMessage(Array.from(e.values()).flat()), e.clear()) }, h)"
+      },
+      {
+        "papel": "STREAM generico de telemetria por frameType (Refill e Beekike)",
+        "url": "https://api-usa.saas-solinftec.com/framestream/v3/telemetry/generic?frameTypes=RS-02-01 (Refill) | frameTypes=RC-02 (Beekike)",
+        "metodo": "POST (worker inline HN via kce())",
+        "headers": "x-auth-token: {token} | Content-Type: application/json",
+        "corpo_ou_query": "{filters:{clientId:cdCliente, equipment_ids:[...]}, responseFields:[]}",
+        "frequencia_ms": "stream continuo + flush agrupado por 'fleet' em setInterval 3000ms (f=3e3); reconnect 1000ms",
+        "campos_vistos": [
+          "fleet",
+          "equipment_id",
+          "heading",
+          "latitude",
+          "longitude"
+        ],
+        "trecho": "async function b(){ await s(), a=new kce, a.addEventListener(\"message\",c), a.postMessage({url:`${jN[UN()]}/v3/telemetry/generic?frameTypes=${n}`, token:zN(), body:{filters:{clientId:i,equipment_ids:e},responseFields:[]}}) } // Vce(...)=KN(\"RS-02-01\",...); Nce(...)=KN(\"RC-02\",...)"
+      },
+      {
+        "papel": "Detalhe do equipamento no popup/drawer (velocidade, RPM, horimetro, odometro, operador, OS, estado)",
+        "url": "{urlApiMonitoramento}/equipmentInfo/{cdCliente}/{cdEquipamento}?telemetria=T|F  (default urlApiMonitoramento = https://api-usa.saas-solinftec.com/monitoramento/v2)",
+        "metodo": "GET",
+        "headers": "Content-Type: application/json | request-origin: sgp-front | X-Auth-Token: {token} (+ AbortSignal)",
+        "corpo_ou_query": "telemetria = ur.getIsTelemetria() ? 'T' : 'F'; isTelemetria vem de GET {urlSgpa}/parametrosGerais/desc-param/EXIBE_ALARME_TELEMETRIA_MONITORAMENTO (vlParametro=='T')",
+        "frequencia_ms": "sob demanda: watch immediato em actualState (abrir popup/drawer); sem polling",
+        "campos_vistos": [
+          "popupMonitoramentoList[]",
+          "fieldDescription",
+          "fieldValue",
+          "fgPopupTab",
+          "popupMonitoramentoAlarmList[]",
+          "cdId",
+          "cdTpAlarme",
+          "fgClassificacao",
+          "alarmes[]"
+        ],
+        "trecho": "op={fetchInfoPopup:(n,e,t)=>{const i=ut.getUrlApiMonitoramento(),r=ut.getCdCliente();return df(`${i}/equipmentInfo/${r}/${n}?telemetria=${t}`, {method:\"GET\",headers:{\"Content-Type\":\"application/json\",\"request-origin\":\"sgp-front\"},signal:e})..."
+      },
+      {
+        "papel": "Popup de campos por tipo de equipamento (configuravel, versao BR)",
+        "url": "{urlSgpa}/campoTipoEquipamento/equipamento/popup?equipamentoId={cdEquipamento}",
+        "metodo": "GET",
+        "headers": "locale: 1..5 (indice de pt-br/es-es/en-us/ru-ru/uk-ua + 1) | Content-Type: application/json | X-Auth-Token",
+        "frequencia_ms": "sob demanda (abertura do popup BR), cancelavel por AbortController",
+        "trecho": "fetchInfoPopupBR:(n,e,t)=>{const i=ut.getUrlSgpa(),a=String([\"pt-br\",\"es-es\",\"en-us\",\"ru-ru\",\"uk-ua\"].indexOf(t)+1);return df(`${i}/campoTipoEquipamento/equipamento/popup?equipamentoId=${n}`,{method:\"GET\",headers:{locale:a,...}"
+      },
+      {
+        "papel": "Data/hora Buscan do equipamento",
+        "url": "{urlSgpa}/canbusOnline/datetime/{cdEquipamento}",
+        "metodo": "GET",
+        "frequencia_ms": "sob demanda, quando fgPopupTab '5-buscan' existe na lista de campos",
+        "trecho": "fetchBuscanDatePopupBR:(n,e,t)=>{const i=ut.getUrlSgpa();return df(`${i}/canbusOnline/datetime/${n}`,{method:\"GET\",headers:{locale:t,...}"
+      },
+      {
+        "papel": "Status online/individual de um equipamento",
+        "url": "{urlSgp}/equipamentos/status/{cdEquipamento}",
+        "metodo": "GET",
+        "resposta": "texto puro convertido com parseInt",
+        "trecho": "fetchEquipmentOnlineStatus:n=>{const e=ut.getUrlSgp();return df(e+\"/equipamentos/status/\"+n,{method:\"GET\"}).then(t=>t.text()).then(t=>parseInt(t))"
+      },
+      {
+        "papel": "Lista paginada de equipamentos com permissao ativa (alimenta equipmentsByPermission)",
+        "url": "{urlCrud}/equipamento/{cdCliente}/filtered/active?size=2000&page={n}",
+        "metodo": "GET",
+        "headers": "request-origin: sgp-front",
+        "resposta": "{content:[{cdEquipamento,...}], totalPages}",
+        "frequencia_ms": "loop paginado no created() do Monitoring ate pagesRequest==pages; sem timer",
+        "trecho": "fetchEquipmentsByPermission:n=>{const e=ut.getUrlCrud(),t=ut.getCdCliente();return df(e+\"/equipamento/\"+t+\"/filtered/active?size=2000&page=\"+n,{method:\"GET\",headers:{\"request-origin\":\"sgp-front\"}})"
+      },
+      {
+        "papel": "Rastro (historico) do equipamento - camadas de tile vetorial + extent",
+        "url": "tiles: {urlTileServiceGo}/v1/rastro/{cdCliente}/{cdEquipamento}/{z}/{x}/{y}.vector.pbf?dt_ini=&dt_fim=&idioma=&update=&is_dot_trail=  | extent: {urlServiceGo}/v1/extent/rastro/{cdCliente}/{cdEquipamento}?dt_ini=&dt_fim=&is_dot_trail=",
+        "metodo": "GET (tiles Mapbox vector + JSON de extent)",
+        "frequencia_ms": "recarregado quando 'update' muda (cache-buster manual/playback); sem polling. Animacao usa requestAnimationFrame.",
+        "campos_vistos": [
+          "pIni",
+          "pFim",
+          "vlDirecao",
+          "velocidade",
+          "epochFim",
+          "corEstado",
+          "dtHrLocalInicial",
+          "dtHrLocalFinal",
+          "descEstado",
+          "descOperador",
+          "descOperacao",
+          "cdOrdemServico",
+          "distancia",
+          "horimetro",
+          "odometro",
+          "rpm",
+          "arrAlarmes"
+        ],
+        "trecho": "ee=sn(()=>`${H.value}/v1/rastro/${W.value}/${e.trailEquipment.cdEquipamento}/{z}/{x}/{y}.vector.pbf?dt_ini=${e.trailEquipment.dataIni}&dt_fim=${e.trailEquipment.dataFim}&idioma=${i.value}&update=${w.value}&is_dot_trail=${e.isArrowTrail}`)"
+      },
+      {
+        "papel": "Cabecalhos/legendas de estado usadas pelos icones",
+        "url": "{urlSgpa}/estado (header locale 1|2|3) e {urlSgpa}/tipoEquipamento/params",
+        "metodo": "GET",
+        "frequencia_ms": "1x (lazy, quando monitoringLegend esta vazio)",
+        "trecho": "fetchMonitoringLegend:n=>{const e={\"pt-br\":\"1\",\"es-es\":\"2\",\"en-us\":\"3\",\"en-ca\":\"3\"},t=ut.getUrlSgpa();return df(t+\"/estado\",{method:\"GET\",headers:{\"Content-Type\":\"application/json\",locale:e[n]||\"1\"}})"
+      },
+      {
+        "papel": "Cerca virtual (fence) no mapa",
+        "url": "{urlTileServiceGo}/v4/cerca-virtual/{cdCliente}/{cdUnidade[0]}/{z}/{x}/{y}.vector.pbf",
+        "metodo": "GET (vector tile)",
+        "trecho": "get urlTiles(){...return [ut.getUrlTileServiceGo()+`/v4/cerca-virtual/${t}/${i[0]}/{z}/{x}/{y}.vector.pbf`]}"
+      },
+      {
+        "papel": "Regras de alarme ativas (combo/filtro do painel de alarmes)",
+        "url": "{urlSgpa}/alarmeOnline?ativo=true&idioma=pt-br",
+        "metodo": "GET",
+        "trecho": "requestAlarms:()=>{const n=ut.getUrlSgpa();return em(n+\"/alarmeOnline?ativo=true&idioma=pt-br\",{method:\"GET\",headers:{\"Content-Type\":\"application/json\",locale:\"1\"}})"
+      }
+    ],
+    "hosts_base": {
+      "props obrigatorias validadas por checkPostedMessage": [
+        "cdCliente",
+        "cdUnidadeRegional",
+        "token",
+        "grupo",
+        "locale",
+        "urlSgp",
+        "environmentStage",
+        "user",
+        "userGroupId",
+        "urlServiceGo",
+        "urlTileServiceGo",
+        "urlInterpolationServiceGo"
+      ],
+      "defaults embutidos no App (usados quando o host nao envia / build local)": {
+        "urlImagery": "https://api-br.saas-solinftec.com/dev/solinftec-imagery-api",
+        "urlApiMonitoramento": "https://api-usa.saas-solinftec.com/monitoramento/v2",
+        "urlApiTilesGateway": "https://api-usa.saas-solinftec.com/solix-mapper/tiles-gateway-api/",
+        "urlProductSupply": "https://product-supply-logistic-api.saas-solinftec.com",
+        "urlCrudApi": "https://api-usa.saas-solinftec.com/cadastros/v2",
+        "urlWorkOrderApi": "https://api-usa.saas-solinftec.com/sgpa-mapv4-workorder-go",
+        "urlServiceGo(default)": "https://api-br.saas-solinftec.com/hom/mapv4/service-qas",
+        "urlTileServiceGo(default)": "https://api-br.saas-solinftec.com/hom/mapv4/tile-service-qas",
+        "urlInterpolationServiceGo(default)": "https://api-br.saas-solinftec.com/hom/mapv4/interpolation-service-qas",
+        "apiRobot": "https://api-br.saas-solinftec.com/robot-api",
+        "timeZone": "America/Sao_Paulo",
+        "environmentStage": "P"
+      },
+      "override por grupo/unidade": "if (grupo == 99) { setUrlServiceGo('https://api-usa.saas-solinftec.com/mapv4/service-1'); setUrlTileServiceGo('https://api-usa.saas-solinftec.com/mapv4/tile-service-1'); setUrlInterpolationOnDemand('https://api-usa.saas-solinftec.com/mapv4/interpolation-service-1') }",
+      "override por environmentStage != P": "setUrlCrud(\"https://apis-development.saas-solinftec.com/cadastros/v2\"); setUrlWorkOrderApi(\"https://api-br.saas-solinftec.com/dev/sgpa-mapv4-workorder-go\"); setApiUrls(stage): stage==\"H\" -> hom/* ; stage==\"D\" -> api-dev-br/* ; framestream: P->api-usa, H/D->apis-development",
+      "parametrizacao transversal do fetchGenerator": "sempre injeta header \"X-Auth-Token\": token e acrescenta na query \"buId=<unidadeRegional>\" e \"language=<locale>\" se ja nao presentes; 401 lanca \"Authentication required. Status: 401\"",
+      "mapbox": {
+        "accessToken": "pk.[REDADATADO]",
+        "style": "mapbox://styles/solinftec-dev/cjasfb7cpj6qo2rn0u09jl604",
+        "transformRequest": "injeta {\"X-Auth-Token\": token, \"Content-Type\":\"application/json\"} em Source/Tile que batam no tileServer/backServer"
+      }
+    }
+  },
+  "campos_equipamento": {
+    "monitoringState_item_do_actual_state_e_do_stream": [
+      "id",
+      "coordinates",
+      "geohash",
+      "cdCliente",
+      "cdEquipamento",
+      "descEquipamento",
+      "fgTpEquipamento",
+      "cdTpEquipamento",
+      "descTpEquipamento",
+      "descIcone",
+      "fgMonitoramentoAtivo",
+      "vlDirecao",
+      "vlDirecaoOriginal",
+      "vlGrafico",
+      "cdEstado",
+      "descEstado",
+      "descOperacao",
+      "cdOperacao",
+      "descOperador",
+      "cdOperador",
+      "cdOrdemServico",
+      "dtHrLocal",
+      "fgTpAlerta",
+      "url",
+      "vlAlarme",
+      "descAlarme",
+      "type",
+      "deleted"
+    ],
+    "nota_derivados": "`id` = `${cdCliente}.${cdEquipamento}` (montado no worker). `coordinates` = geohash decodificado para [lon, lat]. `url` e `vlAlarme`/`descAlarme` NAO vem da API: sao derivados pelo Proxy hZ e pelos getters dos componentes (url = `icons/${fgTpEquipamento===84 ? 'i_pluviometro' : descIcone}` + (fgMonitoramentoAtivo==='F' ? '_off.png' : '.png'); vlAlarme = cor do alarme ativo do equipamento, senao null; vlDirecao = 90 - vlDirecao).",
+    "alarme_item_do_actual_state_alarme_e_do_stream": [
+      "id",
+      "coordinates",
+      "geohash",
+      "cdCliente",
+      "cdEquipamento",
+      "cdId",
+      "cdAlarme",
+      "descAlarme",
+      "descTpAlarme",
+      "cdTpAlarme",
+      "tpAlarme",
+      "fgTpAlarme",
+      "vlAlarme",
+      "vlAlarmeMaximoAtingido",
+      "vlPeso",
+      "vlCor",
+      "fgOnline",
+      "fgClassificacao",
+      "isAlarme",
+      "duracao",
+      "dtHrUtc",
+      "dtHrLocal",
+      "dtHrLocalInicial",
+      "dtHrLocalFinal",
+      "descJustificativa",
+      "cdJustificativa",
+      "descOperador",
+      "descEquipamento",
+      "descGrupoEquipamento",
+      "descOperacao",
+      "cdOperacao",
+      "itemId",
+      "requiresPassword",
+      "quantidade",
+      "cdOperador",
+      "coordinates"
+    ],
+    "telemetria_solix_setRealTimeData": [
+      "cdEquipamento",
+      "serialNumber",
+      "stop_reasons",
+      "numberSpectators",
+      "orderId",
+      "orderStatus",
+      "baseStation",
+      "connectionJitter",
+      "conectionLatency",
+      "connectionType"
+    ],
+    "framestream_solix_fields_solicitados": [
+      "heading",
+      "latitude",
+      "longitude",
+      "fleet",
+      "equipment_id",
+      "stop_reasons",
+      "stream_number_spectators",
+      "order_id",
+      "order_status",
+      "base_station",
+      "lh_link_type",
+      "lh_jitter",
+      "lh_latency"
+    ],
+    "dicionario_completo_de_campos_solix_telemetry": "165 chaves (lista em trechos_de_codigo['dic_solix']). Ex.: speed, gps_speed, gps_bearing, magnetic_bearing, gps_altitude, rtk_status, gps_status, tank_level, tank_level_left/right, tank_N_level, order_id, order_status, mission_*, left_motor_speed, right_motor_speed, input_flow, output_flow, output_psi, battery_percent, battery_voltage, hunter_*, sc_plant_*, ss_praga_*, frame_type, frame_time, frame_id, time, date, device.",
+    "rastro_trail_vector_tile_properties": [
+      "pIni",
+      "pFim",
+      "vlDirecao",
+      "velocidade",
+      "epochFim",
+      "corEstado",
+      "dtHrLocalInicial",
+      "dtHrLocalFinal",
+      "descEstado",
+      "descOperador",
+      "descOperacao",
+      "cdOrdemServico",
+      "distancia",
+      "horimetro",
+      "odometro",
+      "rpm",
+      "arrAlarmes"
+    ],
+    "arrAlarmes_item": [
+      "cdTpAlarme",
+      "descTpAlarme",
+      "vlCor"
+    ],
+    "resposta_equipaments_with_order_in_process": [
+      "cdEquipamento",
+      "descEquipamento",
+      "ordensDeServico (string CSV -> Number[])",
+      "tickets (string CSV -> string[])"
+    ],
+    "resposta_equipamento_filtered_active": [
+      "cdEquipamento",
+      "totalPages",
+      "content[]"
+    ],
+    "campos_NAO_encontrados_no_bundle": {
+      "idNivel": 0,
+      "dtHrInicial": 0,
+      "qtMinuto": 0,
+      "comentario": "essas 3 strings simplesmente nao existem em mapv4.js nem nos workers baixados. O bundle usa dtHrLocal / dtHrLocalInicial / dtHrLocalFinal / dtHrUtc / duracao. Provavelmente pertencem a outro frontend (app shell ou relatorio) ou a uma versao mais antiga do servico."
+    }
+  },
+  "polling": {
+    "conclusao": "O dado ao vivo do mapa NAO e pollado. e mantido por uma unica conexao HTTP chunked (NDJSON) aberta dentro de um Web Worker. Os timers encontrados sao de controle de UI/reconexao/lote, nao de polling de dados.",
+    "timers_comprovados": [
+      {
+        "alvo": "subscribeLiveWorker (conexao live de equipamentos/alarmes)",
+        "tipo": "fetch streaming contínuo (sem setInterval)",
+        "ms": "n/a - push do servidor",
+        "trecho": "for(;;){ const {done:f, value:p} = await o.read(); if(f) break; ... }"
+      },
+      {
+        "alvo": "reconexao do subscribe-live em erro (nao AbortError)",
+        "tipo": "setTimeout",
+        "ms": "1000",
+        "trecho": "catch(s){ Bo(s) && setTimeout(()=>{ n.aborted || Ci(e,t,r,n,{...}) }, 1e3) }"
+      },
+      {
+        "alvo": "worker inline de framestream Solix (/v3/aggregate/stream)",
+        "tipo": "setInterval de flush (Map agrupado por fleet -> postMessage)",
+        "ms": "3000 (u=3e3 / h; sobreponivel por dataUpdateInterval>=1000, que o SolixLayer NAO passa)",
+        "trecho": "setInterval(()=>{ e.size>0 && (self.postMessage(Array.from(e.values()).flat()), e.clear()) }, h)"
+      },
+      {
+        "alvo": "worker inline de framestream telemetry/generic (Refill RS-02-01 / Beekike RC-02)",
+        "tipo": "setInterval de flush",
+        "ms": "3000 (f=3e3)",
+        "trecho": "setInterval(()=>{ a.size>0 && (self.postMessage(Array.from(a.values())), a.clear()) }, p)"
+      },
+      {
+        "alvo": "worker inline $N da camada solix-exchanger (gera FeatureCollection p/ Mapbox)",
+        "tipo": "setInterval",
+        "ms": "3000 (o=3e3)",
+        "trecho": "setInterval(()=>{ if(n.size>0){ const t={type:\"FeatureCollection\",features:Array.from(n.values())}; n.clear(), self.postMessage(t) } }, r)"
+      },
+      {
+        "alvo": "reconnect/restart de stream em erro (GN e KN no main)",
+        "tipo": "window.setTimeout",
+        "ms": "1000 (timeout:1e3)",
+        "trecho": "function x(){ $y.timeoutId!=null && clearTimeout($y.timeoutId), $y.timeoutId = window.setTimeout(()=>{ M() }, $y.timeout) }"
+      },
+      {
+        "alvo": "re-filtro de robots (updateRobotsFilter) - debounce",
+        "tipo": "debounce/debounce-restart",
+        "ms": "1000 (+ 100ms de espera para reiniciar o stream)",
+        "trecho": "const y = Rce(_=>{ a=_ , c && A().then(()=>{ setTimeout(()=>{ M() }, 100) }) }, 1e3)"
+      },
+      {
+        "alvo": "refresh do snapshot actual-state (reacao a updateActualState)",
+        "tipo": "debounce de watcher (nao setInterval)",
+        "ms": "2000",
+        "trecho": "kt(this,\"onUpdateActualState\", yf(this.pipeline, 2e3, {})); ES([rr(\"updateActualState\")], h_.prototype, \"onUpdateActualState\", 2)"
+      },
+      {
+        "alvo": "refresh por mudanca de filtros (onSelectFilter / onSelectInput)",
+        "tipo": "debounce de watcher",
+        "ms": "1000",
+        "trecho": "kt(this,\"onSelectFilter\", yf(()=>this.pipeline(), 1e3, {}))"
+      },
+      {
+        "alvo": "contagem de duracao do alarme no painel/modal",
+        "tipo": "setInterval",
+        "ms": "1000",
+        "trecho": "mounted(){ this.showAlarmDuration && (this.alarmInterval = setInterval(()=>{ this.alarmDuration = this.calcAlarmDuration() }, 1e3)) }"
+      },
+      {
+        "alvo": "religio do rastro estatico na trilha (RastroMonitoramento)",
+        "tipo": "setInterval",
+        "ms": "5000",
+        "observacao": "e apenas uma copia local/estatica de monitoringState para o drawer do rastro, NAO busca dados",
+        "trecho": "mounted(){ this.$emit(\"onOpen\"), this.intervalId = window.setInterval(this.generateStaticMonitoringState, 5e3) }"
+      },
+      {
+        "alvo": "poll de fonte carregada (counties / overlay)",
+        "tipo": "setInterval",
+        "ms": "2000",
+        "trecho": "this.loadingSourceIntervalId = window.setInterval(()=>{ la && la.getSource(tp) && la.isSourceLoaded(tp) && (this.isLoadingSource=!1) }, 2e3)"
+      },
+      {
+        "alvo": "poll de carregamento de source do rastro (isArrowTrail)",
+        "tipo": "setInterval",
+        "ms": "3000",
+        "trecho": "setInterval(()=>{ b!=null && b.isSourceLoaded(...) && (I.value=!1) }, 3e3)"
+      },
+      {
+        "alvo": "auto-esconder mensagem de erro de favorito",
+        "tipo": "setTimeout",
+        "ms": "3000"
+      }
+    ],
+    "agora_vs_historico": {
+      "regra": "Agora = o item existe no `monitoringState` alimentado por actual-state + stream subscribe-live; cada item traz `dtHrLocal` (timestamp local do ultimo ponto) e `fgMonitoramentoAtivo` ('T' ativo / 'F' inativo, que troca o icone para _off.png). O stream tambem marca `deleted:true` para remover o equipamento. Historico = camadas de rastro pedidas com intervalo explicito `dt_ini`/`dt_fim` (e `idioma`), mais os filtros de data do drawer; a camada de rastro e re-buscada pelo cache-buster `update=`.",
+      "conversao_de_fuso": "props `timeZone` (default America/Sao_Paulo) vai para o modulo useTimezone; as datas da API sao tratadas com moment.utc(dtHrLocal,'DD/MM/YYYY HH:mm:ss') e formatadas por locale. No rastro BI (prop `rastroBI`) os epoch de start/end sao deslocados por `new Date().getTimezoneOffset()*60` + 86400 antes de virar dtIni/dtFim.",
+      "trecho": "const s=new Date().getTimezoneOffset()*60, b=parseInt(this.biRastro?.start)-s+86400, M=parseInt(this.biRastro?.end)-s; nm.setFilter({dtIni:b, dtFim:M})"
+    },
+    "sem_websocket": "grep: WebSocket=0, EventSource=0, socket.io=0 em mapv4.js (contagem literal)."
+  },
+  "alarmes": {
+    "resumo": "Ha dois canais de alarme: (a) o ao vivo, vindo de actual-state-alarme + stream subscribe-live com type=='alarme' dentro do monitoringWorker, consumido pelo store _i.alarmes; e (b) o painel/modal de alarmes historicos via REST {urlSgpa}/alarmeOnline/*.",
+    "como_aparece_no_mapa": [
+      "HALO PULSANTE sobre o equipamento: componente LayerCircleItem, div .layer-circle-item com .outer-circle.pulse-animation e .inner-circle; cor = data.vlAlarme (hex vindo da API), fallback '#4AA9B7'. Em modo compacto (SETTINGS USE_COMPACT_ALARM=='T') mostra so o circulo; senao mostra um v-card com icone mdi-alert-outline colorido + texto descAlarme.",
+      "ICONE DE ALERTA (distinto de alarme): LayerAlertIconItem usa mdi-alert-circle com cor = alertTypeColor[fgTpAlerta-1], sendo alertTypeColor = ['#FF4D4B' (vermelho), '#FEC928' (amarelo), '#3F45FF' (azul)].",
+      "BADGE na lista/drawer de multiplos equipamentos: v-icon mdi-alert-outline com color = getAlarm(cdEquipamento).vlAlarme.",
+      "SOM: new Audio('alarm/alarm.mp3') disparado por triggerAlarmRing() quando chega um alarme NOVO online (fgOnline==1) que ainda nao estava na lista.",
+      "As camadas só aparecem quando mapMode==='NORMAL' e showEquipmentLayer estiver ligado.",
+      "Nenhum camada Mapbox dedicada a alarme existe; o que existe ('alarm-table', 'alert-points-cluster-layer', 'trampling-alert-points-layer') e respectivamente a v-data-table do painel e os pontos de alerta de trampling (checkpoint_id), nao alarme de equipamento."
+    ],
+    "trechos": [
+      {
+        "titulo": "disparo de alarme novo -> som + addAlarme",
+        "codigo": "onProcessingAlarmes(t){let i=!1;for(const{reference:r,index:a}of ur.arrayIteratorAlarmes())if(r.id===t.id){i=!0,t.fgOnline===0?Rr.spliceAlarmes(a):Rr.updateAlarmes(t,r);break} i===!1&&t.fgOnline===1&&(this.triggerAlarmRing(),Rr.addAlarme(t)),this.putCoordinatesAlarmes()} ... triggerAlarmRing(){this.alarmRing.paused&&(this.alarmRing.load(),this.alarmRing.play().catch(()=>{}))}"
+      },
+      {
+        "titulo": "merge do halo de alarme no equipamento",
+        "codigo": "e===\"vlAlarme\" ? ((t=ur.getAlarmesFiltered().find(i=>i.id===n.id))==null?void 0:t.vlAlarme)||null : Reflect.get(n,e)"
+      },
+      {
+        "titulo": "selecao do alarme representativo por equipamento (menor vlPeso = mais grave)",
+        "codigo": "getAlarmesFiltered:()=>{const n=_i.alarmes.map(i=>i.id),e=[...new Set(n)],t=[];return e.forEach(i=>{const r=_i.alarmes.filter(a=>a.id==i).find((a,c,s)=>{const b=s.map(x=>Number(x.vlPeso??0),M=Math.min(...b);return Number(a.vlPeso??0)==M});r&&t.push(r)}),t}"
+      },
+      {
+        "titulo": "campos gravados no store quando um alarme chega/atualiza",
+        "codigo": "addAlarme:n=>{_i.alarmes.push(Object.assign({},n,{cdOperador:\"\",coordinates:null}))}, updateAlarmes:(n,e)=>{e.cdId=n.cdId,e.descAlarme=n.descAlarme,e.duracao=n.duracao,e.fgClassificacao=n.fgClassificacao,e.fgOnline=n.fgOnline,e.isAlarme=n.isAlarme,e.vlAlarme=n.vlAlarme,e.vlPeso=n.vlPeso}"
+      }
+    ],
+    "endpoints": [
+      {
+        "endpoint": "{urlApiMonitoramento}/actual-state-alarme?buId={cdUnit}&language={locale}  (default host https://api-usa.saas-solinftec.com/monitoramento/v2)",
+        "metodo": "POST (dentro de monitoringWorker, mensagem type='loadAlarmes')",
+        "campos": [
+          "geohash",
+          "cdCliente",
+          "cdEquipamento",
+          "vlPeso",
+          "id (derivada)",
+          "coordinates (derivada)"
+        ],
+        "frequencia_ms": "mesmos gatilhos do actual-state (sem timer); o contínuo vem do subscribe-live com type='alarme'",
+        "trecho": "if (e.data?.type === \"loadAlarmes\") { const {token:a, body:o, locale:s, cdUnit:f} = e.data.payload, p = jr + `/actual-state-alarme?buId=${f}&language=${s}`; const h = await Zs(p, \"POST\", o, g); nt.postMessage({type:\"onAlarmes\", payload:h}) }"
+      },
+      {
+        "endpoint": "{urlSgpa}/alarmeOnline/ocorrencias",
+        "metodo": "POST",
+        "corpo_ou_query": "body = `filtersDataUnselected` do painel de alarmes (objeto de filtros; enviado serializado); headers Content-Type: application/json + locale:1 + X-Auth-Token",
+        "campos": [
+          "descTpAlarme",
+          "quantidade"
+        ],
+        "trecho": "requestOccurrence:n=>{const e=ut.getUrlSgpa();return em(e+\"/alarmeOnline/ocorrencias\",{method:\"POST\",body:JSON.stringify(n),headers:{\"Content-Type\":\"application/json\",locale:\"1\"}}).then(u1)...}  // uso: this.occurrenceData = await gm.requestOccurrence(this.filtersDataUnselected); alarmChartData = occurrenceData.map(t=>({descTpAlarme:t.descTpAlarme,quantidade:t.quantidade}))"
+      },
+      {
+        "endpoint": "{urlSgpa}/alarmeOnline/por-equipamento/{cdEquipamento}",
+        "metodo": "GET",
+        "campos": [
+          "array de alarmes do equipamento (consumido como lista; mesmos campos do item de alarme)"
+        ],
+        "trecho": "requestAlarmsByEquipment:n=>{const e=ut.getUrlSgpa();return em(e+\"/alarmeOnline/por-equipamento/\"+n,{method:\"GET\",headers:{\"Content-Type\":\"application/json\",locale:\"1\"}})"
+      },
+      {
+        "endpoint": "{urlSgpa}/alarmeOnline/alarme-filtros",
+        "metodo": "GET",
+        "campos": [
+          "opcoes de filtro (tpEquipamento / tpAlarme / unidades)"
+        ],
+        "trecho": "requestFilters:()=>{const n=ut.getUrlSgpa();return em(n+\"/alarmeOnline/alarme-filtros\",{method:\"GET\",headers:{\"Content-Type\":\"application/json\",locale:\"1\"}})"
+      },
+      {
+        "endpoint": "{urlSgpa}/alarmeOnline/filtrados/v2?page={page}&size={size}",
+        "metodo": "POST",
+        "corpo_ou_query": "body = objeto de filtros do painel; paginacao por query page/size (default 0/10)",
+        "campos": [
+          "content[]",
+          "totalElements",
+          "totalPages",
+          "cdId",
+          "cdEquipamento",
+          "descEquipamento",
+          "cdOperacao",
+          "descOperacao",
+          "descTpAlarme",
+          "descGrupoEquipamento",
+          "dtHrLocal",
+          "vlAlarme",
+          "vlAlarmeMaximoAtingido",
+          "descJustificativa",
+          "fgClassificacao",
+          "itemId (derivada: cdId+descOperacao+cdOperacao)"
+        ],
+        "trecho": "requestFilteredAlarms:(n,e=0,t=10)=>{const i=ut.getUrlSgpa();return em(i+`/alarmeOnline/filtrados/v2?page=${e}&size=${t}`,{method:\"POST\",...body:JSON.stringify(n)}) ... c.value.content = c.value.content.map(je=>Object.assign({},je,{itemId:je.cdId+je.descOperacao+je.cdOperacao}))"
+      },
+      {
+        "endpoint": "{urlSgpa}/alarmeOnline/setJustificativas",
+        "metodo": "POST",
+        "campos": "resposta tratada como texto puro (t.text())",
+        "trecho": "sendJustify:n=>{const e=ut.getUrlSgpa();return em(e+\"/alarmeOnline/setJustificativas\",{method:\"POST\",...,body:JSON.stringify(n)}).then(t=>{if(t.status===200)return t.text();throw t})}"
+      },
+      {
+        "endpoint": "{urlSgpa}/alarmeOnline/justificativas/filtro-tipo-equipamento-tipo-alarme?tpEquipamento={n}&tpAlarme={e}",
+        "metodo": "GET",
+        "trecho": "requestJustify:(n,e)=>{const t=ut.getUrlSgpa();return em(t+`/alarmeOnline/justificativas/filtro-tipo-equipamento-tipo-alarme?tpEquipamento=${n}&tpAlarme=${e}`,{method:\"GET\",...}"
+      },
+      {
+        "endpoint": "{urlSgpa}/alarmeOnline/historico-msg/{cdAlarme}?idioma={locale}",
+        "metodo": "GET",
+        "campos": [
+          "vlMensagem",
+          "descMensagem",
+          "dtHrUtc"
+        ],
+        "trecho": "requestRuleInfo:(n,e)=>{const t=ut.getUrlSgpa();return em(`${t}/alarmeOnline/historico-msg/${n}?idioma=${e}`,{method:\"GET\",...}"
+      },
+      {
+        "endpoint": "{urlSgpa}/alarmeOnline/valores/{cdAlarme}",
+        "metodo": "GET",
+        "trecho": "requestValueDetails:n=>{const e=ut.getUrlSgpa();return em(`${e}/alarmeOnline/valores/${n}`,{method:\"GET\",...}"
+      },
+      {
+        "endpoint": "{urlSgpa}/alarmeOnline?ativo=true&idioma=pt-br",
+        "metodo": "GET",
+        "campos": [
+          "cdAlarme",
+          "descAlarme",
+          "tpAlarme",
+          "cdTpAlarme",
+          "corAlarme"
+        ],
+        "trecho": "requestAlarms:()=>{const n=ut.getUrlSgpa();return em(n+\"/alarmeOnline?ativo=true&idioma=pt-br\",{method:\"GET\",...})}"
+      }
+    ],
+    "palavras_chave_procuradas": {
+      "metodologia": "contagens literais em mapv4.js; cs = case-sensitive, ci = case-insensitive",
+      "Alarme": "cs=174 ci=174 (muito presente)",
+      "alarmeOnline": "cs=9 (9 chamadas REST no servico gm)",
+      "Alerta": "cs=18 ci=27 -> fgTpAlerta + alertTypeColor; alerta e distinto de alarme",
+      "warning": "cs=23 ci=29 (mapeamento de nivel de alerta em i18n/CSS)",
+      "velocidade": "cs=21 ci=55. Aparece como (a) chave de i18n do popup de rastro e (b) propriedade do tile de rastro: this.marker.velocidade e const {pIni,pFim,vlDirecao,velocidade,epochFim,corEstado}=this.points[...]. NAO ha campo 'velocidade' no objeto de alarme.",
+      "rpm": "cs=54 ci=132. Chaves reais de dados sao 'rpm engine'/'desired rpm' (i18n de CanbusData), vlPump1Rpm/vlPump2Rpm (tank/pump monitoring) e 'rpm' como propriedade do tile de rastro. NAO ha campo 'rpm' no objeto de alarme.",
+      "exced": "cs=2 ci=2 (texto de legenda, nao campo)",
+      "troca": "cs=0 ci=1 (i18n 'Trocar coordenadas')",
+      "turno": "cs=6 ci=20 (i18n/filtros de turno; nao ha campo de alarme de troca de turno)",
+      "cerca": "cs=16 ci=21 -> camada de CERCA VIRTUAL: tiles {urlTileServiceGo}/v4/cerca-virtual/... + NavDrawerCercaVirtual + showVirtualFence + selectedVirtualFence + VirtualFenceDetail. Campos do tile/entidade: cd_cerca_virtual, desc_cerca_virtual, dt_final.",
+      "fence": "cs=7 ci=47 (virtual-fence-layer-source / virtual_fence / LayerVirtualFence / VirtualFenceDetail)",
+      "desvio": "cs=0 ci=1 (apenas 'Desvio Padrão' em estatistica de grafico). NAO existe logica de 'alarme de desvio de cerca' neste bundle.",
+      "idNivel": "cs=0",
+      "dtHrInicial": "cs=0",
+      "qtMinuto": "cs=0"
+    }
+  },
+  "protocolo_postmessage": {
+    "resumo": "O iframe so ESCUTA um tipo ('props') e so ENVIA 4 tipos, todos disparados por botoes do drawer de detalhe do equipamento. NAO existe evento de 'selecao' nem de 'zoom/movimento' para o pai, e NAO existe mensagem recebida para centralizar/destacar equipamento. A unica forma de mandar o mapa centralizar num equipamento e pela prop rastroBI dentro do proprio 'props'.",
+    "ouvinte": "window.addEventListener('message', this.onWindowMessage, !1) no componente App (removido em beforeDestroy com flag isDestroyed)",
+    "validacao": "checkPostedMessage(data) exige tipos exatos: cdCliente:number, cdUnidadeRegional:number[] nao-vazio, token:string, grupo:number, locale:string, urlSgp:string, environmentStage:string, user:string, userGroupId:number, urlServiceGo:string, urlTileServiceGo:string, urlInterpolationServiceGo:string. Se qualquer um falhar, a mensagem e silenciosamente ignorada (apenas console.error em excecao).",
+    "props_aceitasalem_de_validadas": [
+      "cdCliente",
+      "cdUnidadeRegional",
+      "token",
+      "grupo",
+      "locale",
+      "locations",
+      "urlSgp",
+      "environmentStage",
+      "user",
+      "userGroupId",
+      "urlSgpa",
+      "rastroBI",
+      "urlTileServiceGo",
+      "urlServiceGo",
+      "urlInterpolationServiceGo",
+      "descUnidade",
+      "mixpanel",
+      "environmentType",
+      "workOrderSelected",
+      "timeZone",
+      "apiRobot",
+      "apiRobotMap",
+      "apiRobotCommandOnline",
+      "apiRobotProcessingPhyton",
+      "apiRobotStream",
+      "apiMapEditor",
+      "apiBoundariesService",
+      "isAdmin"
+    ],
+    "props_nao_lidas_pelo_iframe": [
+      "showEquipmentId (so existe como prop interna do componente SelectedEquipmentDrawer, fixada em true pelo proprio mapa)"
+    ],
+    "efeito_colateral_do_props": "cada 'props' valido roda pipeline(): grava tudo no store global (Ja.set*) e entao setUrls -> setPermission -> setStructGFF -> setUnitGroupProfiles -> setTelemetria -> setBreakTimes, e propsResolved=true (o mapa so monta depois disso). Ou seja, reenviar 'props' re-inicializa o mapa.",
+    "tipos_recebidos": [
+      "props"
+    ],
+    "tipos_emitidos": [
+      "event-online-message",
+      "event-online-command",
+      "event-calibration-rtk",
+      "event-meteorology-click"
+    ],
+    "formato_emitido": "STRING JSON (nao objeto): parent.window.postMessage(JSON.stringify({type, payload:{cdEquipamento, descEquipamento}}), '*') - o host precisa dar JSON.parse em event.data",
+    "selecao_exportada": false,
+    "como_o_host_sabe_o_equipamento_selecionado": "Nao sabe de forma reativa. A selecao vive apenas no store interno (`_i.selectedEquipment`, via Rr.setSelectedEquipment / ur.getSelectedEquipment), que NAO esta em window. O unico vazamento para o pai e indireto: quando o usuario clica em 'Mensagem', 'Comando', 'Meteorologia' ou 'Calibracao RTK' no drawer do equipamento, o mapa envia o evento correspondente contendo cdEquipamento e descEquipamento do equipamento atualmente selecionado. Alternativas locais: (a) ler window.mapref + hooks; (b) acessar a instancia raiz Vue 2 (document.querySelector('#app').__vue__) e caminhar ate o componente Monitoring; (c) interceptar o clique na camada deck.gl 'layer-monitoramento-equipamentos-custom' via mapref.on('click').",
+    "como_centralizar_equipamento": "Oficialmente pelo props.rastroBI: se rastroBI = {equipment:<cdEquipamento>} sem start/end, o mapa faz findEquipmentActualState(equipment) -> mapref.flyTo({center:coords, zoom:20, offset:[-350,0]}) E abre o popup do equipamento (equivalente a um clique). Se rastroBI vier com start/end (epoch em segundos), ele abre o RASTRO do equipamento no periodo. Fora isso, como o iframe nao escuta nada alem de 'props', a alternativa direta e chamar window.mapref.flyTo({center:[lon,lat]}) de dentro do proprio frame (console/devtools) - as coordenadas estao em cada item de monitoringState como `coordinates`.",
+    "trecho_recebimento": "onWindowMessage(t){ try{ const i=t.data; if(i?.type===\"props\" && this.checkPostedMessage(i?.data)){ const{cdCliente:r,cdUnidadeRegional:a,token:c,grupo:s,locale:b,locations:M,urlSgp:A,environmentStage:x,user:y,userGroupId:_,urlSgpa:m,rastroBI:p,urlTileServiceGo:g,urlServiceGo:S,urlInterpolationServiceGo:w,descUnidade:D,mixpanel:I,environmentType:k,workOrderSelected:N,timeZone:Z,apiRobot:J,apiRobotMap:H,apiRobotCommandOnline:ie,apiRobotProcessingPhyton:W,apiRobotStream:ee,apiMapEditor:Y,apiBoundariesService:te,isAdmin:q}=i.data; ... this.pipeline() } }catch(i){console.error(i)} }",
+    "trecho_emissao": "function s(x){ var y,_; Ja.setFullScreen(!1), parent.window.postMessage(JSON.stringify({type:x, payload:{cdEquipamento:(y=t.value)==null?void 0:y.cdEquipamento, descEquipamento:(_=t.value)==null?void 0:_.descEquipamento}}), \"*\") } // x em: \"event-online-message\" | \"event-online-command\" | \"event-calibration-rtk\" | \"event-meteorology-click\"; // t = sn(()=>ur.getSelectedEquipment())",
+    "trecho_centralizar": "openEquipmentPopup(){ var t,i,r; if(this.biRastro?.equipment && !this.biRastro?.start && !this.biRastro?.end){ const a = op.findEquipmentActualState(this.biRastro.equipment); a && (this.mapref.flyTo({center:a.coordinates, zoom:20, offset:[-350,0]}), this.onClickLayerEq(a)) } } onClickLayerEq(t){ Rr.setSelectedEquipment(t), this.shouldOpenAsPopup && (this.isEquipmentPopupOpen = !0) }",
+    "web_components_carregados": [
+      "solinftec-wc-trail-timeline (timeline do rastro; src por ambiente: prod/homolog/dev .../solinftec-wc-trail-timeline-prod/solinftec-wc-trail-timeline.es.js), registrado via customElements e receiving token/client/unit/user/backServer/urlSgpa/urlCrudApi como attrs/props",
+      "wc-select-fields (solinftec-wc-select-fields[-ts-prod]/wc-select-fields.min.js)",
+      "solinftec-wc-legend, solinftec-wc-robot-v3, solinftec-wc-timeline-workorders (nomes presentes no bundle)"
+    ],
+    "_urls_de_navegacao_para_o_host": "window.open(`${window.location!=window.parent.location ? document.referrer : document.location.href}#!/details/supplyReport?cdEquipamento=<id>&start=<YYYY-MM-DD HH:mm:ss>&end=<...>`, '_blank') - i.e. o mapa assume que o host e uma SPA com rota hash #!/details/supplyReport"
+  },
+  "ganchos_window": {
+    "principais": [
+      "window.mapref = this.mapref  (instancia Mapbox GL JS; atribuida no mounted() do MapboxV4; lida em 18 lugares)",
+      "window.mapref.__deck  (objeto deck.gl; exposto pelo Mapbox/deck integration - usado para pickMultipleObjects e getCursor)",
+      "globalThis.deck / globalThis.luma / globalThis.loaders  (setados por deck.gl @luma.gl)",
+      "document.querySelector('#app').__vue__  (Vue 2.7.10 grava __vue__ no $el de cada componente; da para caminhar $children/$parent e ler getters como monitoringState/selectedEquipment/alarms)",
+      "window.addEventListener('message')  (unico ponto de entrada real do host)",
+      "window.addEventListener('pagehide')  (o iframe se desliga do stream ao sair)",
+      "document.addEventListener('visibilitychange')  (pausa animacao de coordenadas quando hidden)"
+    ],
+    "secundarios": [
+      "window.clearInterval / window.setInterval (timers de UI)",
+      "window.open (navegacao para o host)",
+      "window.location.origin + pathname  (usado para montar URLs de icone passadas ao web component)",
+      "window.URL / window.webkitURL (blobs de worker)",
+      "window.ontransitionend / window.onanimationend (polyfills do Mapbox)",
+      "window.process = (defineProperty do loaders.gl)"
+    ],
+    "localStorage_chaves": [
+      "satelliteMode",
+      "showLayerMonitoring",
+      "FiltersGrpSgpStorage",
+      "FiltersTypeSgpStorage",
+      "FiltersLtVwSgpStorage",
+      "chaves de mixpanel/ACCESS_TOKEN (prefixo do SDK de eventos)"
+    ],
+    "flags_devtools": [
+      "__VUE_DEVTOOLS_GLOBAL_HOOK__ (checagem padrao do Vue; `devtools && tE.emit(...)`)",
+      "config devtools:!1 default do Vue; nao ha flag propria tipo window.__MAPV4_DEBUG__"
+    ],
+    "nota": "Nenhuma API publica de integracao (tipo window.mapv4 = {...} / postMessage reply) e exposta. O gancho utilizavel hoje e window.mapref."
+  },
+  "trechos_de_codigo": {
+    "fabrica_do_worker": "function j8(){ return new Worker(\"/solinftec-pwa-mapv4-prod/assets/monitoringWorker-190e5647.js\") }",
+    "store_observavel_monitoring": "_i = Gn.observable({worker:new j8, monitoringState:[], toApplyCoordinates:[], hasKafkaStreamCoordinates:Math.random(), hasKafkaStream:Math.random(), updateActualState:Math.random(), alarmes:[], filters:{}, satelliteMode:'Satellite', showDescTalhao:!0, showLayerMonitoring:!0, selectedEquipmentTrail:null, selectedEquipment:null, search:'', cfgProc:[], group: JSON.parse(localStorage.getItem('FiltersGrpSgpStorage')), listType:[], lastActive:[], selectedlastActive:..., type:..., showLegend:!0, equipmentsByPermission:[], isTelemetria:!1, equipmentTypeParams:[], equipmentTypeHasTrail:[], equipmentTypeHasState:[], equipmentTypeHasSpin:[], fleetsFilteredSgp:[], showMeteoGraph:!1, monitoringLegend:[]})",
+    "fetchGenerator_transversal": "async function n(e,t){ const i=ut.getUnidadeRegional(), r=ut.getLocale(); t.headers = t.headers!=null && 'X-Auth-Token' in t.headers ? t.headers : {...t.headers,'X-Auth-Token':ut.getToken()}; const a=e.includes('?')?'&':'?'; let c=e; e.includes('buId=') || (c += `${a}buId=${i}`); c.includes('language=') || (c += (c.includes('?')?'&':'?') + `language=${r}`); const s=await fetch(c,t); if(s.ok) return s; if(s.status===401) throw new Error(`Authentication required. Status: ${s.status}`); ... }",
+    "payload_enviado_ao_worker": "get payload(){ return { token:this.token, locale:this.locale, cdUnit:this.cdUnidadeRegional, body: JSON.stringify({ cdCliente:[this.cdCliente], cdUnidade:this.cdUnidadeRegional, cdEquipamento:this.equipmentsMonitoring, cdGrupoEquipamento: ed(Hn.getWorkFrontFilter()), fgTpEquipamento: ed(Hn.getTypeFilter()), cdEquipe: ed(Hn.getTeamFilter()), cdOperacao: ed(Hn.getOperationFilter()), cdGrupoAtividade: ed(Hn.getOperationTypeFilter()), cdGrupoOperacao: ed(Hn.getOperationGroupFilter()), cdOperador: ed(Hn.getOperatorFilter()), cdLocation: this.locations, isTelemetria: this.isTelemetria, restrictOnEmptyCdEquipamento: !this.useWorkOrder }) } }",
+    "worker_normalizador_de_equipamentos": "Xs = function(e,t,r,n){ const i=[]; return qs(e,{method:t,headers:n,body:r}).then(a=>{ if(!a.ok) throw new Error('Failed to load equipment. Status: '+a.statusText); return a.json() }) .then(a => ( a.forEach(o => { const s = o.geohash && N.decode(o.geohash), f = s && [s.lon,s.lat], p = `${o.cdCliente}.${o.cdEquipamento}`; i.push(Object.assign({}, o, {coordinates: f, id: p})) }), i.sort((o,s)=>{ const f=Number($i(o.fgTpEquipamento)), p=Number($i(s.fgTpEquipamento)); return f!==p ? f-p : o.fgTpEquipamento-s.fgTpEquipamento }), i)) }",
+    "worker_normalizador_de_alarmes": "Zs = async (e,t,r,n) => { const a = await Ks(e,{method:t,headers:n,body:r}); if(a.body===null) return []; return (await a.json()).map(s => { const f = s.geohash && N.decode(s.geohash), p = f && [f.lon,f.lat]; return Object.assign(s, { id: `${s.cdCliente}.${s.cdEquipamento}`, vlPeso: s.vlPeso, coordinates: p }) }) }",
+    "setStream_encaminhado_ao_live_worker": "if (e.data?.type === \"setStream\") { const {body:a, token:o, cdUnit:s, locale:f} = e.data.payload, p = jr; Pr.postMessage({url:p, body:a, token:o, locale:f, cdUnit:s}) } Pr.addEventListener(\"message\", a => nt.postMessage(a.data)); e.data?.type === \"stopStream\" && Pr.postMessage(\"stopStream\")",
+    "live_worker_decodifica_ndjson": "function Uo(e){ const t = e.map(r => { if (r.type === \"monitoramento\") { const n = `${r.cdCliente}.${r.cdEquipamento}`; if (\"geohash\" in r) { const i = D.decode(r.geohash); r.geohash = [i.lon, i.lat] } return Object.assign(r,{id:n}) } if (r.type === \"alarme\") { const n = `${r.cdCliente}.${r.cdEquipamento}`; return Object.assign(r,{id:n}) } return r }); Tr.postMessage({type:\"onProcessing\", payload:t}) }",
+    "consumo_do_snapshot_no_main": "pipeline(){ this.worker.postMessage({type:\"loadActualState\", payload:this.payload}) } onMessage(t){ if(t.data?.type===\"onActualState\"){ const c=t.data.payload; c.length && Rr.resetMonitoringState(); for(const s of this.arrayIterator(c)) s.vlDirecaoOriginal=s.vlDirecao, Rr.pushMonitoringState(new Proxy(s,hZ)), s.vlDirecao = bk(s.fgTpEquipamento) ? 90 : s.vlDirecaoOriginal; ur.getMonitoringState().length && this.$emit(\"onActualState\",!0) } }",
+    "consumo_do_stream_no_main": "pipeline(){ this.onStopSubscribe(), this.worker.postMessage({type:\"setStream\", payload:this.payload}) } onStopSubscribe(){ this.worker.postMessage({type:\"stopStream\"}) } onMessage(t){ if(t.data?.type===\"onProcessing\" && this.hasMonitoringState){ const r=t.data.payload, a=r.filter(s=>s.type===\"monitoramento\"), c=r.filter(s=>s.type===\"alarme\"); for(const s of a) this.onProcessingMonitoramento(s); for(const s of c) this.onProcessingAlarmes(s) } }",
+    "camada_deck_dos_equipamentos": "const jy = \"layer-monitoramento-equipamentos-custom\"; ... sp = new BN({ id: jy, visible: this.showEquipmentLayer, type: oce /*IconLayer*/, data: this.monitoringState, pickable: !0, sizeScale: 7, sizeUnits: \"pixels\", getPosition: t => t.coordinates, getAngle: t => t.vlDirecao, getIcon: t => ({url: t.url, width:160, height:160}), size: UM, getColor: this.hexToRgb, onClick: this.onClick })",
+    "cor_de_estado_vlGrafico": "hexToRgb(t){ if (t.vlGrafico && typeof t.vlGrafico==\"string\" && t.fgMonitoramentoAtivo===\"T\" && this.equipmentTypeHasState.includes(t.fgTpEquipamento)) { const i = parseInt(t.vlGrafico.trim().substring(1),16); return [i>>16&255, i>>8&255, i&255] } return [255,255,255,0] }",
+    "proxy_de_camadas_derivadas": "const hZ = { get(n,e){ if(e===\"url\"){ const i = n.fgTpEquipamento===84 ? \"i_pluviometro\" : n.descIcone; return `icons/${ n.fgMonitoramentoAtivo===\"F\" ? i+\"_off.png\" : i+\".png\" }` } return e===\"vlDirecao\" ? 90-n.vlDirecao : e===\"vlAlarme\" ? (ur.getAlarmesFiltered().find(i=>i.id===n.id)?.vlAlarme)||null : Reflect.get(n,e) }, set(n,e,t){ return typeof t==\"number\" ? Reflect.set(n,e,t) : t==null ? Reflect.get(n,e) : Reflect.set(n,e,t), !0 } }",
+    "worker_solix_exchanger_inline": "const r = 3e3 /* o=3e3 */; self.onmessage = function(t){ for(const e of t.data) a(e.latitude,e.longitude) && n.set(e.fleet, {type:\"Feature\", id:e.fleet, geometry:{type:\"Point\", coordinates:[e.longitude,e.latitude]}, properties:{fleet:e.fleet, cdEquipment:e.equipment_id, heading:e.heading-90}}) }; setInterval(()=>{ if(n.size>0){ const t={type:\"FeatureCollection\",features:Array.from(n.values())}; n.clear(), self.postMessage(t) } }, r)",
+    "camada_solix_no_mapbox": "s1=\"solix-exchanger-layer-id\", o1=\"solix-exchanger-source-id\", zM=\"solix-icon\"; e.addLayer({id:s1, type:\"symbol\", source:o1, layout:{\"icon-image\":zM,\"icon-allow-overlap\":!0,\"icon-rotate\":[\"get\",\"heading\"],\"icon-rotation-alignment\":\"map\",\"icon-keep-upright\":!0,\"icon-size\":.9}}); e.on(\"click\", s1, _)  // _ repassa features[0].properties ao callback",
+    "telemetria_solix_para_o_store": "b.equipment_id && b.fleet && Do.setRealTimeData({cdEquipamento:b.equipment_id, serialNumber:b.fleet, stop_reasons:b.stop_reasons, numberSpectators:b.stream_number_spectators??0, orderId:b.order_id, orderStatus:b.order_status, baseStation:b.base_station, connectionJitter:b.lh_jitter, conectionLatency:b.lh_latency, connectionType:b.lh_link_type})",
+    "alarme_halo_no_mapa": "get vlItem(){ return this.data.vlAlarme || \"#4AA9B7\" }  get circleStyle(){ return {background:this.vlItem+\"30\", width:`${this.innerCircleSize+Math.floor(this.innerCircleSize/3)}px`, border:`2px solid ${this.vlItem+\"60\"}`} }  get innerCircleStyle(){ return {background:this.vlItem+\"60\", border:`2px solid ${this.vlItem}`} }  // template: div.layer-circle-item > div.outer-circle.pulse-animation > div.inner-circle   (ou v-card com mdi-alert-outline colorido + descAlarme)",
+    "alarme_vs_alerta": "const uue = [\"#FF4D4B\",\"#FEC928\",\"#3F45FF\"]; ... color: e.alertTypeColor[Number(e.data.fgTpAlerta)-1]  // mdi-alert-circle",
+    "click_no_equipamento": "onClick(t){ SA.toggleIsDeckEvent(); if (this.mapref.__deck) { const i = Tk(this.mapref.__deck.pickMultipleObjects({x:t.x,y:t.y,radius:2,layerIds:[jy]}),\"index\"); i.length===1 ? this.emitPopupEvent(t) : this.multipleObjects = i } }  emitPopupEvent(t){ this.$emit(\"onClick\", t.object) }  // no componente Monitoring: on:{onClick:e.onClickLayerEq} -> onClickLayerEq(t){ Rr.setSelectedEquipment(t), ... }",
+    "window_mapref": "sm.accessToken = \"pk.[REDADATADO]\"; const i = {container:this.$refs.inject, style:\"mapbox://styles/solinftec-dev/cjasfb7cpj6qo2rn0u09jl604\", transformRequest:this.transformRequest}; this.mapref = new sm.Map(i); ... window.mapref = this.mapref; this.mapref.on(\"load\", this.onLoad)",
+    "dic_solix": [
+      "GPS",
+      "Destination",
+      "Power",
+      "Alarms",
+      "Sprayer",
+      "Scout",
+      "Hunter",
+      "acc_power",
+      "aggregation_datetime",
+      "altitude",
+      "base_station",
+      "battery_percent",
+      "battery_power",
+      "battery_voltage",
+      "equipment_id",
+      "current_destination_point_index",
+      "current_destination_point_latitude",
+      "current_destination_point_longitude",
+      "current_destination_point_speed",
+      "date",
+      "destination_point_index",
+      "device",
+      "electronic_power",
+      "fleet",
+      "front_quality",
+      "gps_altitude",
+      "gps_base_id",
+      "gps_bearing",
+      "gps_latitude",
+      "gps_longitude",
+      "gps_speed",
+      "gps_status",
+      "heading",
+      "hunter_alarms",
+      "hunter_grid1",
+      "hunter_grid2",
+      "hunter_grid3",
+      "hunter_grid4",
+      "hunter_mission_actual_time",
+      "hunter_mission_duration",
+      "hunter_short_curt_count",
+      "input_flow",
+      "input_flow_left",
+      "input_flow_right",
+      "input_psi_left",
+      "input_psi_right",
+      "latitude",
+      "left_alarm",
+      "left_motor_command",
+      "left_motor_speed",
+      "left_power",
+      "longitude",
+      "magnetic_bearing",
+      "mission_actions",
+      "mission_category",
+      "mission_point_count",
+      "mission_point_index",
+      "mission_way_point_count",
+      "mission_way_point_index",
+      "order_id",
+      "order_status",
+      "order_type",
+      "output_flow",
+      "output_flow_left",
+      "output_flow_right",
+      "output_psi",
+      "output_psi_left",
+      "output_psi_right",
+      "panel_power",
+      "panel_voltage",
+      "pitch_angle",
+      "power_sensors_id_frame",
+      "power_sensors_status",
+      "pump_pwm_left",
+      "pump_pwm_right",
+      "rear_quality",
+      "remote_controlled",
+      "right_alarm",
+      "right_motor_command",
+      "right_motor_speed",
+      "right_power",
+      "roll_angle",
+      "rtk_status",
+      "sb02_status",
+      "sc_plant_camera_status",
+      "sc_plant_number_of_photos",
+      "sc_plant_order_id",
+      "secds_to_back_when_out_workhours",
+      "speed",
+      "sp02_alarms",
+      "sp02_alarms_left",
+      "sp02_alarms_right",
+      "sp02_status_left",
+      "sp02_status_right",
+      "sprayer_status",
+      "ss_praga_camera_status",
+      "ss_praga_number_of_photos",
+      "ss_praga_order_id",
+      "stop_reasons",
+      "stop_pressed",
+      "tank_level",
+      "tank_level_left",
+      "tank_level_right",
+      "time",
+      "frame_type",
+      "frame_time",
+      "frame_id",
+      "equipment_type",
+      "frameid",
+      "stops_and_pauses_types",
+      "docking_status",
+      "robot_id",
+      "station_status",
+      "sensors_status",
+      "output_pressure",
+      "air_pressure",
+      "active_docking_power",
+      "active_pump_power",
+      "active_air_compressor_power",
+      "active_air_valve",
+      "active_output_valve",
+      "active_pump_bypass_valve",
+      "active_docking_valve",
+      "active_level_sensors_power",
+      "active_reserved",
+      "tank_0_level",
+      "tank_0_output_valve",
+      "tank_0_recirculate_valve",
+      "tank_0_litters",
+      "tank_1_level",
+      "tank_1_output_valve",
+      "tank_1_recirculate_valve",
+      "tank_1_litters",
+      "tank_2_level",
+      "tank_2_output_valve",
+      "tank_2_recirculate_valve",
+      "tank_2_litters",
+      "tank_3_level",
+      "tank_3_output_valve",
+      "tank_3_recirculate_valve",
+      "tank_3_litters",
+      "tank_4_level",
+      "tank_4_output_valve",
+      "tank_4_recirculate_valve",
+      "tank_4_litters",
+      "tank_5_level",
+      "tank_5_output_valve",
+      "tank_5_recirculate_valve",
+      "tank_5_litters",
+      "tank_6_level",
+      "tank_6_output_valve",
+      "tank_6_recirculate_valve",
+      "tank_6_litters",
+      "tank_7_level",
+      "tank_7_output_valve",
+      "tank_7_recirculate_valve",
+      "tank_7_litters",
+      "tank_8_level",
+      "tank_8_output_valve",
+      "tank_8_recirculate_valve",
+      "tank_8_litters",
+      "tank_9_level",
+      "tank_9_output_valve",
+      "tank_9_recirculate_valve",
+      "tank_9_litters"
+    ]
+  },
+  "incertezas": [
+    "HOST HARDCODIDO: o monitoringWorker baixado de .../solinftec-pwa-mapv4-prod/ traz jr = 'https://api-usa.saas-solinftec.com/monitoramento/v2' fixo, identico ao default urlApiMonitoramento do bundle. O worker NAO recebe host algum do main thread (so token/body/locale/cdUnit). Conclusao: para clientes BR o live/actual-state tambem bate em api-usa, OU a Solinftec serve um worker com hash/host diferente por regiao. NAO foi possivel confirmar porque so existe esse hash publicado no path prod.",
+    "O bundle em analise (mapv4.js) nao contem a string dos VITE_* preenchidas (aparecem como {}), entao os defaults vistos (cdCliente 100012, urlSgp http://localhost:4445, user rafael.takagi) sao fallbacks de build local, NAO valores de producao. Isso reforca que os props reais so chegam via postMessage.",
+    "Hosts de framestream: o mapa jN so tem P/H/D; nao existe variant BR para /v3/aggregate/stream nem /v3/telemetry/generic no bundle. Para environmentStage 'H' o SolixLayer explicitamente converte para 'D' (apis-development), entao em homologacao a telemetria Solix vai para dev.",
+    "Corpos exatos de /alarmeOnline/ocorrencias e /alarmeOnline/filtrados/v2 sao construidos a partir de objetos de filtro do painel (filtersDataUnselected) que sao montados em varios lugares; a estrutura completa de chave/valor nao foi serializada no codigo de forma unica - registrei os campos que aparecem na RESPOSTA (com prova) e o fato de o request ser POST JSON.",
+    "Nao ha prova em codigo de que /equipamentos/status/{id} seja pollado; ele e chamado pontualmente. O mesmo vale para setEquipmentInnactive.",
+    "Os campos dtHrInicial, qtMinuto e idNivel (citados na tarefa) nao existem no bundle nem nos workers baixados. Pode haver outro frontend/versao servindo esses nomes; aqui o equivalente observado e dtHrLocal / dtHrLocalInicial / duracao / fgClassificacao (nivel do alerta).",
+    "A lista de 165 chaves do dicionario Solix e o vocabulario de response_fields possiveis do framestream; nao garante que todas venham em cada quadro/frame (a chamda pede apenas 5 ou 11 campos especificos).",
+    "Se a prop 'props' for enviada mais de uma vez, o mapa roda pipeline() de novo e re-cria a cascata de inicializacao (permissoes, parametros gerais, telemetria, break times). Nao ha evidencia de guard contra re-execucao alem do propsResolved. Comportamento em reenvio repetido deve ser testado.",
+    "window.mapref e __vue__ sao ganchos de contorno (não documentados). Podem mudar a qualquer build; nada neles e versionado como contrato.",
+    "O worker de monitoramento e o subscribeLiveWorker foram obtidos por HTTP publico (200) sem token; analise estatica, sem execucao real - frequencias de chegada de frames do servidor (ex.: quantos segundos entre 'monitoramento' por equipamento) nao puderam ser medidas."
+  ]
+}

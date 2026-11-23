@@ -1,0 +1,382 @@
+:root {
+  --bg: #0f1720;
+  --bar: #16212c;
+  --line: #24313f;
+  --ink: #e6edf3;
+  --muted: #93a4b3;
+  --ok: #43a047;
+  --bp-verde: #006c30;
+  --bp-amarelo: #f0cc0c;
+  --bp-vermelho: #d82424;
+  --warn: #e0a106;
+  --danger: #e05252;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  overscroll-behavior: none;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+#bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  padding-top: calc(6px + env(safe-area-inset-top));
+  background: var(--bar);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+  position: relative;
+}
+
+/* filete com as cores do brasão, embaixo da barra */
+#bar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--bp-vermelho) 0 33%,
+    var(--bp-amarelo) 33% 66%,
+    var(--bp-verde) 66% 100%
+  );
+  opacity: 0.9;
+}
+
+#brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  min-width: 0;
+}
+
+#brand img {
+  border-radius: 50%;
+  flex: none;
+  /* halo claro para o brasão não sumir no fundo escuro */
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.16), 0 2px 6px rgba(0, 0, 0, 0.45);
+  background: #fcfcfa;
+}
+
+#brand b {
+  color: #9be0a8;
+  font-weight: 700;
+}
+
+#brand-nome {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* em celular: nome completo menor, usuário sai da barra (fica em ⚙ → Sobre) */
+@media (max-width: 480px) {
+  #brand {
+    gap: 6px;
+    font-size: 12.5px;
+  }
+  #brand-nome {
+    white-space: nowrap;
+  }
+  #brand-logo {
+    width: 26px;
+    height: 26px;
+  }
+  #who {
+    position: absolute;
+    left: -9999px;
+  }
+  #actions {
+    gap: 4px;
+  }
+  #actions button {
+    padding: 6px 8px;
+  }
+}
+
+/* brasão centrado nos cartões (boot, erro, login, sobre) */
+.card .marca {
+  display: block;
+  margin: 0 auto 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1), 0 6px 18px rgba(0, 0, 0, 0.45);
+  background: #fcfcfa;
+}
+
+#who {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+button,
+.btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: #1c2836;
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 7px 11px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+button:hover,
+.btn:hover {
+  border-color: #38506a;
+}
+
+#btn-install {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #06210a;
+  font-weight: 600;
+}
+
+#stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+#map {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #0b1016;
+}
+
+/* overlays */
+#boot,
+#error,
+#login,
+#about {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(120% 120% at 50% 0%, #16212c 0%, #0f1720 60%);
+  z-index: 5;
+  padding: 18px;
+}
+
+#menu {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: end center;
+  background: rgba(6, 10, 14, 0.55);
+  padding: 0;
+}
+
+.card,
+.sheet {
+  background: #131d27;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px;
+  width: min(430px, 100%);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+.sheet {
+  border-radius: 14px 14px 0 0;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom));
+}
+
+.sheet h3,
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.sheet button {
+  width: 100%;
+  justify-content: flex-start;
+  margin-top: 7px;
+}
+
+.sheet .close {
+  border-color: #3a4a5c;
+  color: var(--muted);
+}
+
+.card .msg {
+  color: var(--warn);
+  word-break: break-word;
+}
+
+.fine {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.guide {
+  margin: 12px 0 0;
+  padding: 12px 12px 12px 32px;
+  list-style: decimal;
+  border: 1px dashed #3a4a5c;
+  border-radius: 10px;
+  background: #0c141c;
+  color: #cfe0ef;
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.guide li {
+  margin: 4px 0;
+}
+
+.guide code {
+  color: #ffd479;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.primary {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #06210a;
+  font-weight: 600;
+}
+
+code {
+  background: #0c141c;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: 12px;
+}
+
+.hide {
+  display: none !important;
+}
+
+.spin {
+  width: 26px;
+  height: 26px;
+  margin: 0 auto 12px;
+  border: 3px solid #2a3b4d;
+  border-top-color: var(--ok);
+  border-radius: 50%;
+  animation: sp 0.9s linear infinite;
+}
+
+@keyframes sp {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 520px) {
+  #who {
+    display: none;
+  }
+  #brand span {
+    font-size: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation-duration: 2.4s;
+  }
+}
+
+/* ---------------------- tela de login local ---------------------- */
+.campo {
+  display: block;
+  margin-top: 10px;
+  text-align: left;
+}
+
+.campo span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.campo input {
+  width: 100%;
+  background: #0c141c;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--fg, #e8eef4);
+  padding: 11px 12px;
+  font-size: 15px;
+}
+
+.campo input:focus {
+  outline: none;
+  border-color: var(--ok);
+}
+
+.chk {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: #cfe0ef;
+  text-align: left;
+}
+
+.chk input {
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+#login-error {
+  min-height: 16px;
+  margin: 10px 0 0;
+  font-size: 13px;
+}

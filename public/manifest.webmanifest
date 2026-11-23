@@ -1,0 +1,49 @@
+{
+  "name": "Monitoramento BP — Branco Peres",
+  "short_name": "Monitoramento BP",
+  "description": "Atalho instalável para o mapa analítico de monitoramento da unidade Branco Peres, com sessão automática.",
+  "id": "br-com-bperes-monitoramento-pwa",
+  "start_url": "/?tela=analytic-map-v4",
+  "scope": "/",
+  "display_override": [
+    "window-controls-overlay",
+    "standalone",
+    "minimal-ui"
+  ],
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f1720",
+  "theme_color": "#0f1720",
+  "lang": "pt-BR",
+  "dir": "ltr",
+  "categories": [
+    "productivity",
+    "business"
+  ],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

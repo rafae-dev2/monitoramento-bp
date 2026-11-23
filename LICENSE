@@ -1,0 +1,16 @@
+Copyright (c) 2026 — Projeto Monitoramento BP (Branco Peres Agronegócio).
+Todos os direitos reservados.
+
+Este repositório reúne o código, os scripts de empacotamento e a documentação técnica do
+projeto, mantidos para continuidade do desenvolvimento interno.
+
+- Você PODE: estudar, executar e modificar para uso próprio dentro da organização, e manter
+  derivações em repositórios privados da mesma organização.
+- Você NÃO PODE: redistribuir, revender, publicar como software próprio, ou usar este código
+  para prestar serviço a terceiros sem autorização escrita do titular.
+- A marca, o brasão e os arquivos em public/icons pertencem à Branco Peres Agronegócio e não
+  estão licenciados aqui.
+- As interfaces descritas em docs/ pertencem ao fornecedor do sistema monitorado (Solinftec);
+  a documentação existe para interoperabilidade interna e não concede nenhum direito sobre elas.
+- NENHUMA GARANTIA. Software fornecido "como está", sem garantia de aptidão para um fim
+  específico. Use por sua conta e risco, respeitando o contrato com o fornecedor.
