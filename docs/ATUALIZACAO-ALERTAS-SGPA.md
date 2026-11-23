@@ -4,7 +4,7 @@ A central passa a usar exclusivamente o alarme oficial do SGPA para velocidade. 
 
 ## Escolha dos alertas
 
-Em Central de alertas → configurações, as chaves selecionam velocidade, RPM, motor ocioso, troca de turno, condições combinadas do motor, espera por caminhão e demais alarmes oficiais. A seção de tipos individuais permite procurar por nome ou código SGPA e silenciar cada tipo. A seleção de um tipo depende também da chave de sua categoria.
+Em Central de alertas → configurações, as chaves selecionam velocidade, RPM, motor ocioso, troca de turno, condições combinadas do motor, espera por caminhão e demais alarmes oficiais. A seção de tipos individuais permite procurar por nome ou código SGPA e silenciar cada tipo. Um tipo explicitamente marcado prevalece sobre a chave geral de categoria; tipos não selecionados herdam a categoria e tipos explicitamente desmarcados permanecem silenciados.
 
 As chaves são salvas automaticamente neste navegador/aparelho. Os controles gerais de leitura, fontes e canais continuam com botão Salvar preferências. Desligar as notificações de um tipo não o remove da central nem do histórico; o cartão informa que seus avisos estão desligados. Preferências antigas de canais, limites complementares e escopo são preservadas. A preferência antiga “incluir outros” desligada mantém a categoria de demais alarmes silenciada, mas não descarta mais esses eventos. Novas instalações começam com todas as categorias habilitadas.
 
@@ -72,3 +72,7 @@ A atualização foi publicada em produção no site existente `https://sgpa-soli
 A mensagem de mapa indisponível ocorria porque `ligarAlertas()` encaminhava `props` e a renovação da sessão, mas omitia `session.mapUrl`; assim, a central não sabia que o iframe que já estava aberto era o mapa. A inicialização agora encaminha essa URL e a ação “Ver no mapa” também consegue derivá-la do próprio iframe como fallback.
 
 Tipos marcados individualmente em “Escolher tipos individuais do SGPA” agora prevalecem sobre a chave geral de categoria. Tipos não selecionados continuam herdando a categoria; um tipo desmarcado permanece silenciado. O switch reflete esse efeito, e a fala respeita o controle global “Falar alerta em português”. O teste integrado comprova que um alarme oficial selecionado é efetivamente enviado ao canal de voz.
+
+## Publicação da correção 1.2.2
+
+A versão **1.2.2** foi publicada em produção no site existente `https://sgpa-solinftec-bpa.netlify.app/`. O Netlify confirmou o deploy `6b0443f47f40372c914d2e21` como **ready/current**, em contexto production, em 23/11/2026 às 13:47 UTC; a função `session` também foi implantada. A página inicial e os arquivos `app.js`, `alerts.js`, `alerts-policy.js` e `sw.js` responderam HTTP 200 na URL imutável do deploy. Os quatro arquivos têm hashes SHA-256 idênticos aos arquivos locais; o cache servido é `bperes-shell-v17`. Commit de código `2cff302` enviado ao `origin/main`.

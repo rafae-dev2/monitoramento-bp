@@ -10,4 +10,4 @@
 - [x] Publicar a correção complementar 1.2.1 no site Netlify existente e enviar os arquivos alterados ao `origin/main` após os testes. Deploy `6b043f9a93c5975c614d2dfb` pronto; commit de código `9f47dad` enviado.
 - [x] Ao clicar em “Ver no mapa”, localizar o equipamento no mapa incorporado que já está aberto no aplicativo. Encaminhar a URL atual do iframe à central e usá-la como fallback de origem; não mostrar indisponibilidade quando o mapa estiver carregado nem abrir página externa.
 - [x] Um tipo marcado individualmente em “Escolher tipos individuais do SGPA” deve receber notificação mesmo que sua categoria geral esteja desligada; se “Falar alerta em português” estiver ligado, o alarme oficial desse tipo deve ser falado. O estado visual do switch deve corresponder ao comportamento efetivo.
-- [ ] Publicar a correção 1.2.2 no site Netlify existente e enviar o código/testes ao `origin/main` após os testes.
+- [x] Publicar a correção 1.2.2 no site Netlify existente e enviar o código/testes ao `origin/main` após os testes. Deploy `6b0443f47f40372c914d2e21` pronto; commit de código `2cff302` enviado e arquivos críticos verificados no site.
