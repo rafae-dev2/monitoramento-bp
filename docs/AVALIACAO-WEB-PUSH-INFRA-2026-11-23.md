@@ -2,7 +2,7 @@
 
 **Data:** 23 de novembro de 2026
 
-**Resultado da inspeção:** somente leitura; nenhuma alteração foi feita no Netlify ou no Supabase.
+**Inspeção inicial:** somente leitura. As alterações de infraestrutura e publicação executadas depois estão registradas na seção “Próximo passo”.
 
 ## Supabase: armazenamento disponível, mas há pausa no plano Free
 
@@ -38,7 +38,7 @@ O código local remove os registros antigos de senha/token, mantém a senha e a 
 
 ## Próximo passo
 
-O usuário aceitou a detecção em segundo plano com polling de um minuto e autorizou “Pode publicar tudo autorizado faça tudo”. O código local contém o opt-in explícito, preferências por dispositivo, o monitor Netlify, baseline silenciosa, deduplicação e o clique para focar o equipamento no mapa atual mesmo sem alerta local ativo. Os testes usam fixtures; não chamaram SGPA, Supabase de produção nem enviaram Push real. A migração de infraestrutura foi aplicada em 23/11/2026 e `pwa_push_rpc_auth` foi criado no Vault. `SUPABASE_URL` foi aceita no escopo Functions/Production; o Netlify retornou 403/erro de conexão nas gravações das outras quatro variáveis, inclusive em chamadas isoladas. Nenhum valor secreto existente foi consultado; `SUPABASE_KEY`, `SOLINF_USER` e `SOLINF_PASS` não foram alterados. Commit, push e deploy continuam pendentes até completar a configuração. Depois da publicação, o monitor poderá atrasar a detecção até aproximadamente um intervalo e a entrega externa continua sem garantia de instantaneidade. O custo real deve ser medido pelo uso após ativação.
+O usuário aceitou a detecção em segundo plano com polling de um minuto e autorizou “Pode publicar tudo autorizado faça tudo”. O código local contém o opt-in explícito, preferências por dispositivo, o monitor Netlify, baseline silenciosa, deduplicação e o clique para focar o equipamento no mapa atual mesmo sem alerta local ativo. Os testes usam fixtures; não chamaram SGPA, Supabase de produção nem enviaram Push real. A migração de infraestrutura foi aplicada em 23/11/2026 e `pwa_push_rpc_auth` foi criado no Vault. `SUPABASE_URL` foi aceita no escopo Functions/Production; o Netlify retornou 403/erro de conexão nas gravações das outras quatro variáveis, inclusive em chamadas isoladas. Nenhum valor secreto existente foi consultado; `SUPABASE_KEY`, `SOLINF_USER` e `SOLINF_PASS` não foram alterados. O commit de implementação `dd83c16` foi enviado e confirmado em `origin/main`; o deploy automático `6b049ee3c639452f5d56f7dc` está `ready/current` e inclui `push-api` e o cron `push-monitor` de um minuto. O usuário informou ter cadastrado manualmente as variáveis; o deploy ativo foi criado antes dessa alteração e ainda responde `503 push-not-configured`, então é necessário um novo deploy para validar. A RPC Vault foi testada em modo read-only (`ok`, `hasSubscriptions:false`); não há aparelho inscrito e nenhum monitor foi invocado manualmente. Depois da publicação, o monitor poderá atrasar a detecção até aproximadamente um intervalo e a entrega externa continua sem garantia de instantaneidade. O custo real deve ser medido pelo uso após ativação.
 
 ## Referências
 
