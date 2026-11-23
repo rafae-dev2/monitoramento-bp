@@ -205,6 +205,24 @@ with sync_playwright() as pw:
       const spOff = api.ativos().find(x=>x.regra==='semApontamento');
       ok(spOff && spOff.notificar===false, 'chave desligada mantém sem apontamento só na central');
       api.configurar({notificarCategorias:{semApontamento:true}});
+      t.reset(); api.configurar({calcularLocal:false,refeicaoGrupos:{'APOIO':30,'LINHA AMARELA':60},refeicaoEquipamentos:'7001=45'});
+      const apoio = {...row,cdEquipamento:'AP-1',descEquipamento:'5001 - Caminhão apoio',descTpEquipamento:'CAMINHAO',descGrupoEquipamento:'APOIO',descOperacao:'820 - REFEIÇÃO',vlVelocidade:0};
+      const amarela = {...apoio,cdEquipamento:'LA-1',descEquipamento:'6001 - Pá carregadeira',descGrupoEquipamento:'LINHA AMARELA',descOperacao:'REFEIÇÃO (1 HORA)'};
+      const excecao = {...amarela,cdEquipamento:'LA-2',descEquipamento:'7001 - Escavadeira'};
+      const livre = {...apoio,cdEquipamento:'OUT-1',descEquipamento:'8001 - Outro',descGrupoEquipamento:'SEM CONTROLE'};
+      t.aplicarTelemetria([apoio,amarela,excecao,livre]); t.avaliarFrota(Date.now(),'lotes');
+      t.avaliarFrota(Date.now()+29*60_000,'tempo');
+      ok(!api.ativos().some(x=>x.regra==='refeicao'),'refeição dentro do limite não alarma');
+      t.avaliarFrota(Date.now()+31*60_000,'tempo');
+      let ref = api.ativos().filter(x=>x.regra==='refeicao');
+      ok(ref.length===1 && ref[0].e.id==='AP-1' && ref[0].limite===30 && ref[0].notificar===true, 'apoio excede 30 min e gera alarme');
+      t.avaliarFrota(Date.now()+46*60_000,'tempo');
+      ref = api.ativos().filter(x=>x.regra==='refeicao');
+      ok(ref.some(x=>x.e.id==='LA-2' && x.limite===45) && !ref.some(x=>x.e.id==='LA-1'), 'limite por equipamento prevalece sobre o grupo');
+      t.avaliarFrota(Date.now()+61*60_000,'tempo');
+      ref = api.ativos().filter(x=>x.regra==='refeicao');
+      ok(ref.some(x=>x.e.id==='LA-1' && x.limite===60) && !ref.some(x=>x.e.id==='OUT-1'), 'linha amarela 1 hora; grupo sem configuração é ignorado');
+      ok(/excedeu o tempo de refeição: \d+ minutos, limite de 30 minutos\. Frente\/grupo APOIO/.test(ref.find(x=>x.e.id==='AP-1').fala), 'fala da refeição excedida');
       t.reset(); api.configurar({amostras:5}); t.espelharAlarmes([a]);
       ok(api.ativos().length===1,'alarme oficial já confirmado não aguarda amostras locais');
       t.processarQuadros([{type:'alarme',cdEquipamento:row.cdEquipamento,cdTpAlarme:5,fgOnline:'F'}]);
@@ -411,7 +429,7 @@ with sync_playwright() as pw:
     assert page.locator('#cfg-alertas').evaluate("el => el.classList.contains('hide')"), 'O X deve fechar as preferências'
     assert page.evaluate('document.activeElement.id === "btn-cfg"'), 'Ao fechar, o foco deve voltar ao controle de configurações visível'
     page.click('#btn-cfg')
-    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 8")
+    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 9")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
     page.locator('.catalogo-detalhes').first.locator('summary').click()
     page.fill('#cfg-busca-tipo','12480')

@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.2.7';
+  const VERSAO = '1.2.8';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -70,6 +70,7 @@
     ociosoSemApontamento: { id: 'ociosoSemApontamento', nome: 'Motor ocioso sem apontamento', icone: '🔌', cor: '#db9b3b', severidade: 2 },
     motorCondicao: { id: 'motorCondicao', nome: 'Motor ligado — condição combinada', icone: 'M', cor: '#c6a0e8', severidade: 2 },
     aguardandoCaminhao: { id: 'aguardandoCaminhao', nome: 'Aguardando caminhão', icone: 'T', cor: '#e9b457', severidade: 2 },
+    refeicao: { id: 'refeicao', nome: 'Refeição excedida', icone: '🍽️', cor: '#d9822b', severidade: 2 },
     semApontamento: { id: 'semApontamento', nome: 'Sem apontamento', icone: '📝', cor: '#e07b39', severidade: 2 },
     generico: { id: 'generico', nome: 'Alarme do portal', icone: '⚠️', cor: '#93a4b3', severidade: 1 },
   };
@@ -85,6 +86,8 @@
     maxPorCiclo: 4, // no máximo N alertas falam por ciclo (evita "chuva de voz" ao abrir o app)
     rpmOcioso: 900,
     minutosOcioso: 5,
+    refeicaoGrupos: {}, // grupo/frente → minutos de refeição (0 = não controlar)
+    refeicaoEquipamentos: '', // "6614=30, 8833=60": prevalece sobre o grupo
     minutosSemApontamento: 5, // tolerância antes de alertar operação “Sem Apontamento”
     minutosTurno: 4, // pedido do usuário (o portal usa 3)
     maxAtrasoMin: 20, // ignorar equipamento sem sinal há mais que isso
@@ -785,6 +788,7 @@
       if (q.descOperacao !== undefined && dentroDoEscopo(e)) {
         regraAguardandoCaminhao(e, agora());
         regraSemApontamento(e, agora());
+        regraRefeicao(e, agora());
       }
     }
     estado.quadros += lista.length;
@@ -1142,6 +1146,7 @@
         regraAguardandoCaminhao(e, ts);
       }
       regraSemApontamento(e, ts);
+      regraRefeicao(e, ts);
       regraTurno(e, ts);
       regraOcioso(e, ts);
     }
@@ -1185,6 +1190,27 @@
       limite: Math.round(min),
       texto: `sem apontamento há ${minutosTxt(durou)} · frente/grupo: ${e.frente || 'não informada'}`,
       detalhe: `Operação SGPA ${e.operacao || '—'} · ${e.tipo || 'equipamento'} · tolerância ${minutosTxt(min)}`,
+      inicio: inicioReal(st, e),
+    });
+  }
+  /* Controle de refeições: limite por grupo ou equipamento; alarma ao exceder. */
+  function regraRefeicao(e, ts) {
+    const limite = policy.limiteRefeicao(cfg, e);
+    const liga = limite > 0 && e.operacaoConfirmada === true && policy.emRefeicao(e);
+    const st = marcar(e.id, 'refeicao', liga, ts, null);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!st.firing || limite <= 0) return;
+    const durou = (ts - inicioReal(st, e)) / 60000;
+    if (durou <= limite) return;
+    if (!podeDisparar(st, ts)) return;
+    emitir({
+      chave: st.chave,
+      regra: 'refeicao',
+      e,
+      valor: Math.round(durou),
+      limite: Math.round(limite),
+      texto: `excedeu a refeição: ${minutosTxt(durou)} (limite ${minutosTxt(limite)}) · frente/grupo: ${e.frente || 'não informada'}`,
+      detalhe: `Operação SGPA ${e.operacao || '—'} · ${e.tipo || 'equipamento'} · limite ${minutosTxt(limite)}`,
       inicio: inicioReal(st, e),
     });
   }
@@ -1738,7 +1764,7 @@
   /* Exceção pedida pelo usuário: “Sem apontamento” (cálculo do app) usa todos os
      canais, mas só enquanto o app está aberto — nunca passa pelo Web Push. */
   function localComCanais(a) {
-    return !!a && a.fonte === 'app' && a.regra === 'semApontamento';
+    return !!a && a.fonte === 'app' && (a.regra === 'semApontamento' || a.regra === 'refeicao');
   }
   function canalSistema(a) {
     return !!a && (a.fonte === 'portal' || localComCanais(a));
@@ -1948,6 +1974,11 @@
     <p class="rotulo">Frentes / grupos monitorados</p>
     <p class="fine">Marque somente os grupos que deseja monitorar. Com um ou mais marcados, alertas fora desses grupos saem dos ativos; sem nenhum marcado, vale a unidade toda.</p>
     <div id="cfg-frentes" class="chips"></div>
+    <h3 class="secao-alertas">Controle de refeições</h3>
+    <p class="fine">Defina o tempo de refeição de cada grupo. Quando o equipamento ficar na operação de refeição do SGPA além do limite, a central gera o alarme “Refeição excedida” (fala e notificação com o app aberto). Grupos em “Não controlar” são ignorados.</p>
+    <div id="cfg-refeicoes" class="refeicao-lista"></div>
+    <label class="campo"><span>Por equipamento (prevalece sobre o grupo): número=minutos</span>
+      <input id="cfg-refeicao-eq" type="text" placeholder="ex.: 6614=30, 8833=60, 4462=0" spellcheck="false" autocomplete="off"></label>
     <h3 class="secao-alertas">Fontes e canais de aviso</h3>
     <div class="switches">
       <label class="chk"><input id="cfg-liga" type="checkbox"><span>Central de alertas ligada</span></label>
@@ -2337,6 +2368,7 @@
     turno: 'Troca de turno oficial e cálculo complementar, se ativado.',
     motorCondicao: 'Condições combinadas do motor; não são velocidade pura.',
     aguardandoCaminhao: 'Trator/transbordo com a operação Aguardando Caminhão. Informa a frente/grupo.',
+    refeicao: 'Refeição acima do tempo configurado por grupo ou equipamento (seção Controle de refeições). Fala e notifica só com o app aberto.',
     semApontamento: 'Equipamento na operação SGPA “Sem Apontamento” por 5 min ou mais (sem alarme do portal). Fala e notifica só com o app aberto.',
     generico: 'Demais tipos oficiais, com o nome original do SGPA.',
   };
@@ -2549,6 +2581,51 @@
     return { vozURI: '', vozNome: value || '' };
   }
 
+  const OPCOES_REFEICAO = [[0, 'Não controlar'], [30, '30 min'], [45, '45 min'], [60, '1 hora'], [90, '1h30']];
+  function renderRefeicoes() {
+    const box = $('cfg-refeicoes');
+    if (!box) return;
+    box.innerHTML = '';
+    const grupos = Object.assign({}, cfg.refeicaoGrupos || {});
+    const lista = [...new Set([...(estado.frentes || []), ...Object.keys(grupos)])].sort();
+    if (!lista.length) {
+      const i = document.createElement('span');
+      i.className = 'fine';
+      i.textContent = 'os grupos aparecem aqui depois da primeira leitura da telemetria';
+      box.appendChild(i);
+    }
+    for (const g of lista) {
+      const linha = document.createElement('label');
+      linha.className = 'refeicao-item';
+      const nome = document.createElement('span');
+      nome.textContent = g;
+      const sel = document.createElement('select');
+      sel.dataset.grupo = g;
+      sel.setAttribute('aria-label', 'Tempo de refeição: ' + g);
+      const atual = Number(grupos[g]) || 0;
+      const opcoes = OPCOES_REFEICAO.some(([v]) => v === atual) ? OPCOES_REFEICAO : OPCOES_REFEICAO.concat([[atual, atual + ' min']]);
+      for (const [v, t] of opcoes) {
+        const o = document.createElement('option');
+        o.value = String(v);
+        o.textContent = t;
+        if (v === atual) o.selected = true;
+        sel.appendChild(o);
+      }
+      linha.append(nome, sel);
+      box.appendChild(linha);
+    }
+    const eq = $('cfg-refeicao-eq');
+    if (eq) eq.value = cfg.refeicaoEquipamentos || '';
+  }
+  function lerRefeicoes() {
+    const grupos = {};
+    document.querySelectorAll('#cfg-refeicoes select[data-grupo]').forEach((sel) => {
+      const v = Number(sel.value) || 0;
+      if (v > 0) grupos[sel.dataset.grupo] = v;
+    });
+    const eq = $('cfg-refeicao-eq');
+    return { refeicaoGrupos: grupos, refeicaoEquipamentos: eq ? eq.value.trim() : '' };
+  }
   function renderConfig() {
     if (!$('cfg-rpm')) return;
     renderSelecao();
@@ -2592,6 +2669,7 @@
     preencherVozes();
     renderPushStatus();
 
+    renderRefeicoes();
     const box = $('cfg-frentes');
     box.innerHTML = '';
     const lista = (estado.frentes || []).slice();
@@ -2652,6 +2730,7 @@
       maxAtrasoMin: n('cfg-atraso', 20),
       rpmOcioso: n('cfg-rpmoci', 900),
       equipamentos: $('cfg-eq').value,
+      ...lerRefeicoes(),
       volume: n('cfg-vol', 1),
       taxa: n('cfg-taxa', 1),
       tom: n('cfg-tom', 1),

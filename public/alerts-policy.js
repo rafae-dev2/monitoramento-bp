@@ -7,7 +7,7 @@
 }(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis), function () {
   'use strict';
 
-  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'semApontamento'];
+  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'semApontamento', 'refeicao'];
   var DEFAULTS = {
     velocidade: true,
     rpm: true,
@@ -16,7 +16,8 @@
     motorCondicao: true,
     generico: true,
     aguardandoCaminhao: true,
-    semApontamento: true
+    semApontamento: true,
+    refeicao: true
   };
   var NUMEROS_FALADOS = ['zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'];
   // Expansões confirmadas pelo usuário no DOCX de 23/11/2026. Os códigos sem
@@ -151,6 +152,39 @@
     return /^(?:sem apontamento(?: (?:tpl|cct))?|digitar op vl)$/.test(normalized);
   }
 
+  /* Operação SGPA de refeição (ex.: “REFEIÇÃO”, “REFEIÇÃO (1 HORA)”, “REFEIÇÃO_TPL”). */
+  function emRefeicao(e) {
+    if (!e || typeof e !== 'object') return false;
+    var operacao = e.operacao;
+    if (operacao == null || String(operacao).trim() === '') operacao = e.descOperacao;
+    return /\b(?:refeicao|almoco|jantar)/.test(norm(operacao).replace(/[_-]+/g, ' '));
+  }
+  /* Limite em minutos: equipamento prevalece sobre grupo; 0 = não controlado. */
+  function mapaEquipamentos(texto) {
+    var out = {};
+    String(texto || '').split(/[\n,;]+/).forEach(function (parte) {
+      var m = parte.trim().match(/^([^=:\s]+)\s*[=:]\s*(\d+)\s*$/);
+      if (m) out[norm(m[1])] = Math.max(0, Number(m[2]));
+    });
+    return out;
+  }
+  function limiteRefeicao(cfg, e) {
+    if (!cfg || !e) return 0;
+    var eq = mapaEquipamentos(cfg.refeicaoEquipamentos);
+    var ids = [e.numero, e.id].filter(function (v) { return v != null && String(v).trim() !== ''; });
+    for (var i = 0; i < ids.length; i += 1) {
+      var k = norm(ids[i]);
+      if (Object.prototype.hasOwnProperty.call(eq, k)) return eq[k];
+      var semZeros = k.replace(/^0+(?=\d)/, '');
+      if (Object.prototype.hasOwnProperty.call(eq, semZeros)) return eq[semZeros];
+    }
+    var grupos = isObject(cfg.refeicaoGrupos) ? cfg.refeicaoGrupos : {};
+    var frente = norm(e.frente);
+    for (var g in grupos) {
+      if (Object.prototype.hasOwnProperty.call(grupos, g) && norm(g) === frente) return Math.max(0, Number(grupos[g]) || 0);
+    }
+    return 0;
+  }
   function isObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
   }
@@ -178,7 +212,7 @@
       var compact = norm(directText).replace(/[\s_-]+/g, '');
       var aliases = {
         velocidade: 'velocidade', rpm: 'rpm', ocioso: 'ocioso', turno: 'turno',
-        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', semapontamento: 'semApontamento',
+        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', semapontamento: 'semApontamento', refeicao: 'refeicao',
         ociososemapontamento: 'ocioso'
       };
       if (aliases[compact]) return aliases[compact];
@@ -267,6 +301,17 @@
       return 'Trator ' + vehicleNumber(item, event) + ' aguardando caminhão. Frente/grupo ' + String(front).trim() + '. Verificar.';
     }
 
+    if (selectedCategory === 'refeicao') {
+      var fr = event.frente;
+      if (fr == null || String(fr).trim() === '') fr = 'frente não informada';
+      var vc = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
+      var dur = numericAlertValue(item.valor);
+      var lim = numericAlertValue(item.limite);
+      return vc + ' ' + vehicleNumber(item, event) + ' excedeu o tempo de refeição' +
+        (dur ? ': ' + String(dur) + ' minutos' : '') +
+        (lim ? ', limite de ' + String(lim) + ' minutos' : '') +
+        '. Frente/grupo ' + String(fr).trim() + '. Verificar.';
+    }
     if (selectedCategory === 'semApontamento') {
       var frente = event.frente;
       if (frente == null || String(frente).trim() === '') frente = 'frente não informada';
@@ -309,6 +354,9 @@
     idFalado: idFalado,
     aguardandoCaminhao: aguardandoCaminhao,
     semApontamento: semApontamento,
+    emRefeicao: emRefeicao,
+    limiteRefeicao: limiteRefeicao,
+    mapaEquipamentos: mapaEquipamentos,
     normalizeCfg: normalizeCfg,
     notificar: notificar,
     montarFala: montarFala

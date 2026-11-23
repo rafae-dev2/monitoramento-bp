@@ -1,6 +1,6 @@
 {
   "name": "monitoramento-bp",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "private": true,
   "description": "Monitoramento BP PWA — funções serverless e testes fixture-only",
   "scripts": {
