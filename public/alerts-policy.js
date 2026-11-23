@@ -170,7 +170,10 @@
     var enabledByCategory = normalized.notificarCategorias[selectedCategory] !== false;
     var code = codeFromAlert(item);
     var enabledByType = !code || normalized.tiposNotificacao[code] !== false;
-    return enabledByCategory && enabledByType;
+    var selectedIndividually = !!code &&
+      Object.prototype.hasOwnProperty.call(normalized.tiposNotificacao, code) &&
+      normalized.tiposNotificacao[code] === true;
+    return enabledByType && (enabledByCategory || selectedIndividually);
   }
 
   function vehicleNumber(alert, event) {

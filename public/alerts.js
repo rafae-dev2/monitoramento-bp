@@ -29,7 +29,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.2.1';
+  const VERSAO = '1.2.2';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -1433,7 +1433,7 @@
       <p id="cfg-catalogo-status" class="fine">Carregando catálogo auditado…</p>
       <label class="campo"><span>Buscar por nome ou código oficial</span><input id="cfg-busca-tipo" type="search" placeholder="Velocidade, motor, desvio de rota…"></label>
       <div class="catalogo-filtros"><label class="chk"><input id="cfg-todos-tipos" type="checkbox"><span>Mostrar catálogo geral, não só tipos utilizados/conhecidos</span></label><button id="cfg-atualizar-catalogo" type="button">Atualizar SGPA</button></div>
-      <p class="fine">Um tipo marcado herda a chave de sua categoria. O catálogo geral não significa que todos esses alarmes estão configurados para esta unidade. Correspondências por nome não comprovam vínculo entre regra e tipo.</p>
+      <p class="fine">Um tipo marcado individualmente recebe aviso mesmo se a categoria geral estiver desligada; a fala depende da chave “Falar alerta em português”. Desmarque para silenciar o código. O catálogo geral não significa que todos esses alarmes estão configurados para esta unidade.</p>
       <div id="cfg-tipos" class="alert-switch-list catalogo-lista"></div>
       <button id="cfg-mais-tipos" type="button" class="hide">Mostrar mais tipos</button>
     </details>
@@ -1726,10 +1726,12 @@
     const id = String((a.e && a.e.id) || a.numero || '');
     if (!id) return;
     const iframe = $('map');
-    if (iframe && iframe.contentWindow && ctx.mapUrl && ctx.props) {
+    const iframeUrl = iframe && (iframe.getAttribute('src') || iframe.src);
+    const mapUrl = ctx.mapUrl || iframeUrl;
+    if (iframe && iframe.contentWindow && mapUrl && ctx.props) {
       try {
-        const origin = new URL(ctx.mapUrl, window.location.href).origin;
-        const iframeOrigin = new URL(iframe.src || ctx.mapUrl, window.location.href).origin;
+        const origin = new URL(mapUrl, window.location.href).origin;
+        const iframeOrigin = new URL(iframeUrl || mapUrl, window.location.href).origin;
         if (origin !== iframeOrigin) throw new Error('a origem do mapa incorporado não confere');
         const props = JSON.parse(JSON.stringify(ctx.props));
         props.rastroBI = Object.assign({}, props.rastroBI || {}, {
@@ -1831,10 +1833,20 @@
     box.innerHTML = '';
     for (const t of lista.slice(0, limiteTipos)) {
       const categoria = policy.categoria(t.codigo, t.nome);
-      const selecionada = cfg.tiposNotificacao[t.codigo] !== false;
       const categoriaLigada = cfg.notificarCategorias[categoria] !== false;
+      const valorTipo = Object.prototype.hasOwnProperty.call(cfg.tiposNotificacao, t.codigo)
+        ? cfg.tiposNotificacao[t.codigo]
+        : undefined;
+      const selecionada = valorTipo === true || (valorTipo !== false && categoriaLigada);
       const contexto = t.observado ? 'presente nos filtros/observado' : t.correspondenciaNomeRegra ? 'nome também no inventário de regras' : t.conhecido ? 'tipo conhecido' : 'catálogo geral';
-      const descricao = `Código ${t.codigo} · ${REGRAS[categoria].nome} · ${contexto}` + (!categoriaLigada ? ' · categoria silenciada' : '');
+      const efeitoTipo = valorTipo === true && !categoriaLigada
+        ? ' · seleção individual ativa'
+        : valorTipo === false
+          ? ' · silenciado individualmente'
+          : !categoriaLigada
+            ? ' · categoria silenciada'
+            : '';
+      const descricao = `Código ${t.codigo} · ${REGRAS[categoria].nome} · ${contexto}${efeitoTipo}`;
       box.appendChild(chaveNotificacao(t.nome, descricao, selecionada, (ligada) => {
         configurar({ tiposNotificacao: { [t.codigo]: ligada } });
         renderAtivos();

@@ -11,9 +11,12 @@ ROOT = Path(__file__).resolve().parents[1]
 HTML = '<!doctype html><html lang="pt-br"><head></head><body><main id="stage"><iframe id="map"></iframe></main><button id="btn-alertas"></button><span id="alert-badge"></span></body></html>'
 source = (ROOT / 'public/alerts.js').read_text()
 hooks = """
+  let falasCapturadas = [];
   window.__test = {
     aplicarTelemetria, avaliarFrota, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, enviarAudit, ciclo, abrirNoMapa,
     setCtx: (v) => { ctx = Object.assign(ctx, v); },
+    capturarFalas: () => { falasCapturadas = []; falar = (texto) => falasCapturadas.push(String(texto)); },
+    falasCapturadas: () => falasCapturadas.slice(),
     reset: () => {
       frota.clear(); estados.clear(); ativos.clear(); hist = []; filaAudit.length = 0;
       cfg = policy.normalizeCfg(JSON.parse(JSON.stringify(PADRAO)));
@@ -139,6 +142,12 @@ with sync_playwright() as pw:
       ok(api.frota().length===count && t.filaAudit()===0, 'exemplo não modifica frota nem grava produção');
       t.reset(); api.configurar({calcularLocal:true,limiteRpm:2000}); feed({...row,vlParametro4:2100});
       ok(api.ativos().some(a=>a.regra==='rpm'), 'RPM local complementar preservada');
+      t.reset(); t.capturarFalas();
+      api.configurar({voz:true,popup:false,som:false,vibrar:false,notificarCategorias:{generico:false},tiposNotificacao:{11500:true}});
+      t.espelharAlarmes([{cdEquipamento:'TESTE-INDIVIDUAL',cdId:'TIPO-SELECIONADO',cdTpAlarme:11500,descTpAlarme:'ABAST_INS_DESLIGAR_MOTOR_TPL',fgOnline:true}]);
+      const selecionado = api.ativos().find(x=>x.tipoAlarme==='11500');
+      ok(!!selecionado && selecionado.notificar, 'tipo explicitamente selecionado prevalece sobre categoria geral desligada');
+      ok(t.falasCapturadas().length===1 && t.falasCapturadas()[0]===selecionado.fala, 'alarme oficial de tipo individual selecionado é falado');
       return checks;
     }""")
     for name in result:
@@ -172,6 +181,7 @@ with sync_playwright() as pw:
       window.__windowOpenCount = 0;
       window.open = () => { window.__windowOpenCount += 1; return null; };
       frame.onload = () => frame.contentWindow.addEventListener('message', ev => { window.__mapReceived = ev.data; });
+      frame.setAttribute('src','https://fixture.invalid/portal/analytic-map-v4?tab=equipment');
       frame.srcdoc = '<!doctype html><html><body>mapa fixture</body></html>';
     }""")
     page.wait_for_function("document.getElementById('map').contentDocument && document.getElementById('map').contentDocument.readyState === 'complete'")
@@ -183,13 +193,16 @@ with sync_playwright() as pw:
         return post(data, targetOrigin);
       };
       __test.setCtx({
-        mapUrl:'https://fixture.invalid/portal/analytic-map-v4?tab=equipment',
+        mapUrl:'',
         props:{rastroBI:{equipment:'anterior',scope:'preservar'}}
       });
       __test.abrirNoMapa(MonitoramentoAlertas.ativos()[0]);
     }""")
     page.wait_for_function("window.__mapReceived && window.__mapReceived.type === 'props' && window.__mapReceived.data.rastroBI.equipment === 'TESTE-LOCAL'")
     assert page.evaluate("window.__mapArgs.targetOrigin === 'https://fixture.invalid' && window.__mapArgs.data.data.rastroBI.scope === 'preservar' && window.__windowOpenCount === 0 && document.getElementById('alertas').classList.contains('hide')"), 'Ver no mapa deve enviar props para a origem incorporada, fechar o painel e não abrir links externos'
+    app_source = (ROOT / 'public/app.js').read_text()
+    assert 'mapUrl: session.mapUrl' in app_source, 'app.js deve encaminhar a URL do iframe ao motor de alertas'
+    print('OK: inicialização da central encaminha a URL do mapa atual')
     page.evaluate("__test.setCtx({mapUrl:'',props:null}); __test.abrirNoMapa(MonitoramentoAlertas.ativos()[0]);")
     assert page.evaluate('window.__windowOpenCount === 0'), 'Mapa indisponível deve continuar sem window.open'
     print('OK: “Ver no mapa” envia o equipamento ao iframe e nunca abre URL externa')
@@ -234,6 +247,7 @@ with sync_playwright() as pw:
     page.evaluate('() => __test.ciclo()')
     assert page.evaluate("MonitoramentoAlertas.ativos().some(a=>a.e.id==='TESTE-API')"), 'Falha da telemetria não deve bloquear espelho oficial'
     print('OK: espelho oficial independe da falha da telemetria')
+    page.evaluate("MonitoramentoAlertas.configurar({notificarCategorias:{generico:false},tiposNotificacao:{12480:true}});")
     page.evaluate('MonitoramentoAlertas.abrirPainel()')
     page.click('#btn-cfg')
     page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 7")
@@ -241,6 +255,7 @@ with sync_playwright() as pw:
     page.locator('.catalogo-detalhes').first.locator('summary').click()
     page.fill('#cfg-busca-tipo','12480')
     assert page.locator('#cfg-tipos input[role=switch]').count()==1
+    assert page.locator('#cfg-tipos input[role=switch]').is_checked(), 'Tipo marcado individualmente deve permanecer ligado com categoria genérica desligada'
     page.locator('#cfg-tipos input[role=switch]').uncheck()
     assert page.evaluate("MonitoramentoAlertas.config().tiposNotificacao['12480'] === false")
     assert page.evaluate("JSON.parse(localStorage.getItem('bperes.alertas.cfg.v2')).tiposNotificacao['12480'] === false")
@@ -255,4 +270,4 @@ with sync_playwright() as pw:
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+8} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+9} grupos de verificações.')

@@ -185,12 +185,13 @@
   }
 
   /* ------------------------- central de alertas ------------------------- */
-  // A sessão é a mesma do mapa: o motor só troca o token pela URL da API do tenant.
+  // A central compartilha a sessão e o iframe do mapa para localizar alertas no mapa atual.
   function ligarAlertas() {
     if (!ALERTAS_ON) return;
     try {
       MonitoramentoAlertas.iniciar({
         props: session.props,
+        mapUrl: session.mapUrl,
         renovar: () => obterSessao(true),
       });
       alertasLigados = true;

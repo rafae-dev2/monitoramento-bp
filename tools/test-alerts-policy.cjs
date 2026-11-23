@@ -43,7 +43,7 @@ assert.equal(policy.aguardandoCaminhao({ tipo: 'Transbordo', operacao: 'Aguard B
 assert.equal(policy.aguardandoCaminhao({ tipo: 'Trator', operacao: 'Aguardando Caminhao - XX' }), false);
 assert.equal(policy.aguardandoCaminhao({ tipo: 'Trator', operacao: 'prefixo 123 - Aguardando Caminhao' }), false);
 
-// Preferências legadas, merge de categorias, tipos individuais e AND obrigatório.
+// Preferências legadas, merge de categorias e prioridade explícita por tipo individual.
 const cfgLegacy = policy.normalizeCfg({ incluirOutros: false, notificarCategorias: { velocidade: false } });
 assert.equal(cfgLegacy.notificarCategorias.velocidade, false);
 assert.equal(cfgLegacy.notificarCategorias.generico, false);
@@ -54,7 +54,8 @@ assert.equal(cfgExplicit.notificarCategorias.generico, true);
 assert.equal(cfgExplicit.notificarCategorias.rpm, false);
 assert.equal(cfgExplicit.notificarCategorias.motorCondicao, true);
 assert.equal(policy.notificar({}, { codigo: 5 }), true);
-assert.equal(policy.notificar({ notificarCategorias: { velocidade: false }, tiposNotificacao: { 5: true } }, { codigo: 5 }), false);
+assert.equal(policy.notificar({ notificarCategorias: { velocidade: false }, tiposNotificacao: { 5: true } }, { codigo: 5 }), true);
+assert.equal(policy.notificar({ notificarCategorias: { velocidade: false } }, { codigo: 5 }), false);
 assert.equal(policy.notificar({ tiposNotificacao: { 5: false } }, { codigo: 5 }), false);
 assert.equal(policy.notificar({ tiposNotificacao: { 5: true } }, { codigo: 5 }), true);
 assert.equal(policy.notificar({ incluirOutros: false }, { codigo: 777, descricao: 'alerta comum' }), false);
