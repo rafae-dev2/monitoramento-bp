@@ -62,3 +62,7 @@ No mapa, `app.js` fornece `session.mapUrl` como URL completa para o iframe. Os e
 Para o gatilho exclusivamente oficial de velocidade, o app tenta `vlAlarme`, depois `vlAlarmeMaximoAtingido`; se ambos faltarem, só usa `e.velocidade` quando `velocidadeTs` indica uma leitura recente. Quando necessário, uma única consulta compartilhada à telemetria atualiza os alertas pendentes. O número é apresentado em km/h e falado como valor normal; se nem o alarme nem a telemetria fornecerem medição válida, o alerta oficial permanece sem número. O valor recebido depois também atualiza o cartão e o histórico, com fala/notificação conforme as preferências, sem criar duplicata de auditoria.
 
 Testes com fixtures cobriram a leitura recente em memória, a consulta complementar agrupada e o foco do equipamento no mapa incorporado; nenhum teste chamou rede ou gravou dados de produção. A consulta ao vivo da rota de alarmes, no momento registrado acima, não continha evento de velocidade: a correção de medição foi validada com fixtures, não com um evento real.
+
+## Publicação da correção 1.2.1
+
+A atualização foi publicada em produção no site existente `https://sgpa-solinftec-bpa.netlify.app/`. O Netlify confirmou o deploy `6b043f9a93c5975c614d2dfb` como **ready**, em contexto production, em 23/11/2026 às 13:29 UTC. A página inicial respondeu HTTP 200. `app.js`, `alerts.js` e `sw.js` servidos no site tiveram hashes idênticos aos arquivos locais validados; a versão servida é 1.2.1 e o cache do PWA é `bperes-shell-v16`.

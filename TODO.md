@@ -7,4 +7,4 @@
 - [x] Validar localmente sem gravar alertas de teste em produção, atualizar cache/documentação, salvar no GitHub e verificar publicação da versão entregue no Netlify. Não fazer mudanças de segurança fora deste escopo.
 - [x] Quando o alarme oficial de velocidade não trouxer `vlAlarme` nem `vlAlarmeMaximoAtingido`, usar somente uma leitura recente `vlVelocidade` do SGPA; se necessário, compartilhar uma consulta agrupada à telemetria. Informar o valor numérico em km/h e não inventar valor quando nenhuma fonte o fornecer. Telemetria isolada não pode disparar alerta de velocidade.
 - [x] Ao clicar em “Ver no mapa”, enviar o equipamento como `props.rastroBI.equipment` ao mapa incorporado do aplicativo, fechar o painel e não abrir link externo. Se o mapa não estiver disponível, exibir a mensagem dentro do aplicativo.
-- [ ] Publicar a correção complementar 1.2.1 no site Netlify existente e enviar os arquivos alterados ao `origin/main` após os testes.
+- [x] Publicar a correção complementar 1.2.1 no site Netlify existente e enviar os arquivos alterados ao `origin/main` após os testes. Deploy `6b043f9a93c5975c614d2dfb` pronto; commit de código `9f47dad` enviado.
