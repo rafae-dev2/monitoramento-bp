@@ -18,7 +18,7 @@ from playwright.sync_api import sync_playwright
 
 PORT = os.environ.get("PORT", "8080")
 MODELO = os.environ.get("MODELO", "desktop")
-BASE = f"http://127.0.0.1:{PORT}/"
+BASE = os.environ.get("BASE_URL") or f"http://127.0.0.1:{PORT}/"
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.environ.get("EVIDENCIAS") or os.path.join(REPO, "docs", "out")
 os.makedirs(OUT, exist_ok=True)

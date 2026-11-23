@@ -2,7 +2,13 @@
 
 Ícone na tela inicial (brasão da Branco Peres) → **abre direto no monitoramento** (`#!/details/analytic-map-v4`), em tela cheia, sem abas, sem barra de endereço e **sem pedir login depois do primeiro acesso**.
 
-**Arquivo:** `MonitoramentoBP.apk` · 117 KB · pacote `br.com.bperes.monitoramento` · **v1.1 (versionCode 2)** · minSdk 21 / target 34 · assinado v1+v2 com o mesmo keystore da v1.0.
+**Arquivo:** `MonitoramentoBP.apk` · 121 KB · pacote `br.com.bperes.monitoramento` · **v1.3 (versionCode 4)** · minSdk 21 / target 34 · assinado v1+v2 com o mesmo keystore da v1.0.
+
+> **v1.3 (23/11):** endereço inicial atualizado para **`https://sgpa-solinftec-bpa.netlify.app/`**
+> (o projeto do Netlify foi renomeado). Como a assinatura é a mesma, instale **por cima** da
+> v1.2 sem perder nada. A v1.2 continua funcionando enquanto o site antigo existir.
+> **v1.2 (23/11):** ponte `AndroidTTS` — voz nativa pt-BR (`TextToSpeech`) e vibração para os
+> alertas da Central; histórico e regras iguais aos do navegador.
 
 > **v1.1 (22/11):** ícone do aplicativo trocado pelo brasão Branco Peres em todas as densidades
 > (`mipmap-mdpi`…`xxxhdpi`, 48/72/96/144/192 px). Como a assinatura é a mesma, dá para instalar

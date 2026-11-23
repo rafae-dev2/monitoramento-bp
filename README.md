@@ -52,6 +52,14 @@ recebe apenas o token já emitido.
 
 ## 3. Deploy no Netlify (5 minutos)
 
+### Situação atual deste projeto (site no ar)
+
+O app está publicado em **`https://sgpa-solinftec-bpa.netlify.app/`** (projeto Netlify
+`sgpa-solinftec-bpa`). As variáveis obrigatórias já estão cadastradas lá; a tabela completa e o
+passo a passo de conferência estão em [`docs/VARIAVEIS-NETLIFY.md`](docs/VARIAVEIS-NETLIFY.md).
+Regra de ouro: depois de mexer em variável, **reimplante** (item 4) — variável nova não entra na
+função que já está publicada.
+
 ### Opção A — arrastar e soltar
 1. Compacte a pasta `monitoramento-pwa` (ou use o `.zip` deste pacote).
 2. Netlify → **Add new site** → **Deploy manually** → solte o `.zip`.
@@ -63,12 +71,21 @@ recebe apenas o token já emitido.
    | `SOLINF_PASS` | sua senha (veja o item 6 antes de colocar) |
    | `CLIENT_OWNER` | `branco_peres_cana` |
    | `CLIENT_NAME` | `branco-peres-cana` |
+   | `SUPABASE_URL` | `https://<ref-do-projeto>.supabase.co` (historico de alertas; opcional) |
+   | `SUPABASE_KEY` | chave **anon** ou **service_role** (veja a nota de segurança abaixo) |
 
    As demais (`AUTH_API`, `SGPA_API`, `SERVICE_API`, `TILE_API`, `INTERP_API`, `MAP_URL`,
    `PORTAL_URL`, `CD_CLIENT`) já vêm com o valor correto deste tenant no `.env.example`.
    Cole os valores **sem aspas** e sem espaços sobra (`SOLINF_USER=SEU-USUARIO-DO-PORTAL`). Na interface
    atual do Netlify o menu pode estar como **Environment secrets** — é o mesmo lugar. Não marque
    "Preview only": a função precisa ver a variável no deploy de produção.
+
+   **Sobre a chave do Supabase:** a função só *insere* linhas (auditoria de acesso e alertas). Em
+   vez de entregar a `service_role` (que manda em tudo), rode a migration
+   `supabase/escrita-append-only.sql`: ela libera `INSERT` para o papel `anon` nas tabelas
+   `pwa_alertas`/`pwa_acessos` e tira qualquer outro direito. Aí a `SUPABASE_KEY` pode ser a chave
+   **anon** (Dashboard → API Keys → *Project API keys* → `anon` / `publishable`). Se preferir a
+   `service_role`, ela também funciona sem alteração de código.
 4. **Deploys → ⋯ (Options) → Redeploy → Deploy latest production / Clear cache and rebuild.**
    Passo obrigatório: variável criada depois do deploy **não** entra na função já publicada.
 5. Confira no navegador: `https://<seu-site>.netlify.app/.netlify/functions/session` deve
@@ -179,15 +196,26 @@ Quer outra tela embutida de verdade? Só se ela também for um micro-frontend se
 
 ## 7. Banco de dados (opcional, Supabase)
 
-O app não precisa de banco. Se você quiser trilha de auditoria de acessos e configuração do tenant
-fora do código, rode `supabase/schema.sql` no SQL Editor do Supabase e preencha `SUPABASE_URL` /
-`SUPABASE_KEY` (service role) no Netlify. O script cria:
+O app funciona sem banco. O Supabase entra quando você quer **histórico consultável**: quais
+alertas dispararam, em qual equipamento, com que valor/limite e quem estava logado — coisa que a
+tela mostra só na sessão atual. Rode `supabase/schema.sql` no SQL Editor e depois
+`supabase/escrita-append-only.sql`; no Netlify preencha `SUPABASE_URL` + `SUPABASE_KEY`.
 
+- `public.pwa_alertas` — um registro por alerta disparado (regra, severidade, equipamento,
+  operador, valor, limite, texto, frase falada, fonte `app`/`stream`, `quando`, `inicio`);
+- `public.pwa_alertas_diario` — contagem por dia e regra, para painel;
+- `public.pwa_alertas_top_equipamento` — ranking dos equipamentos que mais alarmam;
 - `public.pwa_acessos` — quem abriu, quando, com que resultado. **Nunca guarda senha nem token**;
-- `public.pwa_acessos_diario` — visão pronta para painel de uso;
 - `public.pwa_config` — `clientOwner`, `cdCliente`, telas, etc.
+- retenção: há um `cron` comentado no fim do `schema.sql` para apagar o que é mais velho que 90 dias.
 
-Para escrever no log, descomente o bloco de auditoria indicado na função.
+Não precisa descomentar bloco nenhum: a função já grava em `pwa_alertas` quando o navegador chama
+`POST /.netlify/functions/session?acao=alerta` (em lote, um INSERT por rajada), e registra o login
+em `pwa_acessos`. Se `SUPABASE_URL`/`SUPABASE_KEY` não existirem, ela simplesmente não grava — o
+alerta na tela e a voz continuam funcionando.
+
+Com a migration *append-only*, a `SUPABASE_KEY` pode ser a chave **anon**: ela só consegue inserir
+nessas duas tabelas. Veja `docs/VARIAVEIS-NETLIFY.md`.
 
 ## 8. Se aparecer tela de erro
 
@@ -200,6 +228,7 @@ Para escrever no log, descomente o bloco de auditoria indicado na função.
 | `502` com `detalhe` vazio | Mudaram as URLs de API | compare com `.env.example` / peça novo mapeamento |
 | Mapa abre cinza/sem dados | token expirou (7 dias) sem reabrir o app | ⟳ Recarregar, ou ⚙ → *Nova sessão* |
 | Mapa em branco e app sumiu | micro-frontend do mapa mudou de contrato | me mande a URL que eu re-engenho o handshake |
+| `Failed to read the 'localStorage' property from 'Window': Access is denied` no console | é do **micro-frontend do mapa** (`solinftec-frontends…`), que roda em iframe de terceiros e tem o storage bloqueado pelo navegador | **ignorar.** Medido com o iframe bloqueado de propósito: o erro some, e o nosso shell continua com `localStorage = object`. Não afeta alerta, voz nem histórico (que usam o storage da *nossa* origem) |
 
 ### Já publicou e apareceu "faltam SOLINF_USER / SOLINF_PASS"?
 
@@ -237,6 +266,18 @@ Significa que o Netlify **não viu** as variáveis — não é bug do mapa nem d
   `docs/evidencia-modo-local-login.png` e `docs/evidencia-modo-local-mapa.png`.
 - **Não testado:** Netlify Identity/IP allowlist reais (dependem do plano), deep-login do portal por
   token na URL (testado e **não** funciona: a tela fica em "CARREGANDO…"), iOS Safari (sem aparelho).
+- **Validado no site publicado** (`https://sgpa-solinftec-bpa.netlify.app/`, shell `v13` na coleta,
+  navegador real, telemetria ao vivo do tenant): motor ligado, 168 equipamentos vigiados, 65 ativos, stream
+  `subscribe-live` ao vivo sem *polling*, 9 alertas no 1º ciclo (RPM máxima, motor ocioso,
+  velocidade) com pop-up e frase de voz no formato pedido, 67 eventos no histórico do aparelho,
+  23 frentes listadas, **nenhuma requisição com erro** e nenhum 429. A gravação no banco foi
+  conferida de ponta a ponta: `POST ?acao=alerta` → `{"gravados":1}` → linha em `pwa_alertas`.
+  Rode de novo com `BASE_URL=https://sgpa-solinftec-bpa.netlify.app/ python3 tools/teste-alertas.py`
+  e descubra a origem de erros de console com `python3 tools/probe-erro.py`.
+  O único `pageerror` reproduzido vem do iframe do fornecedor (seção 8); a `v14`, republicada
+  logo depois, só endurece o acesso ao `localStorage` do nosso shell.
+  O único `pageerror` visto é do iframe do fornecedor (ver seção 8). A `v14`, republicada depois da
+  coleta, só endurece o acesso ao `localStorage` do nosso shell.
 
 ## 10. Rodar localmente
 

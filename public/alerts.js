@@ -183,7 +183,7 @@
     return { numero: String(id || s), nome: s || String(id || '—') };
   }
 
-  /* "18251 - OPERADOR-87" => "Luiz Augusto de Freitas" */
+  /* "18251 - OPERADOR-90" => "Luiz Augusto de Freitas" */
   function nomeOperador(desc) {
     const s = String(desc || '').trim().replace(/^\d+\s*[-–]\s*/, '');
     if (!s || /desconhecido|indefinido|generic|sem operador|^nao definido/.test(norm(s))) return '';

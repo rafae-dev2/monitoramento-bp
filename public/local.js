@@ -42,9 +42,25 @@
     }
   }
 
+  /* Ler window.localStorage já lança exceção quando o navegador esta em modo privado,
+     com storage bloqueado, ou quando a página roda dentro de iframe de terceiros. O
+     helper devolve um depósito em memória no lugar, para o app nunca quebrar por isto. */
+  const MEMORIA = {};
+  function par(tipo) {
+    try {
+      return tipo === 's' ? sessionStorage : localStorage;
+    } catch {
+      return {
+        getItem: (k) => (k in MEMORIA ? MEMORIA[k] : null),
+        setItem: (k, v) => { MEMORIA[k] = String(v); },
+        removeItem: (k) => { delete MEMORIA[k]; },
+      };
+    }
+  }
+
   function lerCredencial() {
     try {
-      const raw = localStorage.getItem(CRED_KEY) || sessionStorage.getItem(CRED_KEY);
+      const raw = par('l').getItem(CRED_KEY) || par('s').getItem(CRED_KEY);
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
@@ -53,15 +69,20 @@
 
   function salvarCredencial(user, password, remember) {
     store.remember = !!remember;
-    const alvo = remember ? localStorage : sessionStorage;
-    const outro = remember ? sessionStorage : localStorage;
-    outro.removeItem(CRED_KEY);
-    outro.removeItem(CACHE_KEY);
-    alvo.setItem(CRED_KEY, JSON.stringify({ user, password }));
+    const alvo = par(remember ? 'l' : 's');
+    const outro = par(remember ? 's' : 'l');
+    try {
+      outro.removeItem(CRED_KEY);
+      outro.removeItem(CACHE_KEY);
+      alvo.setItem(CRED_KEY, JSON.stringify({ user, password }));
+    } catch {
+      /* storage recusando ate a escrita em memoria nao e opcao: segue sem lembrar */
+      store.remember = false;
+    }
   }
 
   function esquecer() {
-    for (const s of [localStorage, sessionStorage]) {
+    for (const s of [par('l'), par('s')]) {
       try {
         s.removeItem(CRED_KEY);
         s.removeItem(CACHE_KEY);
@@ -220,7 +241,7 @@
       e.code = 'sem_credencial';
       throw e;
     }
-    store.remember = !!localStorage.getItem(CRED_KEY);
+    store.remember = !!par('l').getItem(CRED_KEY);
 
     if (!forcar) {
       try {

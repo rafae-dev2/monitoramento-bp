@@ -20,7 +20,7 @@ sem filtro. Item:
  "descEquipamento":"PV JACTO UNIPORT 3030","fgTpEquipamento":40,
  "cdTpAlarme":4,"descTpAlarme":"RPM MAXIMA MOTOR","fgOnline":true,
  "vlAlarme":"1600","cdOperacao":986,"descOperacao":"Equipamento em Manutencao",
- "cdOperador":31003902,"nomeOperador":"OPERADOR-07",
+ "cdOperador":31003902,"nomeOperador":"OPERADOR-08",
  "vlAlarmeMaximoAtingido":"1600","dtHrUTC":1795426792.0,
  "countAlarmeOnlineValores":0,"countHistoricoMensagem":0, ...}
 ```
@@ -84,7 +84,7 @@ equipamento, campos:
 descTpEquipamento, descFullTpEquipamento, fgTpEquipamento, cdImplemento, descGrupoEquipamento
 ("Frente 3", "Caminhões Canavieiro Terc"), cdOperacao/descOperacao ("925 - Troca de Turno - HR"),
 descGrupoOperacao (PRODUTIVA/AUXILIAR/IMPRODUTIVA), descEstado (TRABALHANDO/DESLOCAMENTO/PARADA),
-descFuncionario ("18251 - OPERADOR-87") = operador, cdFazenda, cdZona, cdTalhao,
+descFuncionario ("18251 - OPERADOR-90") = operador, cdFazenda, cdZona, cdTalhao,
 descRegional, descUnidade, descCorporativo, dtHrLocal (array), dtHrFim, horas,
 vlVelocidade (número, ex. 5.7), vlParametro2/4/7/8/9, vlEd1/2/3, vlHorimetroOdometro,
 vlTempoSemComunicacao ("0 DIA(S)  00: 00: 08"), fgTpComunicacao (G/Z), fgMonitoramentoAtivo (T)`

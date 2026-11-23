@@ -28,10 +28,12 @@ mkdir -p "$ST/docs" "$ST/android" "$ST/repo-publico"
 cd "$PWA"
 cp -r public netlify supabase tools repo-publico "$ST"/
 cp netlify.toml .gitignore .env.example README.md "$ST"/
-[ -f docs/RELATORIO-CENTRAL-DE-ALERTAS.md ] && cp docs/RELATORIO-CENTRAL-DE-ALERTAS.md "$ST"/docs/ || true
+cp docs/*.md "$ST"/docs/ 2>/dev/null || true
 cp "$DOC"/NOTAS-ALERTAS.md "$DOC"/NOTAS-ALERTAS-2.md "$DOC"/mapa-dados-ao-vivo.json "$ST"/docs/ 2>/dev/null || true
 cp -r "$AND"/apk/src "$AND"/apk/res "$AND"/apk/AndroidManifest.xml "$AND"/apk/build.sh "$ST"/android/
 cp "$AND"/LEIA-ME-ANDROID.md "$AND"/INSTALACAO-RAPIDA.txt "$ST"/android/ 2>/dev/null || true
+# cópias de segurança locais (MainActivity.java.bak-v12 etc.) nunca vão para o repo público
+find "$ST" \( -name '*.bak' -o -name '*.bak-*' -o -name '*.orig' -o -name '*.rej' \) -delete
 echo "   staging: $ST"
 
 echo "== 2. senha do keystore fora do código =="
@@ -89,6 +91,16 @@ PY3
 sed -i 's#^REPO = .*#REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # raiz do repo#' tools/teste-alertas.py 2>/dev/null || true
 grep -q "^REPO = " tools/teste-alertas.py || sed -i '0,/^OUT = /s//REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))\nOUT = /' tools/teste-alertas.py
 python3 -c "import ast;ast.parse(open('tools/teste-alertas.py',encoding='utf-8').read());print('   teste OK')"
+
+echo "== 3b. endereco do banco fora do repo publico =="
+# A ref do projeto Supabase nao e segredo, mas num repositorio PUBLICO ela entrega
+# o endereco onde alguem pode tentar despejar INSERT. O repo publica placeholder.
+find "$ST" -type f \( -name '*.md' -o -name '*.sql' -o -name '*.example' -o -name '*.json' -o -name '*.mjs' \) \
+  -exec sed -i -E 's#[a-z0-9]{20}\.supabase\.co#<ref-do-projeto>.supabase.co#g' {} +
+if grep -rlE '[a-z0-9]{20}\.supabase\.co' "$ST" 2>/dev/null | grep -q .; then
+  echo "   AINDA SOBROU ENDERECO DE PROJETO"; exit 1
+fi
+echo "   ref do projeto: substituida por placeholder (ok)"
 
 echo "== 4. LICENSE, SECURITY e README público =="
 cp repo-publico/LICENSE LICENSE

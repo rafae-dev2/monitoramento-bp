@@ -14,7 +14,7 @@ Branco Peres · Monitoramento BP (PWA + APK) · 23/11/2026
 | Stream ao vivo (`public/alerts-stream.js`, Web Worker NDJSON) | conectado, sem polling |
 | Interface premium (sino + badge, central lateral, toasts, tela de regras, CSV) | `public/alerts.css` |
 | Voz pt-BR no navegador (`speechSynthesis`) + ponte nativa no APK | frase no formato pedido |
-| APK v1.2 (versionCode 3) apontando para o PWA, com TTS e vibração | assinado, 124 KB |
+| APK v1.3 (versionCode 4) apontando para o PWA, com TTS e vibração | assinado, 121 KB |
 | Trilha no Supabase (`pwa_alertas`) + Function em lote | `supabase/schema.sql` |
 | Proxy de dados na Function (`?acao=dados`) para redes que bloqueiam CORS | whitelist de rotas |
 | Empacotamento + auditoria do zip | 5 550 KB, 49 arquivos, sem senha literal |
@@ -70,9 +70,9 @@ gerada**, não do áudio. Em produção:
 
 ## 7. Publicar (Netlify)
 1. Pegar o pacote `MonitoramentoBP-PWA-Netlify.zip` e arrastar em app.netlify.com/drop (ou redeploy do site
-   `storied-heliotrope-bed0e7.netlify.app`).
+   `sgpa-solinftec-bpa.netlify.app`).
 2. Environment variables: `SOLINF_USER=SEU-USUARIO-DO-PORTAL`, `SOLINF_PASS=<nova senha>` e, se quiser trilha,
-   `SUPABASE_URL` + `SUPABASE_KEY` (service_role).
+   `SUPABASE_URL` + `SUPABASE_KEY` (anon, com a migration de escrita append-only).
 3. Rodar `supabase/schema.sql` no SQL Editor (cria `pwa_acessos`, `pwa_config`, `pwa_alertas`).
 4. Redeploy. Cache: `SHELL bperes-shell-v13` garante que o app antigo não sirva a casca velha.
 5. No celular, abrir o PWA e instalar (⋮ → Instalar aplicativo).
@@ -89,7 +89,28 @@ gerada**, não do áudio. Em produção:
 
 ## 9. Arquivos
 - Projeto: `/home/ubuntu/netlify/monitoramento-pwa/` (zip pronto em `/home/ubuntu/netlify/`)
-- APK: `/home/ubuntu/solinftec/MonitoramentoBP-v1.2.apk`
+- APK: `/home/ubuntu/solinftec/MonitoramentoBP-v1.3.apk` (v1.2 fica como backup)
+- Variáveis do Netlify /Supabase: `docs/VARIAVEIS-NETLIFY.md`
 - Dossiês técnicos: `docs/NOTAS-ALERTAS.md`, `docs/NOTAS-ALERTAS-2.md`, `docs/mapa-dados-ao-vivo.json`
 - Evidências: `docs/out/alerta-desktop-*.png`, `docs/out/alerta-celular-*.png`,
   `docs/chapa-central-de-alertas.png`, relatórios `.txt`
+
+## 10. Republicação no projeto `sgpa-solinftec-bpa` (23/11)
+
+- Deploy publicado via API do Netlify a partir de `deploy-sgpa/` (23 arquivos, 1,1 MB de `public/`);
+  shell agora em `bperes-shell-v14`. Endereço: `https://sgpa-solinftec-bpa.netlify.app/`.
+- Variáveis conferidas no site: `SOLINF_USER`, `SOLINF_PASS`, `CLIENT_OWNER`, `CLIENT_NAME`,
+  `SUPABASE_URL`, `SUPABASE_KEY`. A chave do Supabase usada é a **anon**, porque a migration
+  `supabase/escrita-append-only.sql` libera só `INSERT` em `pwa_alertas`/`pwa_acessos` — sem
+  expor a `service_role` no provedor de hospedagem.
+- Teste de fumaça ao vivo, no navegador, contra o site publicado: motor ligado, 168 equipamentos
+  vigiados / 65 ativos, stream `subscribe-live` sem *polling*, 9 alertas no 1º ciclo, frases de voz
+  no formato pedido, 67 eventos no histórico do aparelho, **zero** requisição com erro e zero 429.
+- Banco: 106 linhas em `pwa_alertas` escritas pela Function durante essa coleta (rpm 49, ocioso 44,
+  velocidade 13; fontes `app` e `portal`), conferidas com `select … group by regra, fonte`.
+- APK **v1.3 (versionCode 4)** reconstruído com `HOME_URL` no endereço novo e a lista de hosts
+  aceitos levando os dois domínios; mesma assinatura, então instala por cima da v1.2.
+- Conhecido e inocuamente: o único `pageerror` do teste (`Failed to read the 'localStorage'
+  property`) vem do iframe do micro-frontend do mapa. Comprovado com `tools/probe-erro.py`, que
+  abre o site com e sem o iframe do fornecedor: com o iframe bloqueado, o erro desaparece e o
+  nosso shell continua enxergando o storage. Ainda assim a `v14` blinda os acessos do shell.

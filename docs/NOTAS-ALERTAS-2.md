@@ -18,7 +18,7 @@
 - headers iguais + `content-type: application/x-ndjson`; mesmo corpo do actual-state.
 - linhas `{"type":"monitoramento","cdCliente":204,"cdEquipamento":"32305","dtHrLocal":"23/11/2026 06:53:46",
   "cdOperacao":"969","descOperacao":"969 - Aguard Bascul Transbo","cdOperador":"31003137",
-  "descOperador":"31003137 - OPERADOR-117","cdEstado":"F","fgTpAlerta":"*NAO_DEFINIDO*",
+  "descOperador":"31003137 - OPERADOR-119","cdEstado":"F","fgTpAlerta":"*NAO_DEFINIDO*",
   "vlGrafico":"#FF0000","vlDirecao":290.42,"fgMonitoramentoAtivo":"T","geohash":"6u5tz1uv8tmy","deleted":false}`
 - só mudanças (push do servidor), ~26-49 quadros em 15-20 s. Também emite `type:"alarme"`.
 - CORS para o navegador: `access-control-allow-origin: *` e

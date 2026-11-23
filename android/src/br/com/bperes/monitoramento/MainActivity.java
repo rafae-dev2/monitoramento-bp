@@ -55,7 +55,7 @@ public class MainActivity extends Activity {
      *   https://branco-peres-cana.saas-solinftec.com/#!/details/analytic-map-v4
      */
     private static final String HOME_URL =
-            "https://storied-heliotrope-bed0e7.netlify.app/";
+            "https://sgpa-solinftec-bpa.netlify.app/";
 
     /** Hosts que pertencem ao portal (navegacao permanece dentro do app). */
     private static final String[] ALLOWED_HOSTS = {
@@ -67,6 +67,7 @@ public class MainActivity extends Activity {
             "api-br.saas-solinftec.com",
             "api-usa.saas-solinftec.com",
             "data-analytics.saas-solinftec.com",
+            "sgpa-solinftec-bpa.netlify.app",
             "storied-heliotrope-bed0e7.netlify.app",
             "api.mapbox.com",
             "events.mapbox.com",

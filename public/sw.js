@@ -2,7 +2,7 @@
  * Só cacheamos o casco do app (HTML/CSS/JS/ícones). Sessão e dados do portal
  * passam sempre pela rede e NUNCA entram no cache.
  */
-const SHELL = 'bperes-shell-v13';
+const SHELL = 'bperes-shell-v14';
 const ASSETS = [
   '/',
   '/index.html',
@@ -21,6 +21,8 @@ const ASSETS = [
   '/icons/logo-mark.png',
   '/icons/logo.png',
   '/icons/maskable-192.png',
+  '/icons/maskable-512.png',
+  '/icons/apple-touch-icon-180.png',
 ];
 
 self.addEventListener('install', (e) => {
