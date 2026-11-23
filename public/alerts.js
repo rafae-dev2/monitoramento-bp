@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.2.9';
+  const VERSAO = '1.3.0';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -72,6 +72,7 @@
     aguardandoCaminhao: { id: 'aguardandoCaminhao', nome: 'Aguardando caminhão', icone: 'T', cor: '#e9b457', severidade: 2 },
     refeicao: { id: 'refeicao', nome: 'Refeição excedida', icone: '🍽️', cor: '#d9822b', severidade: 2 },
     semApontamento: { id: 'semApontamento', nome: 'Sem apontamento', icone: '📝', cor: '#e07b39', severidade: 2 },
+    paradaImprodutiva: { id: 'paradaImprodutiva', nome: 'Parada improdutiva', icone: '⏸️', cor: '#c96b3b', severidade: 2 },
     generico: { id: 'generico', nome: 'Alarme do portal', icone: '⚠️', cor: '#93a4b3', severidade: 1 },
   };
 
@@ -88,6 +89,7 @@
     minutosOcioso: 5,
     refeicaoGrupos: {}, // grupo/frente → minutos de refeição (0 = não controlar)
     refeicaoEquipamentos: '', // "6614=30, 8833=60": prevalece sobre o grupo
+    paradasLimites: {}, // id da parada → minutos de tolerância (0 = não alertar)
     minutosSemApontamento: 5, // tolerância antes de alertar operação “Sem Apontamento”
     minutosTurno: 4, // pedido do usuário (o portal usa 3)
     maxAtrasoMin: 20, // ignorar equipamento sem sinal há mais que isso
@@ -788,6 +790,7 @@
       if (q.descOperacao !== undefined && dentroDoEscopo(e)) {
         regraAguardandoCaminhao(e, agora());
         regraSemApontamento(e, agora());
+        regraParada(e, agora());
         regraRefeicao(e, agora());
       }
     }
@@ -1146,6 +1149,7 @@
         regraAguardandoCaminhao(e, ts);
       }
       regraSemApontamento(e, ts);
+      regraParada(e, ts);
       regraRefeicao(e, ts);
       regraTurno(e, ts);
       regraOcioso(e, ts);
@@ -1199,6 +1203,37 @@
       inicio: inicioReal(st, e),
     });
   }
+  /* Paradas improdutivas de maior impacto: alerta após a tolerância de cada uma. */
+  function regraParada(e, ts) {
+    const p = e.operacaoConfirmada === true ? policy.paradaImprodutiva(e) : null;
+    const lim = p ? policy.limiteParada(cfg, p) : 0;
+    const anterior = paradaAtual.get(e.id);
+    if (anterior && (!p || anterior !== p.id)) {
+      const velho = marcar(e.id, 'parada:' + anterior, false, ts, null);
+      ativos.delete(velho.chave);
+      paradaAtual.delete(e.id);
+    }
+    if (!p || lim <= 0) return;
+    paradaAtual.set(e.id, p.id);
+    const st = marcar(e.id, 'parada:' + p.id, true, ts, null);
+    if (!st.firing) return;
+    const durou = (ts - inicioReal(st, e)) / 60000;
+    if (durou < lim) return;
+    if (!podeDisparar(st, ts)) return;
+    emitir({
+      chave: st.chave,
+      regra: 'paradaImprodutiva',
+      paradaId: p.id,
+      paradaNome: p.nome,
+      e,
+      valor: Math.round(durou),
+      limite: Math.round(lim),
+      texto: `${p.nome} há ${minutosTxt(durou)} · frente/grupo: ${e.frente || 'não informada'}`,
+      detalhe: `Operação SGPA ${e.operacao || '—'} · ${e.tipo || 'equipamento'} · tolerância ${minutosTxt(lim)}`,
+      inicio: inicioReal(st, e),
+    });
+  }
+  const paradaAtual = new Map();
   /* Controle de refeições: limite por grupo ou equipamento; alarma ao exceder. */
   function regraRefeicao(e, ts) {
     const limite = policy.limiteRefeicao(cfg, e);
@@ -1770,7 +1805,7 @@
   /* Exceção pedida pelo usuário: “Sem apontamento” (cálculo do app) usa todos os
      canais, mas só enquanto o app está aberto — nunca passa pelo Web Push. */
   function localComCanais(a) {
-    return !!a && a.fonte === 'app' && (a.regra === 'semApontamento' || a.regra === 'refeicao');
+    return !!a && a.fonte === 'app' && (a.regra === 'semApontamento' || a.regra === 'refeicao' || a.regra === 'paradaImprodutiva');
   }
   function canalSistema(a) {
     return !!a && (a.fonte === 'portal' || localComCanais(a));
@@ -1985,6 +2020,9 @@
     <div id="cfg-refeicoes" class="refeicao-lista"></div>
     <label class="campo"><span>Por equipamento (prevalece sobre o grupo): número=minutos</span>
       <input id="cfg-refeicao-eq" type="text" placeholder="ex.: 6614=30, 8833=60, 4462=0" spellcheck="false" autocomplete="off"></label>
+    <h3 class="secao-alertas">Paradas improdutivas (ranking SGPA)</h3>
+    <p class="fine">Códigos que mais tiraram produtividade no último mês. Alerta quando o equipamento fica na operação além da tolerância (minutos). Use 0 para não alertar.</p>
+    <div id="cfg-paradas" class="grade"></div>
     <h3 class="secao-alertas">Fontes e canais de aviso</h3>
     <div class="switches">
       <label class="chk"><input id="cfg-liga" type="checkbox"><span>Central de alertas ligada</span></label>
@@ -2376,6 +2414,7 @@
     aguardandoCaminhao: 'Trator/transbordo com a operação Aguardando Caminhão. Informa a frente/grupo.',
     refeicao: 'Refeição acima do tempo configurado por grupo ou equipamento (seção Controle de refeições). Fala e notifica só com o app aberto.',
     semApontamento: 'Equipamento na operação SGPA “Sem Apontamento” por 5 min ou mais (sem alarme do portal). Fala e notifica só com o app aberto.',
+    paradaImprodutiva: 'Paradas improdutivas de maior impacto (fila, aguardando carregamento, 983, falta de transbordo etc.) acima da tolerância da seção Paradas improdutivas. Fala e notifica com o app aberto.',
     generico: 'Demais tipos oficiais, com o nome original do SGPA.',
   };
   let limiteTipos = 80;
@@ -2588,6 +2627,31 @@
   }
 
   const OPCOES_REFEICAO = [[0, 'Não controlar'], [30, '30 min'], [45, '45 min'], [60, '1 hora'], [90, '1h30']];
+  function renderParadas() {
+    const box = $('cfg-paradas');
+    if (!box) return;
+    box.textContent = '';
+    for (const p of policy.PARADAS) {
+      const label = document.createElement('label');
+      label.className = 'campo';
+      const span = document.createElement('span');
+      span.textContent = p.nome + ' (min)';
+      const input = document.createElement('input');
+      input.type = 'number'; input.min = '0'; input.step = '1'; input.inputMode = 'numeric';
+      input.dataset.parada = p.id;
+      input.value = String(policy.limiteParada(cfg, p));
+      label.append(span, input);
+      box.appendChild(label);
+    }
+  }
+  function lerParadas() {
+    const limites = {};
+    document.querySelectorAll('#cfg-paradas input[data-parada]').forEach((i) => {
+      const v = Number(i.value);
+      if (Number.isFinite(v) && v >= 0) limites[i.dataset.parada] = Math.round(v);
+    });
+    return { paradasLimites: limites };
+  }
   function renderRefeicoes() {
     const box = $('cfg-refeicoes');
     if (!box) return;
@@ -2676,6 +2740,7 @@
     renderPushStatus();
 
     renderRefeicoes();
+    renderParadas();
     const box = $('cfg-frentes');
     box.innerHTML = '';
     const lista = (estado.frentes || []).slice();
@@ -2737,6 +2802,7 @@
       rpmOcioso: n('cfg-rpmoci', 900),
       equipamentos: $('cfg-eq').value,
       ...lerRefeicoes(),
+      ...lerParadas(),
       volume: n('cfg-vol', 1),
       taxa: n('cfg-taxa', 1),
       tom: n('cfg-tom', 1),

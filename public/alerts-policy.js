@@ -7,7 +7,7 @@
 }(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis), function () {
   'use strict';
 
-  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'semApontamento', 'refeicao'];
+  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'semApontamento', 'refeicao', 'paradaImprodutiva'];
   var DEFAULTS = {
     velocidade: true,
     rpm: true,
@@ -17,7 +17,8 @@
     generico: true,
     aguardandoCaminhao: true,
     semApontamento: true,
-    refeicao: true
+    refeicao: true,
+    paradaImprodutiva: true
   };
   var NUMEROS_FALADOS = ['zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'];
   // Expansões confirmadas pelo usuário no DOCX de 23/11/2026. Os códigos sem
@@ -154,6 +155,42 @@
     return /^(?:sem apontamento(?: (?:tpl|cct))?|digitar op vl)$/.test(normalized);
   }
 
+  /* Paradas improdutivas de maior impacto (ranking SGPA 23/10–22/11/2026). */
+  var PARADAS = [
+    { id: 'agColhedoraParadaRapida', nome: 'AG colhedora parada rápida (983)', min: 10, codigo: '983', re: /^ag(?:uardando|uard)? colhedora parada rapida/ },
+    { id: 'faltaTransbordo', nome: 'Falta de transbordo (colhedora)', min: 1, re: /^falta (?:de )?transbordo/ },
+    { id: 'aguardManobraTransbordo', nome: 'Aguardando manobra de transbordo', min: 5, re: /^ag(?:uardando|uard)? manobra (?:de )?transbordo/ },
+    { id: 'filaUnica', nome: 'Fila única (transbordo)', min: 20, re: /^fila unica/ },
+    { id: 'aguardandoCarregamento', nome: 'Aguardando carregamento (caminhão)', min: 30, re: /^ag(?:uardando|uard)? carreg/ },
+    { id: 'agSequencTrabalho', nome: 'Ag. sequência de trabalho', min: 20, re: /^ag(?:uardando|uard)? sequenc/ },
+    { id: 'aguardLiberarTrafego', nome: 'Aguardando liberar tráfego', min: 20, re: /^ag(?:uardando|uard)? liberar trafego/ },
+    { id: 'aguardandoColhedoraAlocada', nome: 'Aguardando colhedora alocada', min: 15, re: /^ag(?:uardando|uard)? colhedora alocada/ },
+    { id: 'aguardReboqueCaminhao', nome: 'Aguardando reboque do caminhão', min: 15, re: /^ag(?:uardando|uard)? reboque caminhao/ },
+    { id: 'aguardBasculamento', nome: 'Aguardando basculamento', min: 15, re: /^ag(?:uardando|uard)? bascul/ },
+    { id: 'equipamentoEncalhado', nome: 'Equipamento encalhado', min: 10, re: /^equipamento encalhado/ },
+    { id: 'faltaOperador', nome: 'Falta operador', min: 5, re: /^falta (?:de )?operador/ },
+    { id: 'paradaIndustrial', nome: 'Parada industrial (911)', min: 30, codigo: '911', re: /^parada industrial/ }
+  ];
+  function paradaImprodutiva(e) {
+    if (!e || typeof e !== 'object') return null;
+    var operacao = e.operacao;
+    if (operacao == null || String(operacao).trim() === '') operacao = e.descOperacao;
+    var bruto = operacao == null ? '' : String(operacao);
+    var cod = String(e.cdOperacao == null ? '' : e.cdOperacao).trim();
+    var m = /^\s*(\d+)\s*-/.exec(bruto);
+    if (!cod && m) cod = m[1];
+    var t = norm(bruto).replace(/^\d+\s*-\s*/, '').replace(/[._\-\/]+/g, ' ').replace(/\s+/g, ' ').trim();
+    for (var i = 0; i < PARADAS.length; i += 1) {
+      var p = PARADAS[i];
+      if ((p.codigo && cod === p.codigo) || p.re.test(t)) return p;
+    }
+    return null;
+  }
+  function limiteParada(cfg, p) {
+    var mapa = cfg && cfg.paradasLimites && typeof cfg.paradasLimites === 'object' ? cfg.paradasLimites : {};
+    var v = Object.prototype.hasOwnProperty.call(mapa, p.id) ? Number(mapa[p.id]) : p.min;
+    return Number.isFinite(v) && v >= 0 ? v : p.min;
+  }
   /* Operação SGPA de refeição (ex.: “REFEIÇÃO”, “REFEIÇÃO (1 HORA)”, “REFEIÇÃO_TPL”). */
   function emRefeicao(e) {
     if (!e || typeof e !== 'object') return false;
@@ -214,7 +251,7 @@
       var compact = norm(directText).replace(/[\s_-]+/g, '');
       var aliases = {
         velocidade: 'velocidade', rpm: 'rpm', ocioso: 'ocioso', turno: 'turno',
-        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', semapontamento: 'semApontamento', refeicao: 'refeicao',
+        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', semapontamento: 'semApontamento', refeicao: 'refeicao', paradaimprodutiva: 'paradaImprodutiva',
         ociososemapontamento: 'ocioso'
       };
       if (aliases[compact]) return aliases[compact];
@@ -314,6 +351,15 @@
         (lim ? ', limite de ' + String(lim) + ' minutos' : '') +
         '. Frente/grupo ' + String(fr).trim() + '. Verificar.';
     }
+    if (selectedCategory === 'paradaImprodutiva') {
+      var fp = event.frente;
+      if (fp == null || String(fp).trim() === '') fp = 'frente não informada';
+      var cp = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
+      var mp = numericAlertValue(item.valor);
+      return cp + ' ' + vehicleNumber(item, event) + ' em ' + String(item.paradaNome || 'parada improdutiva').replace(/\s*\(\d+\)/, '') +
+        (mp ? ' há ' + String(mp) + (mp === 1 ? ' minuto' : ' minutos') : '') +
+        '. Frente/grupo ' + String(fp).trim() + '. Verificar.';
+    }
     if (selectedCategory === 'semApontamento') {
       var frente = event.frente;
       if (frente == null || String(frente).trim() === '') frente = 'frente não informada';
@@ -357,6 +403,9 @@
     aguardandoCaminhao: aguardandoCaminhao,
     semApontamento: semApontamento,
     emRefeicao: emRefeicao,
+    PARADAS: PARADAS,
+    paradaImprodutiva: paradaImprodutiva,
+    limiteParada: limiteParada,
     limiteRefeicao: limiteRefeicao,
     mapaEquipamentos: mapaEquipamentos,
     normalizeCfg: normalizeCfg,

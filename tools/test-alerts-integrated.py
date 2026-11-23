@@ -429,7 +429,7 @@ with sync_playwright() as pw:
     assert page.locator('#cfg-alertas').evaluate("el => el.classList.contains('hide')"), 'O X deve fechar as preferências'
     assert page.evaluate('document.activeElement.id === "btn-cfg"'), 'Ao fechar, o foco deve voltar ao controle de configurações visível'
     page.click('#btn-cfg')
-    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 9")
+    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 10")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
     page.locator('.catalogo-detalhes').first.locator('summary').click()
     page.fill('#cfg-busca-tipo','12480')
