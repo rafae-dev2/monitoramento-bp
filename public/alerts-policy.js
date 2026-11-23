@@ -7,7 +7,7 @@
 }(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis), function () {
   'use strict';
 
-  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'semApontamento', 'refeicao', 'paradaImprodutiva'];
+  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente'];
   var DEFAULTS = {
     velocidade: true,
     rpm: true,
@@ -18,7 +18,8 @@
     aguardandoCaminhao: true,
     semApontamento: true,
     refeicao: true,
-    paradaImprodutiva: true
+    paradaImprodutiva: true,
+    gestaoFrente: true
   };
   var NUMEROS_FALADOS = ['zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'];
   // Expansões confirmadas pelo usuário no DOCX de 23/11/2026. Os códigos sem
@@ -198,6 +199,20 @@
     var v = Object.prototype.hasOwnProperty.call(mapa, p.id) ? Number(mapa[p.id]) : p.min;
     return Number.isFinite(v) && v >= 0 ? v : p.min;
   }
+  /* "Frente 1=João; Frente 2=Pedro" → nome do líder da frente. */
+  function liderFrente(cfg, frente) {
+    var txt = cfg && cfg.lideresFrente ? String(cfg.lideresFrente) : '';
+    var alvo = norm(frente).trim();
+    if (!txt || !alvo) return '';
+    var partes = txt.split(/[;\n]+/);
+    for (var i = 0; i < partes.length; i += 1) {
+      var kv = partes[i].split('=');
+      if (kv.length < 2) continue;
+      var k = norm(kv[0]).trim();
+      if (k && (k === alvo || alvo.indexOf(k) !== -1 || k.indexOf(alvo) !== -1)) return kv.slice(1).join('=').trim();
+    }
+    return '';
+  }
   /* Operação SGPA de refeição (ex.: “REFEIÇÃO”, “REFEIÇÃO (1 HORA)”, “REFEIÇÃO_TPL”). */
   function emRefeicao(e) {
     if (!e || typeof e !== 'object') return false;
@@ -258,7 +273,7 @@
       var compact = norm(directText).replace(/[\s_-]+/g, '');
       var aliases = {
         velocidade: 'velocidade', rpm: 'rpm', ocioso: 'ocioso', turno: 'turno',
-        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', semapontamento: 'semApontamento', refeicao: 'refeicao', paradaimprodutiva: 'paradaImprodutiva',
+        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', semapontamento: 'semApontamento', refeicao: 'refeicao', paradaimprodutiva: 'paradaImprodutiva', gestaofrente: 'gestaoFrente',
         ociososemapontamento: 'ocioso'
       };
       if (aliases[compact]) return aliases[compact];
@@ -363,9 +378,16 @@
       if (fp == null || String(fp).trim() === '') fp = 'frente não informada';
       var cp = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
       var mp = numericAlertValue(item.valor);
-      return cp + ' ' + vehicleNumber(item, event) + ' em ' + String(item.paradaNome || 'parada improdutiva').replace(/\s*\(\d+\)/, '') +
+      var prefixo = item.nivel >= 3 ? 'Escalonamento. ' : item.nivel === 2 ? 'Urgente, parada continua. ' : '';
+      var sufixo = item.nivel >= 3 ? ' Acionar ' + (item.lider ? 'líder ' + item.lider : 'líder da frente') + '.' : '';
+      return prefixo + cp + ' ' + vehicleNumber(item, event) + ' em ' + String(item.paradaNome || 'parada improdutiva').replace(/\s*\(\d+\)/, '') +
         (mp ? ' há ' + String(mp) + (mp === 1 ? ' minuto' : ' minutos') : '') +
-        '. Frente/grupo ' + String(fp).trim() + '. Verificar.';
+        '. Frente/grupo ' + String(fp).trim() + '.' + (sufixo || ' Verificar.');
+    }
+    if (selectedCategory === 'gestaoFrente') {
+      var ff = event.frente == null || String(event.frente).trim() === '' ? 'não informada' : String(event.frente).trim();
+      return 'Atenção gestão, ' + (/^frente\b/i.test(ff) ? ff : 'frente ' + ff) + ': ' + String(item.texto || '') .replace(/\s*·.*$/, '') + '.' +
+        (item.lider ? ' Líder ' + item.lider + '.' : '') + ' Verificar.';
     }
     if (selectedCategory === 'semApontamento') {
       var frente = event.frente;
@@ -413,6 +435,7 @@
     PARADAS: PARADAS,
     paradaImprodutiva: paradaImprodutiva,
     limiteParada: limiteParada,
+    liderFrente: liderFrente,
     limiteRefeicao: limiteRefeicao,
     mapaEquipamentos: mapaEquipamentos,
     normalizeCfg: normalizeCfg,

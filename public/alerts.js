@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.3.1';
+  const VERSAO = '1.4.0';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -73,6 +73,7 @@
     refeicao: { id: 'refeicao', nome: 'Refeição excedida', icone: '🍽️', cor: '#d9822b', severidade: 2 },
     semApontamento: { id: 'semApontamento', nome: 'Sem apontamento', icone: '📝', cor: '#e07b39', severidade: 2 },
     paradaImprodutiva: { id: 'paradaImprodutiva', nome: 'Parada improdutiva', icone: '⏸️', cor: '#c96b3b', severidade: 2 },
+    gestaoFrente: { id: 'gestaoFrente', nome: 'Gestão da frente', icone: '🚩', cor: '#b5179e', severidade: 3 },
     generico: { id: 'generico', nome: 'Alarme do portal', icone: '⚠️', cor: '#93a4b3', severidade: 1 },
   };
 
@@ -89,6 +90,12 @@
     minutosOcioso: 5,
     refeicaoGrupos: {}, // grupo/frente → minutos de refeição (0 = não controlar)
     refeicaoEquipamentos: '', // "6614=30, 8833=60": prevalece sobre o grupo
+    escalarUrgenteMin: 10, // minutos após a tolerância: repete como urgente
+    escalarLiderMin: 20, // minutos após a tolerância: pede acionar o líder
+    lideresFrente: '', // "Frente 1=João; Frente 2=Pedro"
+    filaMaxFrente: 4, // caminhões/transbordos em fila/aguardando carregamento na mesma frente (0 = desliga)
+    minutosFrenteSemColhedora: 10, // todas as colhedoras da frente paradas (0 = desliga)
+    transbordosAguardandoMax: 3, // transbordos aguardando colhedora na mesma frente (0 = desliga)
     paradasLimites: {}, // id da parada → minutos de tolerância (0 = não alertar)
     minutosSemApontamento: 5, // tolerância antes de alertar operação “Sem Apontamento”
     minutosTurno: 4, // pedido do usuário (o portal usa 3)
@@ -1154,6 +1161,7 @@
       regraTurno(e, ts);
       regraOcioso(e, ts);
     }
+    regrasFrente(ts);
     estado.monitorados = cont;
   }
 
@@ -1219,21 +1227,70 @@
     if (!st.firing) return;
     const durou = (ts - inicioReal(st, e)) / 60000;
     if (durou < lim) return;
-    if (!podeDisparar(st, ts)) return;
+    const e1 = Math.max(0, num(cfg.escalarUrgenteMin) || 0);
+    const e2 = Math.max(0, num(cfg.escalarLiderMin) || 0);
+    const nivel = e2 && durou >= lim + e2 ? 3 : e1 && durou >= lim + e1 ? 2 : 1;
+    const subiu = st.emitido && nivel > (st.nivel || 1);
+    if (subiu) { st.ultimo = ts; } else if (!podeDisparar(st, ts)) return;
+    st.nivel = Math.max(st.nivel || 1, nivel);
     emitir({
       chave: st.chave,
       regra: 'paradaImprodutiva',
+      nivel,
+      lider: policy.liderFrente(cfg, e.frente),
       paradaId: p.id,
       paradaNome: p.nome,
       e,
       valor: Math.round(durou),
       limite: Math.round(lim),
-      texto: `${p.nome} há ${minutosTxt(durou)} · frente/grupo: ${e.frente || 'não informada'}`,
+      texto: `${nivel >= 3 ? '[ESCALAR LÍDER] ' : nivel === 2 ? '[URGENTE] ' : ''}${p.nome} há ${minutosTxt(durou)} · frente/grupo: ${e.frente || 'não informada'}`,
       detalhe: `Operação SGPA ${e.operacao || '—'} · ${e.tipo || 'equipamento'} · tolerância ${minutosTxt(lim)}`,
       inicio: inicioReal(st, e),
     });
   }
   const paradaAtual = new Map();
+  /* Alertas de gestão por frente: problema da frente, não do operador. */
+  function regrasFrente(ts) {
+    const porFrente = new Map();
+    for (const e of frota.values()) {
+      if (!dentroDoEscopo(e) || !e.frente) continue;
+      let f = porFrente.get(e.frente);
+      if (!f) { f = { fila: [], colh: 0, colhParadas: 0, transbAg: [] }; porFrente.set(e.frente, f); }
+      const p = e.operacaoConfirmada === true ? policy.paradaImprodutiva(e) : null;
+      if (p && (p.id === 'filaUnica' || p.id === 'aguardandoCarregamento')) f.fila.push(e.numero || e.id);
+      if (p && (p.id === 'agColhedoraParadaRapida' || p.id === 'aguardandoColhedoraAlocada')) f.transbAg.push(e.numero || e.id);
+      const tipo = policy.norm([e.tipo, e.tipoCompleto, e.nome].filter(Boolean).join(' '));
+      if (/colhed/.test(tipo)) {
+        f.colh++;
+        const op = policy.norm(e.operacao || '');
+        if (e.operacaoConfirmada === true && op && !/colheita/.test(op)) f.colhParadas++;
+      }
+    }
+    const checar = (frente, id, liga, minMin, texto, detalhe, valor) => {
+      const pe = { id: 'frente:' + frente, numero: frente, nome: 'Frente ' + frente, tipo: 'Frente', frente };
+      const st = marcar(pe.id, 'gestao:' + id, liga, ts, null);
+      if (!liga && !st.firing) ativos.delete(st.chave);
+      if (!st.firing) return;
+      if ((ts - st.since) / 60000 < minMin) return;
+      if (!podeDisparar(st, ts)) return;
+      emitir({ chave: st.chave, regra: 'gestaoFrente', e: pe, valor, lider: policy.liderFrente(cfg, frente),
+        texto: texto + ' · frente/grupo: ' + frente, detalhe, inicio: st.since });
+    };
+    const filaMax = Math.max(0, num(cfg.filaMaxFrente) || 0);
+    const semColh = Math.max(0, num(cfg.minutosFrenteSemColhedora) || 0);
+    const tbMax = Math.max(0, num(cfg.transbordosAguardandoMax) || 0);
+    for (const [frente, f] of porFrente) {
+      checar(frente, 'fila', filaMax > 0 && f.fila.length >= filaMax, 0,
+        `${f.fila.length} equipamentos em fila aguardando carregamento, segurar o despacho de caminhões`,
+        'Fila/aguardando carregamento: ' + f.fila.join(', '), f.fila.length);
+      checar(frente, 'semColhedora', semColh > 0 && f.colh > 0 && f.colhParadas === f.colh, semColh,
+        `todas as ${f.colh} colhedoras paradas, frente sem colheita`,
+        'Nenhuma colhedora em operação de colheita', f.colh);
+      checar(frente, 'desequilibrio', tbMax > 0 && f.transbAg.length >= tbMax, 0,
+        `${f.transbAg.length} transbordos aguardando colhedora, remanejar a frota`,
+        'Transbordos aguardando colhedora: ' + f.transbAg.join(', '), f.transbAg.length);
+    }
+  }
   /* Controle de refeições: limite por grupo ou equipamento; alarma ao exceder. */
   function regraRefeicao(e, ts) {
     const limite = policy.limiteRefeicao(cfg, e);
@@ -1805,7 +1862,7 @@
   /* Exceção pedida pelo usuário: “Sem apontamento” (cálculo do app) usa todos os
      canais, mas só enquanto o app está aberto — nunca passa pelo Web Push. */
   function localComCanais(a) {
-    return !!a && a.fonte === 'app' && (a.regra === 'semApontamento' || a.regra === 'refeicao' || a.regra === 'paradaImprodutiva');
+    return !!a && a.fonte === 'app' && (a.regra === 'semApontamento' || a.regra === 'refeicao' || a.regra === 'paradaImprodutiva' || a.regra === 'gestaoFrente');
   }
   function canalSistema(a) {
     return !!a && (a.fonte === 'portal' || localComCanais(a));
@@ -2023,6 +2080,21 @@
     <h3 class="secao-alertas">Paradas improdutivas (ranking SGPA)</h3>
     <p class="fine">Códigos que mais tiraram produtividade no último mês. Alerta quando o equipamento fica na operação além da tolerância (minutos). Use 0 para não alertar.</p>
     <div id="cfg-paradas" class="grade"></div>
+    <h3 class="secao-alertas">Escalonamento da cobrança</h3>
+    <p class="fine">Se a parada continuar depois do primeiro alerta, o app repete como URGENTE e depois pede para acionar o líder da frente. Use 0 para desligar o nível.</p>
+    <div class="grade">
+      <label class="campo"><span>Urgente após a tolerância (+min)</span><input id="cfg-esc1" type="number" min="0" step="1" inputmode="numeric"></label>
+      <label class="campo"><span>Acionar líder após a tolerância (+min)</span><input id="cfg-esc2" type="number" min="0" step="1" inputmode="numeric"></label>
+    </div>
+    <label class="campo"><span>Líder de cada frente (frente=nome, separados por ;)</span>
+      <input id="cfg-lideres" type="text" placeholder="ex.: Frente 1=João; Frente 2=Pedro" spellcheck="false" autocomplete="off"></label>
+    <h3 class="secao-alertas">Gestão por frente</h3>
+    <p class="fine">Alertas de equilíbrio da frente (o problema é do despacho, não do operador). Use 0 para desligar.</p>
+    <div class="grade">
+      <label class="campo"><span>Fila: nº de equipamentos aguardando carregamento</span><input id="cfg-fila-frente" type="number" min="0" step="1" inputmode="numeric"></label>
+      <label class="campo"><span>Todas as colhedoras paradas há (min)</span><input id="cfg-sem-colh" type="number" min="0" step="1" inputmode="numeric"></label>
+      <label class="campo"><span>Transbordos aguardando colhedora (nº)</span><input id="cfg-transb-ag" type="number" min="0" step="1" inputmode="numeric"></label>
+    </div>
     <h3 class="secao-alertas">Fontes e canais de aviso</h3>
     <div class="switches">
       <label class="chk"><input id="cfg-liga" type="checkbox"><span>Central de alertas ligada</span></label>
@@ -2415,6 +2487,7 @@
     refeicao: 'Refeição acima do tempo configurado por grupo ou equipamento (seção Controle de refeições). Fala e notifica só com o app aberto.',
     semApontamento: 'Equipamento na operação SGPA “Sem Apontamento” por 5 min ou mais (sem alarme do portal). Fala e notifica só com o app aberto.',
     paradaImprodutiva: 'Paradas improdutivas de maior impacto (fila, aguardando carregamento, 983, falta de transbordo etc.) acima da tolerância da seção Paradas improdutivas. Fala e notifica com o app aberto.',
+    gestaoFrente: 'Alertas da frente: fila acumulada de caminhões, frente com todas as colhedoras paradas e transbordos demais aguardando colhedora (seção Gestão por frente).',
     generico: 'Demais tipos oficiais, com o nome original do SGPA.',
   };
   let limiteTipos = 80;
@@ -2703,6 +2776,12 @@
       'cfg-rpm': cfg.limiteRpm,
       'cfg-ocioso': cfg.minutosOcioso,
       'cfg-sem-ponto': cfg.minutosSemApontamento,
+      'cfg-esc1': cfg.escalarUrgenteMin,
+      'cfg-esc2': cfg.escalarLiderMin,
+      'cfg-lideres': cfg.lideresFrente,
+      'cfg-fila-frente': cfg.filaMaxFrente,
+      'cfg-sem-colh': cfg.minutosFrenteSemColhedora,
+      'cfg-transb-ag': cfg.transbordosAguardandoMax,
       'cfg-turno': cfg.minutosTurno,
       'cfg-cooldown': cfg.cooldownMin,
       'cfg-maxvoz': cfg.maxPorCiclo,
@@ -2793,6 +2872,12 @@
       limiteRpm: n('cfg-rpm', 2000),
       minutosOcioso: n('cfg-ocioso', 5),
       minutosSemApontamento: n('cfg-sem-ponto', 5),
+      escalarUrgenteMin: n('cfg-esc1', 10),
+      escalarLiderMin: n('cfg-esc2', 20),
+      lideresFrente: $('cfg-lideres') ? $('cfg-lideres').value.trim() : '',
+      filaMaxFrente: n('cfg-fila-frente', 4),
+      minutosFrenteSemColhedora: n('cfg-sem-colh', 10),
+      transbordosAguardandoMax: n('cfg-transb-ag', 3),
       minutosTurno: n('cfg-turno', 4),
       cooldownMin: n('cfg-cooldown', 10),
       maxPorCiclo: n('cfg-maxvoz', 4),
