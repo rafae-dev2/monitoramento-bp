@@ -3,6 +3,7 @@
 Executar: python3 tools/test-alerts-integrated.py
 """
 from pathlib import Path
+from datetime import datetime, timezone
 import json
 from playwright.sync_api import sync_playwright
 
@@ -11,7 +12,7 @@ HTML = '<!doctype html><html lang="pt-br"><head></head><body><main id="stage"><i
 source = (ROOT / 'public/alerts.js').read_text()
 hooks = """
   window.__test = {
-    aplicarTelemetria, avaliarFrota, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, enviarAudit, ciclo,
+    aplicarTelemetria, avaliarFrota, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, enviarAudit, ciclo, abrirNoMapa,
     setCtx: (v) => { ctx = Object.assign(ctx, v); },
     reset: () => {
       frota.clear(); estados.clear(); ativos.clear(); hist = []; filaAudit.length = 0;
@@ -27,6 +28,8 @@ hooks = """
 """
 source = source.replace('  window.MonitoramentoAlertas = {', hooks + '\n  window.MonitoramentoAlertas = {')
 requests = []
+speed_requests = []
+missing_requests = []
 errors = []
 with sync_playwright() as pw:
     browser = pw.chromium.launch(executable_path='/usr/bin/chromium', args=['--no-sandbox', '--disable-dev-shm-usage'])
@@ -43,7 +46,21 @@ with sync_playwright() as pw:
         elif url == 'https://fixture.invalid/':
             r.fulfill(status=200, content_type='text/html', body=HTML)
         elif '/estatistica/monitoramento' in url:
-            r.fulfill(status=503, content_type='application/json', body='{}')
+            if 'speed.fixture.invalid' in url:
+                speed_requests.append(url)
+                row = {
+                    'cdEquipamento': 'SPEED-01', 'descEquipamento': '0093 - Trator fixture',
+                    'descTpEquipamento': 'TRATOR', 'descGrupoEquipamento': 'Frente speed fixture',
+                    'descOperacao': 'Operação fixture', 'vlVelocidade': 93, 'vlParametro4': 0,
+                    'vlEd1': '0', 'vlTempoSemComunicacao': '0 DIA(S) 00:00:00',
+                    'fgMonitoramentoAtivo': 'T', 'dtHrLocal': datetime.now(timezone.utc).isoformat(),
+                }
+                r.fulfill(status=200, content_type='application/json', body=json.dumps([row]))
+            elif 'missing.fixture.invalid' in url:
+                missing_requests.append(url)
+                r.fulfill(status=503, content_type='application/json', body='{}')
+            else:
+                r.fulfill(status=503, content_type='application/json', body='{}')
         elif '/alarmeOnline?' in url:
             r.fulfill(status=200, content_type='application/json', body=json.dumps([{'cdEquipamento':'TESTE-API','cdTpAlarme':5,'descTpAlarme':'VELOCIDADE','vlAlarme':85,'fgOnline':True}]))
         elif '/alarmeTempoEquipamento' in url:
@@ -126,6 +143,93 @@ with sync_playwright() as pw:
     }""")
     for name in result:
         print('OK:',name)
+    local_measure = page.evaluate("""() => {
+      __test.reset();
+      __test.aplicarTelemetria([{
+        cdEquipamento:'TESTE-LOCAL', descEquipamento:'0077 - Trator fixture',
+        descTpEquipamento:'TRATOR', descGrupoEquipamento:'Frente local fixture',
+        descOperacao:'Operação fixture', vlVelocidade:77, vlParametro4:0,
+        vlEd1:'0', vlTempoSemComunicacao:'0 DIA(S) 00:00:00',
+        fgMonitoramentoAtivo:'T', dtHrLocal:new Date().toISOString()
+      }]);
+      __test.espelharAlarmes([{
+        cdEquipamento:'TESTE-LOCAL', cdId:'SPEED-LOCAL', cdTpAlarme:5,
+        descTpAlarme:'VELOCIDADE', fgOnline:true
+      }]);
+      const a = MonitoramentoAlertas.ativos()[0];
+      return {valor:a && a.valor, fonte:a && a.fonteVelocidade, fala:a && a.fala};
+    }""")
+    assert local_measure == {
+        'valor': 77, 'fonte': 'telemetria SGPA',
+        'fala': 'Veículo zero zero sete sete excedeu a velocidade a 77 quilômetros por hora. Verificar.'
+    }, local_measure
+    print('OK: alarme oficial sem valor usa apenas a telemetria SGPA recente')
+
+    page.evaluate("""() => {
+      const frame = document.getElementById('map');
+      window.__mapReceived = null;
+      window.__mapArgs = null;
+      window.__windowOpenCount = 0;
+      window.open = () => { window.__windowOpenCount += 1; return null; };
+      frame.onload = () => frame.contentWindow.addEventListener('message', ev => { window.__mapReceived = ev.data; });
+      frame.srcdoc = '<!doctype html><html><body>mapa fixture</body></html>';
+    }""")
+    page.wait_for_function("document.getElementById('map').contentDocument && document.getElementById('map').contentDocument.readyState === 'complete'")
+    page.evaluate("""() => {
+      const frame = document.getElementById('map');
+      const post = frame.contentWindow.postMessage.bind(frame.contentWindow);
+      frame.contentWindow.postMessage = (data, targetOrigin) => {
+        window.__mapArgs = {data, targetOrigin};
+        return post(data, targetOrigin);
+      };
+      __test.setCtx({
+        mapUrl:'https://fixture.invalid/portal/analytic-map-v4?tab=equipment',
+        props:{rastroBI:{equipment:'anterior',scope:'preservar'}}
+      });
+      __test.abrirNoMapa(MonitoramentoAlertas.ativos()[0]);
+    }""")
+    page.wait_for_function("window.__mapReceived && window.__mapReceived.type === 'props' && window.__mapReceived.data.rastroBI.equipment === 'TESTE-LOCAL'")
+    assert page.evaluate("window.__mapArgs.targetOrigin === 'https://fixture.invalid' && window.__mapArgs.data.data.rastroBI.scope === 'preservar' && window.__windowOpenCount === 0 && document.getElementById('alertas').classList.contains('hide')"), 'Ver no mapa deve enviar props para a origem incorporada, fechar o painel e não abrir links externos'
+    page.evaluate("__test.setCtx({mapUrl:'',props:null}); __test.abrirNoMapa(MonitoramentoAlertas.ativos()[0]);")
+    assert page.evaluate('window.__windowOpenCount === 0'), 'Mapa indisponível deve continuar sem window.open'
+    print('OK: “Ver no mapa” envia o equipamento ao iframe e nunca abre URL externa')
+
+    page.evaluate("""() => {
+      __test.reset();
+      __test.setCtx({api:'https://speed.fixture.invalid',buId:1,proxy:false,audit:false});
+      __test.espelharAlarmes([{
+        cdEquipamento:'SPEED-01', cdId:'SPEED-FETCH', cdTpAlarme:5,
+        descTpAlarme:'VELOCIDADE', fgOnline:true
+      }]);
+    }""")
+    page.wait_for_function("MonitoramentoAlertas.ativos().some(a => a.e.id === 'SPEED-01' && a.valor === 93)", timeout=10000)
+    fetched = page.evaluate("""() => {
+      const a = MonitoramentoAlertas.ativos().find(x => x.e.id === 'SPEED-01');
+      return {valor:a.valor, fonte:a.fonteVelocidade, fala:a.fala, detalhe:a.detalhe};
+    }""")
+    assert fetched['valor'] == 93 and fetched['fonte'] == 'telemetria SGPA', fetched
+    assert 'a 93 quilômetros por hora' in fetched['fala'] and 'telemetria SGPA' in fetched['detalhe'], fetched
+    assert len(speed_requests) == 1, f'Fallback deve compartilhar uma única consulta de telemetria: {speed_requests}'
+    print('OK: valor ausente no evento oficial dispara uma única consulta agrupada à telemetria SGPA')
+
+    page.evaluate("""() => {
+      __test.reset();
+      __test.setCtx({api:'https://missing.fixture.invalid',buId:1,proxy:false,audit:false});
+      __test.espelharAlarmes([{
+        cdEquipamento:'SPEED-MISSING', cdId:'SPEED-NO-MEASURE', cdTpAlarme:5,
+        descTpAlarme:'VELOCIDADE', fgOnline:true
+      }]);
+    }""")
+    page.wait_for_function("MonitoramentoAlertas.ativos().some(a => a.e.id === 'SPEED-MISSING' && a.valor === null)", timeout=10000)
+    missing = page.evaluate("""() => {
+      const a = MonitoramentoAlertas.ativos().find(x => x.e.id === 'SPEED-MISSING');
+      return {valor:a.valor, texto:a.texto, fala:a.fala};
+    }""")
+    assert missing['valor'] is None and 'medição não informada' in missing['texto'], missing
+    assert 'quilômetros por hora' not in missing['fala'] and 'alarme oficial de velocidade excedida' in missing['fala'], missing
+    assert len(missing_requests) == 1, f'Esperava somente uma tentativa complementar: {missing_requests}'
+    print('OK: sem medição válida, mantém o alarme oficial sem inventar valor')
+
     page.evaluate("__test.reset(); __test.setCtx({api:'https://fixture.invalid',buId:1,proxy:false,audit:false});")
     page.evaluate('() => __test.ciclo()')
     assert page.evaluate("MonitoramentoAlertas.ativos().some(a=>a.e.id==='TESTE-API')"), 'Falha da telemetria não deve bloquear espelho oficial'
@@ -151,4 +255,4 @@ with sync_playwright() as pw:
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-print(f'Testes integrados passaram: {len(result)+4} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+8} grupos de verificações.')

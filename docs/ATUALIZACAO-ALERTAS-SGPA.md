@@ -1,6 +1,6 @@
 # Central de alertas SGPA — atualização de 23/11/2026
 
-A central passa a usar exclusivamente o alarme oficial do SGPA para velocidade. Uma leitura de telemetria acima de 51 km/h, por si só, não gera mais aviso de velocidade. Quando o SGPA emitir um alarme desse tipo, o aplicativo o incorpora à central e entrega os canais escolhidos pelo usuário. A fala do equipamento lê cada algarismo: “Veículo oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.” Se o alarme não informar uma medição válida, a fala informa o alarme sem inventar velocidade.
+A central passa a usar exclusivamente o alarme oficial do SGPA para velocidade. Uma leitura de telemetria acima de 51 km/h, por si só, não gera mais aviso de velocidade. Quando o SGPA emitir um alarme desse tipo, o aplicativo o incorpora à central e entrega os canais escolhidos pelo usuário. A fala do equipamento lê cada algarismo: “Veículo oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.” A medição vem primeiro do alarme; se faltar, o app tenta uma leitura recente da telemetria. Se nenhuma fonte trouxer um valor válido, informa o alarme sem inventar velocidade.
 
 ## Escolha dos alertas
 
@@ -30,11 +30,11 @@ O retrato de telemetria auditado tinha 271 equipamentos, dos quais 162 com tipo 
 
 ## Validação e funcionamento
 
-O teste de política cobre categorias, seleção por tipo, migração de preferências, identificadores com zeros iniciais, valores ausentes e frases. O teste integrado verificou 26 grupos de comportamento, incluindo ausência de velocidade local, deduplicação stream/REST, independência dos tipos oficiais, preservação de central/histórico, gates de desligamento, espera por caminhão e encerramento de episódio, manutenção de RPM complementar, persistência das chaves e layout móvel sem overflow horizontal. Não houve erro JavaScript nem chamada de rede ou escrita de produção nos testes. Comandos: `node tools/test-alerts-policy.cjs` e `python3 tools/test-alerts-integrated.py`.
+O teste de política cobre categorias, seleção por tipo, migração de preferências, identificadores com zeros iniciais, valores ausentes e frases. O teste integrado passou 30 grupos de comportamento, incluindo velocidade oficial com leitura recente e com consulta agrupada à telemetria, mensagem sem valor inventado quando nenhuma fonte mede, foco no iframe sem link externo, deduplicação stream/REST, independência dos tipos oficiais, preservação de central/histórico, gates de desligamento, espera por caminhão e encerramento de episódio, manutenção de RPM complementar, persistência das chaves e layout móvel sem overflow horizontal. Não houve erro JavaScript nem chamada de rede ou escrita de produção nos testes. Comandos: `node tools/test-alerts-policy.cjs` e `python3 tools/test-alerts-integrated.py`.
 
 O espelho oficial e a telemetria são lidos a cada 45 segundos por padrão; o stream pode antecipar os eventos. Falha de telemetria não bloqueia a consulta dos alarmes oficiais. O mesmo tipo de alarme do mesmo equipamento é deduplicado entre as duas fontes; tipos diferentes continuam independentes. A central e o espelho desligados bloqueiam também o caminho de stream. Os exemplos de teste não alteram a frota consolidada nem são enviados ao Supabase.
 
-A versão da central é **1.2.0**, com cache **bperes-shell-v15**. A fala depende de voz disponível no navegador ou da ponte AndroidTTS do APK. Notificações do sistema exigem permissão; no PWA móvel são entregues via service worker. Não foi implementado Web Push com coleta autônoma no servidor: o navegador/aplicativo precisa estar em execução e o sistema operacional pode suspender a atividade em segundo plano. Não há promessa de avisos com o app totalmente fechado.
+A versão da central é **1.2.1**, com cache **bperes-shell-v16**. A fala depende de voz disponível no navegador ou da ponte AndroidTTS do APK. Notificações do sistema exigem permissão; no PWA móvel são entregues via service worker. Não foi implementado Web Push com coleta autônoma no servidor: o navegador/aplicativo precisa estar em execução e o sistema operacional pode suspender a atividade em segundo plano. Não há promessa de avisos com o app totalmente fechado.
 
 Nenhuma regra, justificativa ou cadastro do SGPA foi alterado e não houve migração de banco nesta atualização. As preferências continuam locais. Eventos reais continuam usando a auditoria Supabase já existente; habilitar mais tipos pode aumentar o volume de histórico.
 
@@ -50,3 +50,15 @@ As contagens e condições acima foram obtidas por leitura dos cadastros [1] [2]
 ## Publicação verificada
 
 A versão 1.2.0 foi publicada no site existente https://sgpa-solinftec-bpa.netlify.app/. O Netlify informou o deploy `6b043b0d83f5c3af4c09bff4` como ready, em contexto production, publicado em 23/11/2026. HTML, motor, política, CSS, service worker e catálogo responderam HTTP 200 com hashes iguais aos arquivos locais validados. As rotas de leitura de tipos e filtros responderam HTTP 200, retornando respectivamente 2.972 tipos e 23 nomes de filtros.
+
+## Pedido complementar do usuário — 23/11/2026
+
+Na consulta somente leitura à rota pública mediada `https://sgpa-solinftec-bpa.netlify.app/.netlify/functions/session?acao=dados&rota=%2FalarmeOnline%3Fativo=true%26idioma=pt-br`, HTTP 200, havia cinco alarmes ativos e nenhum de velocidade; portanto, não foi possível verificar um payload real de excesso de velocidade naquele momento. A documentação do tenant descreve `vlAlarme` como valor medido do alarme e também registra `vlAlarmeMaximoAtingido`; a implementação usa esses campos primeiro e a leitura recente `vlVelocidade` da telemetria SGPA como complemento, sem converter `vlPeso` em velocidade. Fonte local: `docs/NOTAS-ALERTAS.md`, itens 1 e 4.
+
+No mapa, `app.js` fornece `session.mapUrl` como URL completa para o iframe. Os envios usam a origem (`new URL(mapUrl).origin`). “Ver no mapa” envia `props.rastroBI.equipment` ao mapa incorporado, fecha o painel após o envio e nunca abre URL externa; se o iframe não estiver pronto, exibe um aviso dentro do app.
+
+## Correção complementar implementada — 23/11/2026
+
+Para o gatilho exclusivamente oficial de velocidade, o app tenta `vlAlarme`, depois `vlAlarmeMaximoAtingido`; se ambos faltarem, só usa `e.velocidade` quando `velocidadeTs` indica uma leitura recente. Quando necessário, uma única consulta compartilhada à telemetria atualiza os alertas pendentes. O número é apresentado em km/h e falado como valor normal; se nem o alarme nem a telemetria fornecerem medição válida, o alerta oficial permanece sem número. O valor recebido depois também atualiza o cartão e o histórico, com fala/notificação conforme as preferências, sem criar duplicata de auditoria.
+
+Testes com fixtures cobriram a leitura recente em memória, a consulta complementar agrupada e o foco do equipamento no mapa incorporado; nenhum teste chamou rede ou gravou dados de produção. A consulta ao vivo da rota de alarmes, no momento registrado acima, não continha evento de velocidade: a correção de medição foi validada com fixtures, não com um evento real.

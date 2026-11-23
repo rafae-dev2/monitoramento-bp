@@ -29,7 +29,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.2.0';
+  const VERSAO = '1.2.1';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -126,6 +126,8 @@
   let catalogo = { tipos: [], expressoes: [], regras: [] };
   let carregandoCatalogo = null;
   let atualizandoCatalogo = false;
+  let atualizacaoVelocidade = null;
+  const alarmesVelocidadePendentes = new Map();
 
   const estado = {
     ligado: false,
@@ -179,6 +181,15 @@
     if (/\*NAO_DEFINIDO\*/i.test(s)) return 0;
     if (/,\d{1,3}$/.test(s)) return Number(s.replace(/\./g, '').replace(',', '.')) || 0;
     return Number(s) || 0;
+  }
+
+  function valorMedido(v) {
+    if (typeof v === 'number') return Number.isFinite(v) && v >= 0 ? v : null;
+    if (v === null || v === undefined) return null;
+    const s = String(v).trim();
+    if (!/^\d+(?:[.,]\d+)?$/.test(s)) return null;
+    const n = Number(s.replace(',', '.'));
+    return Number.isFinite(n) && n >= 0 ? n : null;
   }
 
   function milhar(v) {
@@ -506,6 +517,7 @@
         operadorBruto: '',
         estadoTxt: '',
         velocidade: null,
+        velocidadeTs: 0,
         rpm: null,
         motor: null,
         atraso: null,
@@ -550,7 +562,8 @@
         e.operadorBruto = String(row.descFuncionario || '');
         e.operador = nomeOperador(row.descFuncionario);
       }
-      e.velocidade = num(row.vlVelocidade);
+      e.velocidade = valorMedido(row.vlVelocidade);
+      e.velocidadeTs = e.velocidade === null ? 0 : (dataArray(row.dtHrLocal) || agora());
       e.rpm = num(row.vlParametro4);
       e.motor = String(row.vlEd1 || '0') === '1';
       e.atraso = segundosAtraso(row.vlTempoSemComunicacao);
@@ -872,6 +885,42 @@
     }
   }
 
+  function solicitarMedicaoVelocidade(a, via) {
+    const id = String(a.cdEquipamento || '');
+    const codigo = String(a.cdTpAlarme || 'desconhecido');
+    const ocorrencia = String(a.cdId || '');
+    const pendencia = `${id}|${codigo}|${ocorrencia}`;
+    alarmesVelocidadePendentes.set(pendencia, { alarme: Object.assign({}, a), via });
+    if (atualizacaoVelocidade) return;
+
+    atualizacaoVelocidade = (async () => {
+      try {
+        const linhas = await chamar(rotaTelemetria());
+        if (Array.isArray(linhas)) aplicarTelemetria(linhas);
+      } catch {
+        // Sem leitura atual, o aviso final deixa claro que o SGPA não forneceu a medida.
+      }
+      while (alarmesVelocidadePendentes.size) {
+        const lote = [...alarmesVelocidadePendentes.values()];
+        alarmesVelocidadePendentes.clear();
+        for (const item of lote) {
+          const alarm = item.alarme;
+          const chave = `${String(alarm.cdEquipamento || '')}|sgpa:${String(alarm.cdTpAlarme || 'desconhecido')}`;
+          const st = estados.get(chave);
+          if (!cfg.ativo || !cfg.espelharServidor || !st || !st.firing) continue;
+          if (alarm.cdId && st.ocorrencia && String(alarm.cdId) !== st.ocorrencia) continue;
+          emitirAlarmeOficial(Object.assign({}, alarm, { __medicaoTentada: true }), 'velocidade', item.via);
+        }
+      }
+    })().finally(() => {
+      atualizacaoVelocidade = null;
+      if (alarmesVelocidadePendentes.size) {
+        const proxima = alarmesVelocidadePendentes.values().next().value;
+        solicitarMedicaoVelocidade(proxima.alarme, proxima.via);
+      }
+    });
+  }
+
   function emitirAlarmeOficial(a, regra, via) {
     if (!cfg.ativo || !cfg.espelharServidor) return;
     const id = String(a.cdEquipamento || '');
@@ -905,12 +954,23 @@
     if (a.cdId) st.ocorrencia = String(a.cdId);
     st.consec = Math.max(st.consec, Math.max(1, cfg.amostras)); // SGPA já confirmou o alarme
     const replay = st.ocorrencia && (st.ocorrenciasEncerradas || []).includes(st.ocorrencia);
-    const bruto = a.vlAlarme != null && a.vlAlarme !== '' ? a.vlAlarme : a.vlAlarmeMaximoAtingido;
-    const convertido = typeof bruto === 'number' ? bruto : Number(String(bruto == null ? '' : bruto).replace(',', '.'));
-    const valor = bruto != null && bruto !== '' && Number.isFinite(convertido) && convertido >= 0 ? convertido : null;
+    const medidaOficial = valorMedido(a.vlAlarme) ?? valorMedido(a.vlAlarmeMaximoAtingido);
+    let valor = medidaOficial;
+    let fonteVelocidade = regra === 'velocidade' && medidaOficial !== null ? 'alarme oficial SGPA' : '';
+    if (regra === 'velocidade' && valor === null) {
+      const idade = agora() - (Number(e.velocidadeTs) || 0);
+      if (e.velocidadeTs && idade >= -5000 && idade <= Math.max(90_000, cfg.intervaloSeg * 2000)) {
+        valor = valorMedido(e.velocidade);
+        if (valor !== null) fonteVelocidade = 'telemetria SGPA';
+      }
+      if (valor === null && !a.__medicaoTentada) {
+        solicitarMedicaoVelocidade(a, via);
+        return;
+      }
+    }
     let texto;
     if (regra === 'velocidade') {
-      texto = valor !== null ? `excedeu a velocidade a ${Math.round(valor)} km/h (alarme oficial do portal)` : 'velocidade excedida (alarme oficial do portal; medição não informada)';
+      texto = valor !== null ? `excedeu a velocidade a ${Math.round(valor)} km/h` : 'velocidade excedida (alarme oficial do SGPA; medição não informada)';
     } else if (regra === 'rpm') {
       texto = valor !== null ? `RPM do motor: ${milhar(valor)} RPM (alarme oficial do portal)` : 'alarme de RPM do motor (alarme oficial do portal)';
     } else if (regra === 'turno') {
@@ -921,9 +981,11 @@
       texto = `${nomeAlarme || 'alarme não classificado'} (alarme oficial do portal)`;
     }
     const alerta = {
-      chave, regra, e, valor, tipoAlarme: codigo, nomeAlarme,
+      chave, regra, e, valor, fonteVelocidade, tipoAlarme: codigo, nomeAlarme,
       texto,
-      detalhe: `Alarme oficial · tipo ${codigo} ${nomeAlarme} · via ${via} · frente/grupo ${e.frente || 'não informado'} · operação ${e.operacao || '—'}`,
+      detalhe: `Alarme oficial · tipo ${codigo} ${nomeAlarme} · via ${via}` +
+        (fonteVelocidade === 'telemetria SGPA' ? ' · velocidade complementada pela telemetria SGPA' : '') +
+        ` · frente/grupo ${e.frente || 'não informado'} · operação ${e.operacao || '—'}`,
       inicio: dataArray(a.dtHrLocal) || (typeof a.dtHrLocal === 'number' ? a.dtHrLocal : st.since),
       servidor: true,
     };
@@ -937,9 +999,21 @@
       // Melhor medição no REST atualiza a central sem segunda fala/histórico/INSERT.
       const anterior = ativos.get(chave);
       if (anterior) {
-        const medida = valor !== null ? { valor, texto } : {};
+        const valorAnterior = anterior.valor;
+        const medida = valor !== null ? { valor, texto, fonteVelocidade } : {};
         Object.assign(anterior, medida, { detalhe: alerta.detalhe, e, numero: e.numero, nomeAlarme });
         anterior.fala = montarFala(anterior);
+        anterior.notificar = policy.notificar(cfg, anterior);
+        const registro = hist.find((h) => h.chave === chave);
+        if (registro && valor !== null) {
+          Object.assign(registro, { valor, texto, fala: anterior.fala, detalhe: alerta.detalhe, fonteVelocidade });
+          salvar(KEY_HIST, hist);
+        }
+        if (valorAnterior == null && valor !== null && anterior.notificar) {
+          if (cfg.voz) falar(anterior.fala);
+          if (cfg.notificacao) notificar(anterior);
+        }
+        renderAtivos();
       }
     }
   }
@@ -975,6 +1049,7 @@
       classe,
       operador: a.e.operador,
       valor: a.valor,
+      fonteVelocidade: a.fonteVelocidade || '',
       limite: a.limite == null ? null : a.limite,
       texto: a.texto,
       detalhe: a.detalhe || '',
@@ -1003,6 +1078,7 @@
       descricao: alerta.descricao,
       operador: alerta.operador,
       valor: alerta.valor,
+      fonteVelocidade: alerta.fonteVelocidade,
       texto: alerta.texto,
       detalhe: alerta.detalhe,
       fonte: alerta.fonte,
@@ -1651,19 +1727,23 @@
     if (!id) return;
     const iframe = $('map');
     if (iframe && iframe.contentWindow && ctx.mapUrl && ctx.props) {
-      const props = JSON.parse(JSON.stringify(ctx.props));
-      props.rastroBI = { equipment: isNaN(Number(id)) ? id : Number(id) };
       try {
-        iframe.contentWindow.postMessage({ type: 'props', data: props }, ctx.mapUrl);
+        const origin = new URL(ctx.mapUrl, window.location.href).origin;
+        const iframeOrigin = new URL(iframe.src || ctx.mapUrl, window.location.href).origin;
+        if (origin !== iframeOrigin) throw new Error('a origem do mapa incorporado não confere');
+        const props = JSON.parse(JSON.stringify(ctx.props));
+        props.rastroBI = Object.assign({}, props.rastroBI || {}, {
+          equipment: isNaN(Number(id)) ? id : Number(id),
+        });
+        iframe.contentWindow.postMessage({ type: 'props', data: props }, origin);
+        fecharPainel();
         mostrarAviso(`Centralizando ${a.classe || ''} ${a.numero} no mapa.`, 'info');
         return;
-      } catch {
-        /* segue para o portal */
+      } catch (erro) {
+        console.warn('Não foi possível focar o equipamento no mapa incorporado', erro);
       }
     }
-    const url = (ctx.portalMap || 'https://branco-peres-cana.saas-solinftec.com/#!/details/analytic-map-v4') +
-      '?equipment=' + encodeURIComponent(id);
-    window.open(url, '_blank', 'noopener');
+    mostrarAviso('O mapa incorporado não está disponível para localizar este equipamento. Tente novamente quando o mapa estiver carregado.', 'info');
   }
 
   /* ------------------------------ config ------------------------------ */

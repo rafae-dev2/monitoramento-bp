@@ -133,7 +133,8 @@
   function sendProps() {
     if (!session) return;
     try {
-      el.map.contentWindow.postMessage({ type: 'props', data: session.props }, session.mapUrl);
+      const origin = new URL(session.mapUrl, location.href).origin;
+      el.map.contentWindow.postMessage({ type: 'props', data: session.props }, origin);
     } catch (e) {
       console.warn('postMessage falhou', e);
     }
