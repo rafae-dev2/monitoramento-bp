@@ -18,9 +18,33 @@
     aguardandoCaminhao: true
   };
   var NUMEROS_FALADOS = ['zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'];
+  // Expansões confirmadas pelo usuário no DOCX de 23/11/2026. Os códigos sem
+  // entrada aqui continuam sendo falados com o nome recebido do SGPA.
+  var FALAS_SGPA = {
+    '12600': { texto: 'velocidade excedida na usina', referenciaKmH: 23, medirVelocidade: true },
+    '12744': { texto: 'sem apontamento' },
+    '10700': { texto: 'abastecimento de insumo com motor ligado' },
+    '10820': { texto: 'controle de velocidade do equipamento', medirVelocidade: true },
+    '10840': { texto: 'abastecimento de insumo com tempo excedido' },
+    '10860': { texto: 'aguardando colheitadeira indevidamente' },
+    '11304': { texto: 'frente de pátio indevida no transbordo' },
+    '11340': { texto: 'sem operador trabalhando' },
+    '11400': { texto: 'velocidade excedida na oficina', referenciaKmH: 50, medirVelocidade: true },
+    '11480': { texto: 'velocidade excedida na usina', referenciaKmH: 23, medirVelocidade: true },
+    '12122': { texto: 'apontar o centro de custo correto' },
+    '12440': { texto: 'mudar para a operação mecanizada do caminhão terceiro canavieiro' },
+    '12180': { texto: 'desligar a chave geral' },
+    '12080': { texto: 'forçar a balança de entrada' },
+    '12724': { texto: 'alerta de velocidade', referenciaKmH: 60, medirVelocidade: true },
+    '12100': { texto: 'não apontar aguardando carregamento' },
+    '12200': { texto: 'apontar o centro de custo correto da pipa' },
+    '3483': { texto: 'aguardando manobra do transbordo' },
+    '11500': { texto: 'abastecimento de insumo: desligar o motor' },
+    '12500': { texto: 'sair do apontamento de abastecimento de insumo' }
+  };
   var CODIGOS = {
     motorCondicao: ['2697', '2699'],
-    velocidade: ['5', '2203', '2685', '1641', '10820', 'velocidade5'],
+    velocidade: ['5', '2203', '2685', '1641', '10820', '12600', '11400', '11480', '12724', 'velocidade5'],
     rpm: ['4', '6', '8'],
     ocioso: ['11', '2343', '2207'],
     turno: ['2849', '2851']
@@ -114,6 +138,18 @@
     return /^aguardando caminhao(?:\s+-\s+(?:hd|hr))?$/.test(normalized);
   }
 
+  function semApontamento(e) {
+    if (!e || typeof e !== 'object') return false;
+    var operacao = e.operacao;
+    if (operacao == null || String(operacao).trim() === '') operacao = e.descOperacao;
+    var normalized = norm(operacao)
+      .replace(/^\d+\s*-\s*/, '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return /^(?:sem apontamento(?: (?:tpl|cct))?|digitar op vl)$/.test(normalized);
+  }
+
   function isObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
   }
@@ -141,7 +177,8 @@
       var compact = norm(directText).replace(/[\s_-]+/g, '');
       var aliases = {
         velocidade: 'velocidade', rpm: 'rpm', ocioso: 'ocioso', turno: 'turno',
-        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao'
+        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao',
+        ociososemapontamento: 'ocioso'
       };
       if (aliases[compact]) return aliases[compact];
     }
@@ -230,6 +267,20 @@
     }
 
     var identification = vehicleNumber(item, event);
+    var vehicleClass = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
+    var aprovada = FALAS_SGPA[codeFromAlert(item)];
+    if (aprovada) {
+      var complemento = '';
+      if (aprovada.referenciaKmH != null) {
+        complemento += ', referência de ' + String(aprovada.referenciaKmH) + ' quilômetros por hora';
+      }
+      var velocidadeMedida = aprovada.medirVelocidade ? numericAlertValue(item.valor) : null;
+      if (velocidadeMedida !== null) {
+        complemento += ', velocidade medida de ' + String(velocidadeMedida) + ' quilômetros por hora';
+      }
+      return vehicleClass + ' ' + identification + ': ' + aprovada.texto + complemento + '. Verificar.';
+    }
+
     if (selectedCategory === 'velocidade') {
       var speed = numericAlertValue(item.valor);
       if (speed === null) {
@@ -238,7 +289,6 @@
       return 'Veículo ' + identification + ' excedeu a velocidade a ' + String(speed) + ' quilômetros por hora. Verificar.';
     }
 
-    var vehicleClass = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
     var message = cleanMessage(item.texto);
     return vehicleClass + ' ' + identification + (message ? ': ' + message : '') + '. Verificar.';
   }
@@ -248,6 +298,7 @@
     categoria: categoria,
     idFalado: idFalado,
     aguardandoCaminhao: aguardandoCaminhao,
+    semApontamento: semApontamento,
     normalizeCfg: normalizeCfg,
     notificar: notificar,
     montarFala: montarFala

@@ -13,8 +13,12 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.Voice;
 import android.webkit.JavascriptInterface;
 import java.util.Locale;
+import java.util.Set;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import android.graphics.Color;
 import android.net.Uri;
 import android.view.KeyEvent;
@@ -33,6 +37,7 @@ import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+import java.util.ArrayDeque;
 
 /**
  * Monitoramento Branco Peres.
@@ -88,13 +93,30 @@ public class MainActivity extends Activity {
     private static final String PREF_TELA_acesa = "tela_acesa";
 
     private WebView web;
-    private TextToSpeech tts;
+    private volatile TextToSpeech tts;
     private volatile boolean vozPronta = false;
-    private String vozPendente;
+    private final Object travaVoz = new Object();
+    private final ArrayDeque<FalaPendente> filaVozPendente = new ArrayDeque<>();
+    private boolean inicializandoVoz;
+    private boolean drenandoVoz;
     private ProgressBar barra;
     private TextView engrenagem;
     private SharedPreferences prefs;
     private long ultimoBack = 0L;
+
+    private static final class FalaPendente {
+        final String texto;
+        final double volume;
+        final double taxa;
+        final String nomeVoz;
+
+        FalaPendente(String texto, double volume, double taxa, String nomeVoz) {
+            this.texto = texto;
+            this.volume = volume;
+            this.taxa = taxa;
+            this.nomeVoz = nomeVoz;
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -222,13 +244,22 @@ public class MainActivity extends Activity {
 
     /** Prepara o motor de voz do aparelho (Google TTS / Samsung, etc.) em pt-BR. */
     private void iniciarVoz() {
-        if (tts != null) return;
+        synchronized (travaVoz) {
+            if (tts != null || inicializandoVoz) return;
+            inicializandoVoz = true;
+        }
         try {
             tts = new TextToSpeech(getApplicationContext(), new TextToSpeech.OnInitListener() {
                 @Override
                 public void onInit(int status) {
+                    synchronized (travaVoz) {
+                        inicializandoVoz = false;
+                    }
                     if (status != TextToSpeech.SUCCESS) {
-                        tts = null;
+                        synchronized (travaVoz) {
+                            tts = null;
+                            vozPronta = false;
+                        }
                         return;
                     }
                     try {
@@ -238,16 +269,34 @@ public class MainActivity extends Activity {
                         }
                     } catch (Exception ignored) {
                     }
-                    vozPronta = true;
-                    if (vozPendente != null) {
-                        String t = vozPendente;
-                        vozPendente = null;
-                        falar(t, 1.0, 1.0);
-                    }
+                    drenarFalasPendentes();
                 }
             });
         } catch (Exception ignored) {
-            tts = null;
+            synchronized (travaVoz) {
+                tts = null;
+                vozPronta = false;
+                inicializandoVoz = false;
+            }
+        }
+    }
+
+    private void drenarFalasPendentes() {
+        synchronized (travaVoz) {
+            if (tts == null) return;
+            vozPronta = true;
+            drenandoVoz = true;
+        }
+        while (true) {
+            FalaPendente pendente;
+            synchronized (travaVoz) {
+                pendente = filaVozPendente.pollFirst();
+                if (pendente == null) {
+                    drenandoVoz = false;
+                    return;
+                }
+            }
+            falarPronto(pendente.texto, pendente.volume, pendente.taxa, pendente.nomeVoz);
         }
     }
 
@@ -256,24 +305,57 @@ public class MainActivity extends Activity {
         return Math.max(min, Math.min(max, v));
     }
 
-    /** Fala no alto-falante; se o motor ainda estiver acordando, guarda a frase. */
+    /** Mantém compatibilidade interna com falas que não selecionam voz. */
     private void falar(final String texto, final double volume, final double taxa) {
+        falar(texto, volume, taxa, null);
+    }
+
+    /** Fala com a voz pedida; se o motor ainda estiver acordando, guarda a frase e a voz. */
+    private void falar(final String texto, final double volume, final double taxa, final String nomeVoz) {
         if (texto == null || texto.trim().isEmpty()) return;
-        if (tts == null) { iniciarVoz(); vozPendente = texto; return; }
-        if (!vozPronta) { vozPendente = texto; return; }
+        boolean enfileirada = false;
+        boolean iniciar = false;
+        synchronized (travaVoz) {
+            if (tts == null || !vozPronta || drenandoVoz) {
+                filaVozPendente.addLast(new FalaPendente(texto, volume, taxa, nomeVoz));
+                enfileirada = true;
+                iniciar = tts == null && !inicializandoVoz;
+            }
+        }
+        if (enfileirada) {
+            if (iniciar) iniciarVoz();
+            return;
+        }
+        falarPronto(texto, volume, taxa, nomeVoz);
+    }
+
+    private void falarPronto(final String texto, final double volume, final double taxa, final String nomeVoz) {
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 try {
+                    if (Build.VERSION.SDK_INT >= 21) {
+                        Voice escolhida = null;
+                        if (nomeVoz != null && !nomeVoz.trim().isEmpty()) {
+                            Set<Voice> disponiveis = tts.getVoices();
+                            if (disponiveis != null) {
+                                for (Voice voz : disponiveis) {
+                                    if (nomeVoz.equals(voz.getName())) { escolhida = voz; break; }
+                                }
+                            }
+                        }
+                        if (escolhida != null) tts.setVoice(escolhida);
+                        else tts.setLanguage(new Locale("pt", "BR"));
+                    }
                     tts.setSpeechRate((float) limitar(taxa, 0.6, 1.6) * 1.05f);
                     tts.setPitch(1.0f);
                     if (Build.VERSION.SDK_INT >= 21) {
                         Bundle p = new Bundle();
                         p.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME,
                                 (float) limitar(volume, 0.2, 1.0));
-                        tts.speak(texto, TextToSpeech.QUEUE_FLUSH, p, "bp-alerta");
+                        tts.speak(texto, TextToSpeech.QUEUE_ADD, p, "bp-alerta-" + System.currentTimeMillis());
                     } else {
-                        tts.speak(texto, TextToSpeech.QUEUE_FLUSH, null);
+                        tts.speak(texto, TextToSpeech.QUEUE_ADD, null);
                     }
                 } catch (Exception ignored) {
                 }
@@ -297,8 +379,47 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void falarComVoz(String texto, double volume, double taxa, String nomeVoz) {
+            MainActivity.this.falar(texto, volume, taxa, nomeVoz);
+        }
+
+        @JavascriptInterface
+        public String vozes() {
+            JSONArray lista = new JSONArray();
+            if (Build.VERSION.SDK_INT < 21 || !vozPronta || tts == null) return lista.toString();
+            try {
+                Set<Voice> disponiveis = tts.getVoices();
+                if (disponiveis != null) for (Voice voz : disponiveis) {
+                    JSONObject item = new JSONObject();
+                    item.put("id", voz.getName());
+                    item.put("name", voz.getName());
+                    item.put("lang", voz.getLocale() == null ? "" : voz.getLocale().toLanguageTag());
+                    lista.put(item);
+                }
+            } catch (Exception ignored) {
+            }
+            return lista.toString();
+        }
+
+        @JavascriptInterface
+        public void gerenciarVozes() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        startActivity(new Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA));
+                    } catch (Exception ignored) {
+                        toast("Não foi possível abrir a tela de vozes do Android.");
+                    }
+                }
+            });
+        }
+
+        @JavascriptInterface
         public void parar() {
-            vozPendente = null;
+            synchronized (travaVoz) {
+                filaVozPendente.clear();
+            }
             final TextToSpeech t = tts;
             if (t != null) runOnUiThread(new Runnable() {
                 @Override
@@ -493,7 +614,16 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        web.onResume();
+        if (web != null) {
+            web.onResume();
+            web.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (web != null) web.evaluateJavascript(
+                            "window.dispatchEvent(new Event('bperes-vozes-atualizadas'))", null);
+                }
+            }, 500);
+        }
     }
 
     @Override

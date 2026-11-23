@@ -1,13 +1,48 @@
 # Atualização da central de alertas — 23/11/2026
 
 - [x] Velocidade exclusivamente oficial: se o SGPA emitir alarme do equipamento, o app deve notificá-lo conforme a seleção. Nenhum limite local genérico nem fallback de velocidade deve gerar aviso independente.
+
 - [x] A fala do identificador deve ler cada algarismo, preservando zeros iniciais. Exemplo: “Veículo oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.” Velocidade, RPM e minutos continuam valores normais; não inventar velocidade quando o alarme não a fornecer.
+
 - [x] Incorporar os alarmes oficiais à mesma central e auditar as regras configuradas separadamente do catálogo geral. Fornecer chaves persistentes por categoria e tipo SGPA, com busca e apresentação profissional. Desligar notificações não deve apagar histórico nem esconder alarmes oficiais.
+
 - [x] Rastrear tratores/transbordos pela telemetria SGPA. A operação “Aguardando Caminhão”, normalizada para acentos/caixa/prefixo numérico, deve gerar alerta com equipamento e frente/grupo na mesma central. Não inferir equivalência com “Aguardando Carregamento” ou “Aguard Bascul Transbo”. Fechar o episódio após duas leituras negativas; respeitar confirmação e cooldown.
+
 - [x] Validar localmente sem gravar alertas de teste em produção, atualizar cache/documentação, salvar no GitHub e verificar publicação da versão entregue no Netlify. Não fazer mudanças de segurança fora deste escopo.
+
 - [x] Quando o alarme oficial de velocidade não trouxer `vlAlarme` nem `vlAlarmeMaximoAtingido`, usar somente uma leitura recente `vlVelocidade` do SGPA; se necessário, compartilhar uma consulta agrupada à telemetria. Informar o valor numérico em km/h e não inventar valor quando nenhuma fonte o fornecer. Telemetria isolada não pode disparar alerta de velocidade.
-- [x] Ao clicar em “Ver no mapa”, enviar o equipamento como `props.rastroBI.equipment` ao mapa incorporado do aplicativo, fechar o painel e não abrir link externo. Se o mapa não estiver disponível, exibir a mensagem dentro do aplicativo.
+
+- [x] Ao clicar em “Ver no mapa”, enviar o `cdEquipamento` SGPA como string em `props.rastroBI.equipment`, sem `start`/`end`, para focar a posição atual com o flyTo, zoom e popup oficiais do mapa; fechar o painel e não abrir link externo. Se o mapa não estiver disponível, exibir a mensagem dentro do aplicativo. Coberto por teste de contrato com fixtures.
+
 - [x] Publicar a correção complementar 1.2.1 no site Netlify existente e enviar os arquivos alterados ao `origin/main` após os testes. Deploy `6b043f9a93c5975c614d2dfb` pronto; commit de código `9f47dad` enviado.
+
 - [x] Ao clicar em “Ver no mapa”, localizar o equipamento no mapa incorporado que já está aberto no aplicativo. Encaminhar a URL atual do iframe à central e usá-la como fallback de origem; não mostrar indisponibilidade quando o mapa estiver carregado nem abrir página externa.
+
 - [x] Um tipo marcado individualmente em “Escolher tipos individuais do SGPA” deve receber notificação mesmo que sua categoria geral esteja desligada; se “Falar alerta em português” estiver ligado, o alarme oficial desse tipo deve ser falado. O estado visual do switch deve corresponder ao comportamento efetivo.
+
 - [x] Publicar a correção 1.2.2 no site Netlify existente e enviar o código/testes ao `origin/main` após os testes. Deploy `6b0443f47f40372c914d2e21` pronto; commit de código `2cff302` enviado e arquivos críticos verificados no site.
+
+- [x] Renovar e recuperar automaticamente a sessão SGPA enquanto o aplicativo está em uso, para que uma expiração do token não deixe o mapa, as consultas ou o stream de alertas parados; manter mapa e alertas sincronizados após renovar e mostrar erro orientado quando o portal recusar a autenticação. A validade continua sob controle do SGPA, sem promessa de login eterno. Implementação verificada com renovação concorrente e teste visual de falha 401/recuperação; autenticação real ao vivo não foi exercitada nesta rodada.
+
+- [x] Em “FRENTES / GRUPOS MONITORADOS”, ao selecionar um ou mais grupos, somente equipamentos desses grupos podem criar ou permanecer em alertas ativos, inclusive em telemetria, stream e alarmes oficiais; ao trocar o escopo, retirar os ativos de fora da seleção sem apagar o histórico. Sem grupos selecionados, preservar o comportamento atual de monitorar a unidade toda. Coberto por fixtures integradas de REST, stream, remoção dos ativos e escopo de unidade.
+
+- [x] Disponibilizar opções de voz oferecidas pelo navegador/aparelho, preencher a lista mesmo quando o catálogo de vozes carregar de forma assíncrona, persistir a voz escolhida e aplicá-la à fala de alertas e à amostra de teste. A disponibilidade depende das vozes instaladas no dispositivo. Testadas vozes Web/Android assíncronas, persistência e fallback da voz nativa; o APK não foi compilado nesta rodada.
+
+- [x] Falar alarmes oficiais do SGPA assim que forem recebidos pelo stream, sem descartá-los pela limitação de rajada ou atrasá-los esperando uma medição complementar; deduplicar stream/REST e atualizar dados de velocidade sem criar fala duplicada. O polling REST continua como fallback sujeito ao intervalo e limite do portal; não prometer fala com aplicativo fechado/offline. Fixtures confirmam fila sem limitação de rajada, fala sem medição complementar e deduplicação; não havia alarme de velocidade ativo para validação real ao vivo.
+
+- [x] Alarmes calculados localmente podem permanecer na central e no histórico, mas não devem ser falados nem gerar notificação do sistema, exceto o alerta “Motor ocioso sem apontamento” autorizado pelo usuário: ele só pode falar quando uma descrição textual atual `descOperacao` do SGPA confirmar explicitamente uma operação reconhecida como “Sem Apontamento”. Não inferir pela condição do motor, RPM ou meia-chave, nem reutilizar descrição ausente/desatualizada; não enviar notificação do sistema, som, vibração ou pop-up local. A amostra manual deve ficar claramente identificada e não entrar no histórico nem enviar notificação do sistema. Coberto por fixtures integradas.
+
+- [x] Reunir códigos e nomes dos alarmes para o usuário informar significados e falas desejadas, sem inventar expansões ou traduções. Lista entregue em `docs/ALERTAS-SGPA-TRADUCAO.md` com 51 tipos destacados e os 23 nomes dos filtros consultados.
+
+- [ ] Commitar, enviar e publicar a versão local 1.2.5 somente se solicitado. Nesta rodada, os arquivos ficaram locais, sem commit, push ou deploy.
+
+- [x] Usar para a fala dos códigos SGPA as explicações que o usuário acrescentou no DOCX; conservar os nomes/códigos originais na central e não inferir traduções para alarmes que ficaram sem explicação.
+
+- [x] Detectar equipamento com motor ligado e ocioso, sem apontamento SGPA, e registrar também esse alerta na central/histórico. A classificação combinada exige descrição textual atual da operação fornecida pelo SGPA e reconhecida explicitamente como “Sem Apontamento”; não inferir pela condição do motor ocioso, RPM ou meia-chave, nem reutilizar descrição ausente/desatualizada. Respeitar o tempo configurado de ociosidade. Somente este alerta combinado pode falar conforme a preferência de voz; não gera notificação do sistema. O alarme oficial de motor ocioso sozinho permanece distinto.
+
+- [ ] Considerar Azure Speech F0 gratuito somente após autorização explícita para essa opção e obtenção de chave de Speech Resource por fluxo seguro. O usuário não autorizou vozes pagas: S0 não deve ser configurado nem usado. F0 permanece sem configuração; manter as vozes locais Web/Android e não expor credenciais.
+
+- [x] Não criar gráfico duplicado. O usuário confirmou que a pizza original “Gráfico de operação” do SGPA, com “Grupo de Operação”/“IMPRODUTIVA” e “Operação”, serve de referência para refinar o monitoramento. Manter alarmes oficiais na Central já existente e preservar a descrição atual da operação; não inserir contagens locais no gráfico do portal nem inventar regra nova apenas pelo rótulo “IMPRODUTIVA”.
+
+
+- [x] Preferências de alertas: incluir X acessível no topo para fechar e retornar o foco a um controle visível do app; dimensionar e rolar dentro da área visível. Central de alertas: impedir que os cartões encolham e escondam conteúdo; permitir rolagem, quebra de texto e adaptação dos controles em celular, tablet e computador. Verificado em 320×640, 412×915, 768×1024 e 1280×900 com CSS real e testes integrados.

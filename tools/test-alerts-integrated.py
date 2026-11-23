@@ -12,15 +12,17 @@ HTML = '<!doctype html><html lang="pt-br"><head></head><body><main id="stage"><i
 source = (ROOT / 'public/alerts.js').read_text()
 hooks = """
   let falasCapturadas = [];
+  const falarReal = falar;
   window.__test = {
     aplicarTelemetria, avaliarFrota, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, enviarAudit, ciclo, abrirNoMapa,
     setCtx: (v) => { ctx = Object.assign(ctx, v); },
     capturarFalas: () => { falasCapturadas = []; falar = (texto) => falasCapturadas.push(String(texto)); },
+    restaurarFalas: () => { falar = falarReal; },
     falasCapturadas: () => falasCapturadas.slice(),
     reset: () => {
       frota.clear(); estados.clear(); ativos.clear(); hist = []; filaAudit.length = 0;
       cfg = policy.normalizeCfg(JSON.parse(JSON.stringify(PADRAO)));
-      cfg.popup = false; cfg.som = false; cfg.voz = false; cfg.vibrar = false; cfg.usarStream = false;
+      cfg.popup = false; cfg.som = false; cfg.voz = false; cfg.vibrar = false; cfg.usarStream = false; cfg.notificacao = false;
       rajada = {ts: 0, voz: 0};
       ctx.audit = false;
       if (el.toasts) el.toasts.innerHTML = '';
@@ -72,6 +74,62 @@ with sync_playwright() as pw:
             r.fulfill(status=200, content_type='image/png', body=b'')
     context.route('**/*', route)
     page.goto('https://fixture.invalid/')
+    page.add_style_tag(content=(ROOT/'public/styles.css').read_text())
+    page.add_style_tag(content=(ROOT/'public/alerts.css').read_text())
+    page.evaluate("""() => {
+      window.__systemNotifications = [];
+      class NotificationFixture {
+        static permission = 'granted';
+        static requestPermission = () => Promise.resolve('granted');
+        constructor(title, options) { window.__systemNotifications.push({title, options}); }
+      }
+      window.Notification = NotificationFixture;
+      try {
+        Object.defineProperty(navigator, 'serviceWorker', {
+          configurable: true,
+          value: {getRegistration: () => Promise.resolve(null), addEventListener: () => {}}
+        });
+      } catch (_) {}
+      window.__webVoiceList = [];
+      window.__webSpoken = [];
+      window.__voiceChanged = null;
+      const synthesisFixture = {
+        getVoices: () => window.__webVoiceList,
+        addEventListener: (name, fn) => { if (name === 'voiceschanged') window.__voiceChanged = fn; },
+        cancel: () => {},
+        speak: (utterance) => {
+          window.__webSpoken.push({text: utterance.text, voice: utterance.voice && utterance.voice.name});
+          setTimeout(() => utterance.onend && utterance.onend(), 0);
+        },
+        speaking: false,
+        pending: false
+      };
+      Object.defineProperty(window, 'speechSynthesis', {configurable: true, value: synthesisFixture});
+      window.SpeechSynthesisUtterance = function(text) { this.text = text; };
+      window.__nativeVoices = [];
+      window.__nativeSpoken = [];
+      window.__nativePending = [];
+      window.__voiceManageCount = 0;
+      window.__androidReady = false;
+      window.AndroidTTS = {
+        temVoz: () => window.__androidReady,
+        falar: () => {},
+        falarComVoz: (text, volume, rate, name) => {
+          const item = {text, name};
+          if (window.__androidReady) window.__nativeSpoken.push(item);
+          else window.__nativePending.push(item);
+        },
+        gerenciarVozes: () => { window.__voiceManageCount += 1; },
+        vozes: () => JSON.stringify(window.__nativeVoices),
+        parar: () => {},
+        vibrar: () => {}
+      };
+      window.__dispatchVoicesChanged = () => window.__voiceChanged && window.__voiceChanged();
+      window.__flushAndroidVoice = () => {
+        window.__androidReady = true;
+        window.__nativeSpoken.push(...window.__nativePending.splice(0));
+      };
+    }""")
     page.evaluate("localStorage.setItem('bperes.alertas.hist.v2', JSON.stringify([{ts: 1, regra:'velocidade', equipamento:'TESTE', texto:'histórico fixture'}]))")
     page.add_style_tag(path=str(ROOT/'public/styles.css'))
     page.add_style_tag(path=str(ROOT/'public/alerts.css'))
@@ -79,7 +137,7 @@ with sync_playwright() as pw:
     page.add_script_tag(content=source)
     assert page.evaluate('Array.isArray(MonitoramentoAlertas.historico()) && MonitoramentoAlertas.historico().length === 1'), 'Histórico salvo deve continuar array'
     page.evaluate("MonitoramentoAlertas.abrirPainel(); __test.reset(); __test.setCtx({api:'https://fixture.invalid', buId:1, proxy:false, audit:false});")
-    result = page.evaluate("""() => {
+    result = page.evaluate("""async () => {
       const checks = [];
       const ok = (v, name) => { if (!v) throw new Error(name); checks.push(name); };
       const api = MonitoramentoAlertas, t = __test;
@@ -148,6 +206,85 @@ with sync_playwright() as pw:
       const selecionado = api.ativos().find(x=>x.tipoAlarme==='11500');
       ok(!!selecionado && selecionado.notificar, 'tipo explicitamente selecionado prevalece sobre categoria geral desligada');
       ok(t.falasCapturadas().length===1 && t.falasCapturadas()[0]===selecionado.fala, 'alarme oficial de tipo individual selecionado é falado');
+
+      t.reset(); window.__systemNotifications.length=0;
+      api.configurar({frentes:['Frente Norte'],popup:false,notificacao:false});
+      const alertaSul = {cdEquipamento:'EQ-SUL',cdId:'SUL-1',cdTpAlarme:5,descTpAlarme:'VELOCIDADE',descEquipamento:'0083 - Trator fixture',descGrupoEquipamento:'Frente Sul',vlAlarme:80,fgOnline:true};
+      t.espelharAlarmes([alertaSul]);
+      t.processarQuadros([{type:'alarme',cdEquipamento:'EQ-STREAM-SUL',cdTpAlarme:5,descAlarme:'VELOCIDADE',descFrente:'Frente Sul',vlAlarme:80,fgOnline:true}]);
+      ok(api.ativos().length===0 && api.historico().length===0, 'grupo selecionado bloqueia alarmes REST e stream de fora do escopo');
+      const alertaNorte = {...alertaSul,cdEquipamento:'EQ-NORTE',cdId:'NORTE-1',descGrupoEquipamento:'Frente Norte'};
+      t.espelharAlarmes([alertaNorte]);
+      ok(api.ativos().length===1 && api.historico().length===1, 'grupo escolhido cria alerta oficial ativo');
+      const historicoAntesEscopo = api.historico().length;
+      api.configurar({frentes:['Frente Sul']});
+      ok(api.ativos().length===0 && api.historico().length===historicoAntesEscopo, 'trocar grupo remove ativos de fora sem apagar histórico');
+      t.espelharAlarmes([{...alertaSul,cdEquipamento:'EQ-SUL-2',cdId:'SUL-2'}]);
+      ok(api.ativos().some(a=>a.e.id==='EQ-SUL-2'), 'equipamento do novo grupo entra no escopo');
+      api.configurar({frentes:[]});
+      t.espelharAlarmes([{cdEquipamento:'EQ-SEM-GRUPO',cdId:'SEM-GRUPO-1',cdTpAlarme:12480,descTpAlarme:'Alarme geral fixture',fgOnline:true}]);
+      ok(api.ativos().some(a=>a.e.id==='EQ-SEM-GRUPO'), 'sem grupo selecionado, o escopo volta à unidade toda');
+
+      t.reset(); t.capturarFalas(); window.__systemNotifications.length=0;
+      api.configurar({calcularLocal:true,limiteRpm:1500,voz:true,notificacao:true,popup:false,som:false,vibrar:false});
+      feed({...row,vlParametro4:1800});
+      const localRpm = api.ativos().find(a=>a.regra==='rpm');
+      ok(!!localRpm && localRpm.fonte==='app' && localRpm.notificar===false && api.historico().length===1, 'alerta local permanece na central/histórico, mas não é notificável');
+      ok(t.falasCapturadas().length===0 && window.__systemNotifications.length===0, 'alerta local não gera fala nem notificação do sistema');
+      const historicoAntesAmostra = api.historico().length;
+      api.testar();
+      const amostra = api.ativos().find(a=>a.fonte==='teste');
+      ok(!!amostra && amostra.notificar===false && t.falasCapturadas().includes(amostra.fala), 'amostra manual pode testar a voz e fica marcada sem notificação do sistema');
+      ok(api.historico().length===historicoAntesAmostra && window.__systemNotifications.length===0, 'amostra manual não grava histórico nem envia notificação de produção');
+      api.abrirPainel();
+      ok([...document.querySelectorAll('#lista-ativos .a-chip')].some(c=>c.textContent==='AMOSTRA MANUAL'), 'a amostra de teste fica identificada visualmente como manual');
+
+      t.reset(); t.capturarFalas(); window.__systemNotifications.length=0;
+      api.configurar({calcularLocal:true,minutosOcioso:1,rpmOcioso:900,voz:true,notificacao:true,popup:false,som:false,vibrar:false});
+      const ociosoSemPonto = {...row,cdEquipamento:'IDLE-NO-POINT',descOperacao:'3484 - SEM APONTAMENTO',vlVelocidade:0,vlParametro4:650,vlEd1:'1'};
+      feed(ociosoSemPonto);
+      t.avaliarFrota(Date.now()+61_000,'tempo');
+      const alertaSemPonto = api.ativos().find(a=>a.e.id==='IDLE-NO-POINT');
+      ok(!!alertaSemPonto && alertaSemPonto.regra==='ociosoSemApontamento' && alertaSemPonto.texto.includes('motor ocioso e sem apontamento'), 'motor ligado ocioso com operação Sem Apontamento gera alerta combinado após o tempo configurado');
+      ok(alertaSemPonto.fonte==='app' && alertaSemPonto.notificar===false && api.historico().length===1 && t.falasCapturadas().length===1 && /sem apontamento/.test(t.falasCapturadas()[0]) && window.__systemNotifications.length===0, 'alerta local confirmado pode falar como exceção, sem notificação do sistema');
+
+      t.reset();
+      api.configurar({calcularLocal:true,minutosOcioso:1,rpmOcioso:900,popup:false,som:false,vibrar:false});
+      feed({...ociosoSemPonto,cdEquipamento:'IDLE-WITH-POINT',descOperacao:'801 - Operação apontada'});
+      t.avaliarFrota(Date.now()+61_000,'tempo');
+      ok(api.ativos().some(a=>a.e.id==='IDLE-WITH-POINT' && a.regra==='ocioso') && !api.ativos().some(a=>a.regra==='ociosoSemApontamento'), 'motor ocioso com operação apontada não recebe a classificação sem apontamento');
+
+      t.reset();
+      api.configurar({calcularLocal:true,minutosOcioso:1,rpmOcioso:900,popup:false,som:false,vibrar:false});
+      const operacaoAntiga = {...ociosoSemPonto,cdEquipamento:'IDLE-UNKNOWN-OP'};
+      feed(operacaoAntiga);
+      feed({...operacaoAntiga,descOperacao:undefined});
+      t.avaliarFrota(Date.now()+61_000,'tempo');
+      ok(api.ativos().some(a=>a.e.id==='IDLE-UNKNOWN-OP' && a.regra==='ocioso') && !api.ativos().some(a=>a.e.id==='IDLE-UNKNOWN-OP' && a.regra==='ociosoSemApontamento'), 'operação ausente na leitura atual não reutiliza rótulo antigo para afirmar sem apontamento');
+
+      t.reset(); t.capturarFalas();
+      api.configurar({calcularLocal:true,minutosOcioso:1,rpmOcioso:900,voz:true,notificacao:false,popup:false,som:false,vibrar:false});
+      const meiaChave = {...row,cdEquipamento:'IDLE-HALF-KEY',descOperacao:'801 - Operação apontada',vlVelocidade:0,vlParametro4:0,vlEd1:'1'};
+      feed(meiaChave);
+      t.avaliarFrota(Date.now()+61_000,'tempo');
+      ok(!api.ativos().some(a=>a.e.id==='IDLE-HALF-KEY' && a.regra==='ociosoSemApontamento'), 'meia-chave com RPM zero não cria alerta local combinado');
+      t.espelharAlarmes([{cdEquipamento:'IDLE-HALF-KEY',cdId:'HALF-KEY-OFFICIAL',cdTpAlarme:11,descTpAlarme:'MOTOR OCIOSO',descOperacao:'801 - Operação apontada',fgOnline:true}]);
+      const ociosoOficialMeiaChave = api.ativos().find(a=>a.e.id==='IDLE-HALF-KEY' && a.regra==='ocioso');
+      ok(!!ociosoOficialMeiaChave && !/sem apontamento/i.test(ociosoOficialMeiaChave.fala) && t.falasCapturadas().length===1, 'alarme oficial Motor Ocioso da meia-chave continua distinto do sem apontamento');
+
+      t.reset(); t.capturarFalas();
+      api.configurar({voz:true,maxPorCiclo:1,notificacao:false,popup:false});
+      t.espelharAlarmes(Array.from({length:7},(_,i)=>({cdEquipamento:'RAJADA-'+i,cdId:'RAJADA-'+i,cdTpAlarme:5,descTpAlarme:'VELOCIDADE',vlAlarme:80+i,fgOnline:true})));
+      ok(api.ativos().length===7 && t.falasCapturadas().length===7, 'alarmes oficiais ultrapassam a limitação de rajada sem descarte');
+
+      t.reset(); t.capturarFalas();
+      t.setCtx({api:'https://immediate.fixture.invalid',buId:1,proxy:false,audit:false});
+      api.configurar({voz:true,amostras:5,maxPorCiclo:1,notificacao:false,popup:false});
+      t.espelharAlarmes([{cdEquipamento:'SPEED-IMMEDIATE',cdId:'IMMEDIATE-1',cdTpAlarme:5,descTpAlarme:'VELOCIDADE',fgOnline:true}]);
+      const semMedicao = api.ativos().find(a=>a.e.id==='SPEED-IMMEDIATE');
+      ok(!!semMedicao && semMedicao.valor===null && t.falasCapturadas().length===1 && /alarme oficial de velocidade excedida/.test(semMedicao.fala), 'alarme oficial fala imediatamente sem esperar medição complementar');
+      await new Promise(resolve=>setTimeout(resolve,30));
+      ok(t.falasCapturadas().length===1, 'medição complementar tardia não gera segunda fala');
       return checks;
     }""")
     for name in result:
@@ -194,18 +331,19 @@ with sync_playwright() as pw:
       };
       __test.setCtx({
         mapUrl:'',
-        props:{rastroBI:{equipment:'anterior',scope:'preservar'}}
+        props:{rastroBI:{equipment:'anterior',scope:'preservar',start:1680000000,end:1680003600}}
       });
-      __test.abrirNoMapa(MonitoramentoAlertas.ativos()[0]);
+      const alerta = MonitoramentoAlertas.ativos()[0];
+      __test.abrirNoMapa({...alerta,e:{...alerta.e,id:40451},numero:'8833'});
     }""")
-    page.wait_for_function("window.__mapReceived && window.__mapReceived.type === 'props' && window.__mapReceived.data.rastroBI.equipment === 'TESTE-LOCAL'")
-    assert page.evaluate("window.__mapArgs.targetOrigin === 'https://fixture.invalid' && window.__mapArgs.data.data.rastroBI.scope === 'preservar' && window.__windowOpenCount === 0 && document.getElementById('alertas').classList.contains('hide')"), 'Ver no mapa deve enviar props para a origem incorporada, fechar o painel e não abrir links externos'
+    page.wait_for_function("window.__mapReceived && window.__mapReceived.type === 'props' && window.__mapReceived.data.rastroBI.equipment === '40451' && typeof window.__mapReceived.data.rastroBI.equipment === 'string'")
+    assert page.evaluate("window.__mapArgs.targetOrigin === 'https://fixture.invalid' && window.__mapArgs.data.data.rastroBI.scope === 'preservar' && !Object.prototype.hasOwnProperty.call(window.__mapArgs.data.data.rastroBI,'start') && !Object.prototype.hasOwnProperty.call(window.__mapArgs.data.data.rastroBI,'end') && window.__windowOpenCount === 0 && document.getElementById('alertas').classList.contains('hide')"), 'Ver no mapa deve enviar cdEquipamento em modo de localização atual, preservando as props e sem abrir links externos'
     app_source = (ROOT / 'public/app.js').read_text()
     assert 'mapUrl: session.mapUrl' in app_source, 'app.js deve encaminhar a URL do iframe ao motor de alertas'
     print('OK: inicialização da central encaminha a URL do mapa atual')
     page.evaluate("__test.setCtx({mapUrl:'',props:null}); __test.abrirNoMapa(MonitoramentoAlertas.ativos()[0]);")
     assert page.evaluate('window.__windowOpenCount === 0'), 'Mapa indisponível deve continuar sem window.open'
-    print('OK: “Ver no mapa” envia o equipamento ao iframe e nunca abre URL externa')
+    print('OK: “Ver no mapa” envia cdEquipamento sem período; o contrato do mapa aplica flyTo/zoom/popup e não abre URL externa')
 
     page.evaluate("""() => {
       __test.reset();
@@ -250,6 +388,11 @@ with sync_playwright() as pw:
     page.evaluate("MonitoramentoAlertas.configurar({notificarCategorias:{generico:false},tiposNotificacao:{12480:true}});")
     page.evaluate('MonitoramentoAlertas.abrirPainel()')
     page.click('#btn-cfg')
+    assert page.locator('#cfg-fechar-x').is_visible(), 'Preferências devem exibir X para fechar'
+    page.click('#cfg-fechar-x')
+    assert page.locator('#cfg-alertas').evaluate("el => el.classList.contains('hide')"), 'O X deve fechar as preferências'
+    assert page.evaluate('document.activeElement.id === "btn-cfg"'), 'Ao fechar, o foco deve voltar ao controle de configurações visível'
+    page.click('#btn-cfg')
     page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 7")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
     page.locator('.catalogo-detalhes').first.locator('summary').click()
@@ -263,8 +406,123 @@ with sync_playwright() as pw:
     assert page.evaluate('MonitoramentoAlertas.config().notificarCategorias.aguardandoCaminhao === false')
     assert page.locator('#cfg-vel').count()==0
     assert page.locator('#cfg-velcan').count()==0
-    assert page.evaluate('document.querySelector(".card.cfg").scrollWidth <= document.querySelector(".card.cfg").clientWidth + 1')
-    print('OK: chaves por categoria/tipo, busca, persistência e layout sem overflow móvel')
+    responsive_sizes = [(320, 640), (412, 915), (768, 1024), (1280, 900)]
+    for width, height in responsive_sizes:
+        page.set_viewport_size({'width': width, 'height': height})
+        bounds = page.evaluate("""() => {
+          const overlay = document.querySelector('#cfg-alertas').getBoundingClientRect();
+          const card = document.querySelector('.card.cfg');
+          const rect = card.getBoundingClientRect();
+          return {overlay:{left:overlay.left,top:overlay.top,right:overlay.right,bottom:overlay.bottom},
+            card:{left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom},
+            scroll:card.scrollWidth,client:card.clientWidth};
+        }""")
+        assert bounds['card']['left'] >= bounds['overlay']['left'] - 1 and bounds['card']['right'] <= bounds['overlay']['right'] + 1, (width, bounds)
+        assert bounds['card']['top'] >= bounds['overlay']['top'] - 1 and bounds['card']['bottom'] <= bounds['overlay']['bottom'] + 1, (width, bounds)
+        assert bounds['scroll'] <= bounds['client'] + 1, (width, bounds)
+        assert page.locator('#cfg-fechar-x').is_visible(), f'X precisa continuar visível em {width}px'
+
+    page.evaluate("""() => {
+      const list = document.querySelector('#lista-ativos');
+      list.innerHTML = '';
+      for (let i = 0; i < 10; i++) {
+        const card = document.createElement('div');
+        card.className = 'alerta';
+        card.innerHTML = `<div class="a-top"><strong class="a-eq">Trator de teste ${i} — equipamento com identificação longa</strong><span class="a-chip">Alarme oficial de operação</span><span class="a-hora">13:15</span></div><p class="a-txt">Mensagem longa para verificar que a descrição do alerta quebra linha sem encobrir o próximo cartão em telas estreitas.</p><p class="a-meta">Frente de teste · operação com descrição extensa para avaliar quebra de linha entre celular, tablet e computador.</p><div class="a-acoes"><button>▶ ouvir</button><button>📍 ver no mapa</button></div>`;
+        list.appendChild(card);
+      }
+    }""")
+    page.wait_for_timeout(260)
+    for width, height in responsive_sizes:
+        page.set_viewport_size({'width': width, 'height': height})
+        layout = page.evaluate("""() => {
+          const list = document.querySelector('#lista-ativos');
+          const cards = [...list.children].map(x => { const r=x.getBoundingClientRect(); return {top:r.top,bottom:r.bottom,width:r.width,scroll:x.scrollWidth,client:x.clientWidth}; });
+          return {listHeight:list.clientHeight,listScroll:list.scrollHeight,listWidth:list.clientWidth,listScrollWidth:list.scrollWidth,cards};
+        }""")
+        assert len(layout['cards']) == 10 and layout['listHeight'] > 0, (width, layout)
+        assert layout['listScroll'] > layout['listHeight'], (width, layout)
+        assert layout['listScrollWidth'] <= layout['listWidth'] + 1, (width, layout)
+        assert all(card['scroll'] <= card['client'] + 1 for card in layout['cards']), (width, layout)
+        assert all(layout['cards'][i+1]['top'] >= layout['cards'][i]['bottom'] - 1 for i in range(9)), (width, layout['cards'])
+    page.set_viewport_size({'width': 412, 'height': 915})
+    page.locator('#cfg-fechar-x').click()
+    page.evaluate('MonitoramentoAlertas.abrirPainel()')
+    print('OK: chaves por categoria/tipo, busca, persistência, X e cartões roláveis sem sobreposição em celular, tablet e computador')
+
+    page.evaluate("""() => {
+      __test.reset();
+      __test.setCtx({api:'https://fixture.invalid',buId:1,proxy:false,audit:false});
+      MonitoramentoAlertas.configurar({notificacao:true,notificarCategorias:{generico:true},tiposNotificacao:{12480:true},popup:false,voz:false});
+      __test.espelharAlarmes([{cdEquipamento:'PUSH-OFICIAL',cdId:'PUSH-1',cdTpAlarme:12480,descTpAlarme:'Alarme oficial fixture',fgOnline:true}]);
+    }""")
+    page.wait_for_function('window.__systemNotifications.length === 1', timeout=2000)
+    assert page.evaluate("window.__systemNotifications[0].title.includes('PUSH-OFICIAL')"), 'Apenas o alarme real do SGPA deve chegar à notificação do sistema'
+    print('OK: um alarme oficial selecionado produz a notificação de sistema esperada')
+
+    page.evaluate("""() => {
+      __test.reset();
+      __test.setCtx({api:'https://fixture.invalid',buId:1,proxy:false,audit:false});
+      window.__webVoiceList = [];
+      window.__nativeVoices = [];
+      window.__androidReady = false;
+      MonitoramentoAlertas.abrirPainel();
+      document.getElementById('btn-cfg').click();
+      MonitoramentoAlertas.iniciar({
+        modo:'local',
+        props:{token:'voice-fixture',urlSgpa:'https://fixture.invalid',cdUnidadeRegional:[1],cdCliente:204},
+        mapUrl:'https://fixture.invalid'
+      });
+    }""")
+    page.wait_for_function('typeof window.__voiceChanged === "function"', timeout=2000)
+    assert page.locator('#cfg-gerenciar-vozes').is_visible(), 'O APK deve oferecer acesso ao gerenciador de vozes Android'
+    page.click('#cfg-gerenciar-vozes')
+    assert page.evaluate('window.__voiceManageCount === 1'), 'O botão deve chamar a ponte nativa para instalar/gerenciar vozes'
+    page.evaluate("""() => {
+      window.__webVoiceList = [
+        {name:'Web PT-BR A',lang:'pt-BR',voiceURI:'web-ptbr-a'},
+        {name:'Web PT-BR B',lang:'pt-BR',voiceURI:'web-ptbr-b'},
+        {name:'Web English',lang:'en-US',voiceURI:'web-en'}
+      ];
+      window.__nativeVoices = [
+        {id:'android-ptbr-a',name:'Android PT-BR A',lang:'pt-BR'},
+        {id:'android-ptbr-b',name:'Android PT-BR B',lang:'pt-BR'}
+      ];
+      window.__dispatchVoicesChanged();
+    }""")
+    page.wait_for_function("document.querySelectorAll('#cfg-vozel option').length >= 5", timeout=2000)
+    assert page.evaluate("[...document.querySelectorAll('#cfg-vozel option')].some(o=>o.textContent.includes('Android PT-BR A')) && [...document.querySelectorAll('#cfg-vozel option')].some(o=>o.textContent.includes('Web PT-BR B'))"), 'A lista deve combinar vozes nativas e vozes do navegador após o evento assíncrono'
+    page.evaluate("""() => {
+      const sel = document.getElementById('cfg-vozel');
+      const op = [...sel.options].find(o=>o.value.startsWith('web:') && o.textContent.includes('Web PT-BR B'));
+      sel.value = op.value;
+      sel.dispatchEvent(new Event('change',{bubbles:true}));
+      MonitoramentoAlertas.configurar({voz:true,notificacao:false});
+      MonitoramentoAlertas.falar('Teste da voz Web PT-BR B',{oficial:true});
+    }""")
+    page.wait_for_function("window.__webSpoken.some(x=>x.text==='Teste da voz Web PT-BR B')", timeout=2000)
+    assert page.evaluate("window.__webSpoken.some(x=>x.text==='Teste da voz Web PT-BR B' && x.voice==='Web PT-BR B') && JSON.parse(localStorage.getItem('bperes.alertas.cfg.v2')).vozURI.startsWith('web:')"), 'A escolha Web precisa ser aplicada à fala e persistida'
+    page.evaluate("""() => {
+      const sel = document.getElementById('cfg-vozel');
+      const op = [...sel.options].find(o=>o.value==='android:Android PT-BR A');
+      sel.value = op.value;
+      sel.dispatchEvent(new Event('change',{bubbles:true}));
+      MonitoramentoAlertas.falar('Teste da voz Android pendente',{oficial:true});
+    }""")
+    page.wait_for_function("window.__nativePending.some(x=>x.text==='Teste da voz Android pendente')", timeout=3000)
+    page.evaluate('window.__flushAndroidVoice()')
+    assert page.evaluate("window.__nativeSpoken.some(x=>x.text==='Teste da voz Android pendente' && x.name==='Android PT-BR A') && JSON.parse(localStorage.getItem('bperes.alertas.cfg.v2')).vozURI==='android:Android PT-BR A'"), 'A voz Android escolhida deve usar a ponte nativa, aguardar a inicialização e persistir a preferência'
+    print('OK: vozes Web/Android assíncronas, escolha aplicada e persistida; fala nativa aguarda prontidão')
+    page.wait_for_timeout(3000)
+    page.evaluate("""() => {
+      __test.restaurarFalas();
+      window.__nativeSpoken.length = 0;
+      Object.defineProperty(window,'speechSynthesis',{configurable:true,value:null});
+      MonitoramentoAlertas.configurar({vozURI:'',vozNome:''});
+      MonitoramentoAlertas.falar('Voz Android padrão do APK');
+    }""")
+    page.wait_for_function("window.__nativeSpoken.some(x=>x.text==='Voz Android padrão do APK' && x.name==='')", timeout=3000)
+    print('OK: APK usa voz Android padrão mesmo antes de uma preferência explícita quando não há speechSynthesis Web')
     assert not errors, errors
     assert not any(m=='POST' for m,u in requests), 'Teste tentou POST'
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'

@@ -10,7 +10,7 @@ assert.equal(policy.norm(null), '');
 
 // IDs conhecidos, códigos de condição do motor e detecção conservadora de desconhecidos.
 assert.equal(policy.categoria(5, ''), 'velocidade');
-for (const code of [2203, 2685, 1641, 10820]) assert.equal(policy.categoria(code, ''), 'velocidade');
+for (const code of [2203, 2685, 1641, 10820, 12600, 11400, 11480, 12724]) assert.equal(policy.categoria(code, ''), 'velocidade');
 for (const code of [4, 6, 8]) assert.equal(policy.categoria(code, ''), 'rpm');
 for (const code of [11, 2343, 2207]) assert.equal(policy.categoria(code, ''), 'ocioso');
 for (const code of [2849, 2851]) assert.equal(policy.categoria(code, ''), 'turno');
@@ -43,6 +43,14 @@ assert.equal(policy.aguardandoCaminhao({ tipo: 'Transbordo', operacao: 'Aguard B
 assert.equal(policy.aguardandoCaminhao({ tipo: 'Trator', operacao: 'Aguardando Caminhao - XX' }), false);
 assert.equal(policy.aguardandoCaminhao({ tipo: 'Trator', operacao: 'prefixo 123 - Aguardando Caminhao' }), false);
 
+// Só classifica operações explicitamente sem apontamento, não carregamento ou nomes parecidos.
+assert.equal(policy.semApontamento({ operacao: '3484 - SEM APONTAMENTO' }), true);
+assert.equal(policy.semApontamento({ operacao: 'SEM APONTAMENTO - TPL' }), true);
+assert.equal(policy.semApontamento({ operacao: 'SEM APONTAMENTO CCT' }), true);
+assert.equal(policy.semApontamento({ operacao: 'DIGITAR_OP_VL' }), true);
+assert.equal(policy.semApontamento({ operacao: 'Não Apontar Aguardando Carregamento' }), false);
+assert.equal(policy.semApontamento({ operacao: 'Aguardando Carregamento' }), false);
+
 // Preferências legadas, merge de categorias e prioridade explícita por tipo individual.
 const cfgLegacy = policy.normalizeCfg({ incluirOutros: false, notificarCategorias: { velocidade: false } });
 assert.equal(cfgLegacy.notificarCategorias.velocidade, false);
@@ -73,6 +81,46 @@ for (const value of [undefined, '', '   ', 'N/A', 'null', 'NaN', Infinity, -1]) 
   assert.match(policy.montarFala({ codigo: 5, numero: '12', valor: value }), /com alarme oficial de velocidade excedida/);
 }
 assert.match(policy.montarFala({ codigo: 5, numero: '12', valor: 0 }), /a 0 quilômetros por hora/);
+
+// Expansões aprovadas pelo usuário no DOCX; códigos sem explicação não recebem tradução presumida.
+const falasAprovadas = {
+  12744: 'Veículo oito oito três três: sem apontamento. Verificar.',
+  10700: 'Veículo oito oito três três: abastecimento de insumo com motor ligado. Verificar.',
+  10820: 'Veículo oito oito três três: controle de velocidade do equipamento, velocidade medida de 85 quilômetros por hora. Verificar.',
+  10840: 'Veículo oito oito três três: abastecimento de insumo com tempo excedido. Verificar.',
+  10860: 'Veículo oito oito três três: aguardando colheitadeira indevidamente. Verificar.',
+  11304: 'Veículo oito oito três três: frente de pátio indevida no transbordo. Verificar.',
+  11340: 'Veículo oito oito três três: sem operador trabalhando. Verificar.',
+  12122: 'Veículo oito oito três três: apontar o centro de custo correto. Verificar.',
+  12440: 'Veículo oito oito três três: mudar para a operação mecanizada do caminhão terceiro canavieiro. Verificar.',
+  12180: 'Veículo oito oito três três: desligar a chave geral. Verificar.',
+  12080: 'Veículo oito oito três três: forçar a balança de entrada. Verificar.',
+  12100: 'Veículo oito oito três três: não apontar aguardando carregamento. Verificar.',
+  12200: 'Veículo oito oito três três: apontar o centro de custo correto da pipa. Verificar.',
+  3483: 'Veículo oito oito três três: aguardando manobra do transbordo. Verificar.',
+  11500: 'Veículo oito oito três três: abastecimento de insumo: desligar o motor. Verificar.',
+  12500: 'Veículo oito oito três três: sair do apontamento de abastecimento de insumo. Verificar.'
+};
+for (const [codigo, fala] of Object.entries(falasAprovadas)) {
+  assert.equal(policy.montarFala({ tipoAlarme: codigo, numero: '8833', valor: codigo === '10820' ? 85 : null }), fala);
+}
+assert.equal(
+  policy.montarFala({ tipoAlarme: '12600', numero: '8833', valor: 85 }),
+  'Veículo oito oito três três: velocidade excedida na usina, referência de 23 quilômetros por hora, velocidade medida de 85 quilômetros por hora. Verificar.'
+);
+assert.equal(
+  policy.montarFala({ tipoAlarme: '11400', numero: '8833', valor: null }),
+  'Veículo oito oito três três: velocidade excedida na oficina, referência de 50 quilômetros por hora. Verificar.'
+);
+assert.equal(
+  policy.montarFala({ tipoAlarme: '11480', numero: '8833', valor: 85 }),
+  'Veículo oito oito três três: velocidade excedida na usina, referência de 23 quilômetros por hora, velocidade medida de 85 quilômetros por hora. Verificar.'
+);
+assert.equal(
+  policy.montarFala({ tipoAlarme: '12724', numero: '8833', valor: 62 }),
+  'Veículo oito oito três três: alerta de velocidade, referência de 60 quilômetros por hora, velocidade medida de 62 quilômetros por hora. Verificar.'
+);
+assert.equal(policy.montarFala({ tipoAlarme: '3484', numero: '8833', texto: 'SEM APONTAMENTO' }), 'Veículo oito oito três três: SEM APONTAMENTO. Verificar.');
 
 // Caminhão aguardado não inclui operador e usa frente ou fallback.
 assert.equal(

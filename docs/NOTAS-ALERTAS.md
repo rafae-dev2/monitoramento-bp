@@ -112,6 +112,20 @@ Outras rotas úteis medidas:
   (host de produção do stream de posição; o mapa usa para `fleet/equipment_id/lat/lon/heading`
   com header `x-auth-token`). `.../mapv4/service-7/health` → 200 OK.
 
+## 7. Comando de enquadramento do mapa oficial
+
+Em 23/11/2026 foi inspecionado o bundle público do microfrontend oficial:
+https://solinftec-frontends.saas-solinftec.com/solinftec-pwa-mapv4-prod/assets/index-38ecfd88.js
+O listener `onWindowMessage` aceita mensagens `{type:"props", data:<props SGPA válidas>}` e copia
+`rastroBI` para o estado do mapa. Com `rastroBI.equipment` e sem `start`/`end`, o componente chama
+`findEquipmentActualState`; se achar o equipamento na frota atual, executa `mapref.flyTo` com zoom
+20 e abre o popup. A busca compara `reference.cdEquipamento === equipment` (igualdade estrita).
+Como a API SGPA entrega `cdEquipamento` como texto, o PWA deve preservar o identificador como
+string em `rastroBI.equipment`; convertê-lo para número pode impedir o mapa de localizar o item.
+Fonte da amostra do tipo: resposta SGPA `/estatistica/monitoramento`, seção 4 acima. A ação continua
+no iframe já aberto, sem abrir link externo. A resposta do bundle não é um acknowledgement de que
+um determinado equipamento está presente na frota naquele instante.
+
 ## 5. Decisão de arquitetura do motor de alertas
 
 Duas camadas, porque o usuário relata que o alerta do portal "às vezes falha":

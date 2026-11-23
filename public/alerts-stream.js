@@ -34,7 +34,11 @@ async function abrir(msg) {
       signal: ctl ? ctl.signal : undefined,
       cache: 'no-store',
     });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res.ok) {
+      const erro = new Error('HTTP ' + res.status);
+      erro.statusCode = res.status;
+      throw erro;
+    }
     if (!res.body || !res.body.getReader) {
       // navegadores sem streaming de corpo: cai para leitura única do texto
       const txt = await res.text();
@@ -55,7 +59,7 @@ async function abrir(msg) {
     }
     self.postMessage({ type: 'estado', status: 'fechado' });
   } catch (e) {
-    if (ativo) self.postMessage({ type: 'estado', status: 'erro', mensagem: String((e && e.message) || e) });
+    if (ativo) self.postMessage({ type: 'estado', status: 'erro', statusCode: Number(e && e.statusCode) || 0, mensagem: String((e && e.message) || e) });
   } finally {
     escorrendo = null;
   }

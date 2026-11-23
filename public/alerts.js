@@ -16,7 +16,9 @@
  * Velocidade é exclusivamente o alarme oficial do SGPA, sem limiar local.
  * RPM, troca de turno e ociosidade mantêm cálculo local opcional. A operação
  * Aguardando Caminhão em tratores/transbordos é rastreada na telemetria.
- * Todos os tipos oficiais entram na central; preferências filtram só os avisos.
+ * Todos os tipos oficiais entram na central. Alertas oficiais recebem os canais
+ * escolhidos pelo usuário. Cálculos locais ficam na central/histórico; só a regra
+ * confirmada “Motor ocioso sem apontamento” pode falar, sem os demais canais.
  *
  * Saída: pop-up na tela, som, voz em português (Web Speech API; no APK do Android
  * usa a ponte nativa AndroidTTS), notificação do sistema, vibração e histórico
@@ -29,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.2.2';
+  const VERSAO = '1.2.5';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -64,6 +66,7 @@
     rpm: { id: 'rpm', nome: 'RPM máxima do motor', icone: '⚙️', cor: '#ff8f3f', severidade: 3 },
     turno: { id: 'turno', nome: 'Preso em troca de turno', icone: '⏱️', cor: '#f0cc0c', severidade: 2 },
     ocioso: { id: 'ocioso', nome: 'Motor ocioso', icone: '🔌', cor: '#4aa3ff', severidade: 2 },
+    ociosoSemApontamento: { id: 'ociosoSemApontamento', nome: 'Motor ocioso sem apontamento', icone: '🔌', cor: '#db9b3b', severidade: 2 },
     motorCondicao: { id: 'motorCondicao', nome: 'Motor ligado — condição combinada', icone: 'M', cor: '#c6a0e8', severidade: 2 },
     aguardandoCaminhao: { id: 'aguardandoCaminhao', nome: 'Aguardando caminhão', icone: 'T', cor: '#e9b457', severidade: 2 },
     generico: { id: 'generico', nome: 'Alarme do portal', icone: '⚠️', cor: '#93a4b3', severidade: 1 },
@@ -95,6 +98,7 @@
     som: true,
     voz: true,
     vozNome: '',
+    vozURI: '',
     volume: 1,
     taxa: 1,
     tom: 1,
@@ -118,6 +122,7 @@
   let worker = null;
   let ultimoQuadro = 0;
   let tentativasStream = 0;
+  let renovacaoPendente = null;
 
   const frota = new Map(); // cdEquipamento => leitura consolidada
   const estados = new Map(); // "equipamento|regra" => máquina de estados
@@ -134,6 +139,7 @@
     ultimoCiclo: 0,
     erros: 0,
     proximoErro: '',
+    sessao: 'ativa',
     monitorados: 0,
     backoff: 0,
     fonte: '—',
@@ -303,7 +309,7 @@
       if (ctx.proxy) return chamarProxy(caminho); // rede/CORS contra a API: vai pelo servidor
       throw e;
     }
-    if (res.status === 401 || res.status === 403) {
+    if (res.status === 401) {
       await renovarToken();
       const deNovo = await fetch(url, { method: 'GET', headers: cabecalhos(), cache: 'no-store' });
       if (!deNovo.ok) throw new Error('HTTP ' + deNovo.status);
@@ -317,30 +323,42 @@
     return res.json();
   }
 
-  async function chamarProxy(caminho) {
+  async function chamarProxy(caminho, tentarRenovar = true) {
     const res = await fetch('/.netlify/functions/session?acao=dados&rota=' + encodeURIComponent(caminho), {
       headers: { accept: 'application/json' },
       cache: 'no-store',
     });
+    const json = await res.json().catch(() => ({}));
+    if (res.status === 401 && tentarRenovar) {
+      await renovarToken();
+      return chamarProxy(caminho, false);
+    }
     if (!res.ok) throw new Error('proxy HTTP ' + res.status);
-    const json = await res.json();
     if (json && json.erro) throw new Error(json.erro);
     return json.dados;
   }
 
   async function renovarToken() {
-    if (typeof ctx.renovar !== 'function') return;
-    try {
-      const nova = await ctx.renovar();
-      if (nova && nova.props) {
-        ctx.token = nova.props.token;
-        ctx.api = nova.props.urlSgpa || ctx.api;
-        ctx.props = nova.props;
-        if (worker) abrirStream(); // o stream precisa do token novo
-      }
-    } catch {
-      /* sem sessão nova: o próximo ciclo tenta de novo */
+    if (typeof ctx.renovar !== 'function') throw new Error('renovação da sessão SGPA indisponível');
+    if (!renovacaoPendente) {
+      renovacaoPendente = Promise.resolve()
+        .then(() => ctx.renovar())
+        .then((nova) => {
+          if (!nova || !nova.props || !nova.props.token) throw new Error('o portal não forneceu uma nova sessão');
+          const mudou = atualizarSessao(nova);
+          if (!mudou && cfg.usarStream) abrirStream();
+          estado.sessao = 'ativa';
+          return nova;
+        })
+        .catch((e) => {
+          estado.sessao = 'expirada';
+          estado.proximoErro = 'sessão SGPA: ' + ((e && e.message) || 'não foi possível renovar');
+          renderCabecalho();
+          throw e;
+        })
+        .finally(() => { renovacaoPendente = null; });
     }
+    return renovacaoPendente;
   }
 
   const rotaTelemetria = () => `/estatistica/monitoramento?buId=${encodeURIComponent(ctx.buId)}&language=pt-br`;
@@ -380,12 +398,18 @@
       } else if (m.type === 'estado') {
         estado.stream = m.status;
         if (m.status === 'erro' || m.status === 'fechado') {
-          // reconecta com respiro, como faz o worker oficial do mapa
-          const espera = Math.min(60_000, 2000 * 2 ** tentativasStream);
-          tentativasStream++;
-          setTimeout(() => {
-            if (cfg.usarStream && cfg.ativo) abrirStream();
-          }, espera);
+          const reconectar = () => {
+            const espera = Math.min(60_000, 2000 * 2 ** tentativasStream);
+            tentativasStream++;
+            setTimeout(() => {
+              if (cfg.usarStream && cfg.ativo) abrirStream();
+            }, espera);
+          };
+          if (m.statusCode === 401) renovarToken().catch(reconectar);
+          else if (m.statusCode === 403) {
+            estado.sessao = 'sem autorização';
+            estado.proximoErro = 'o SGPA recusou a autorização do stream (403)';
+          } else reconectar();
         }
       } else if (m.type === 'aviso') {
         estado.proximoErro = m.mensagem || m.type;
@@ -420,15 +444,25 @@
         quadroAlarme(q);
         continue;
       }
-      const e = mesclar(String(q.cdEquipamento));
+      const id = String(q.cdEquipamento);
+      const frenteAtual = q.descFrente || (frota.get(id) || {}).frente || '';
+      if (!frenteSelecionada(frenteAtual)) {
+        atualizarFrenteAtivos(id, frenteAtual);
+        frota.delete(id);
+        reconciliarEscopo();
+        continue;
+      }
+      const e = mesclar(id);
       e.frente = q.descFrente || e.frente;
       if (q.descOperacao !== undefined || (q.cdOperacao !== undefined && q.cdOperacao !== null)) {
-        const novaOperacao = String(q.descOperacao || q.cdOperacao || '');
+        const temDescricaoOperacao = q.descOperacao != null && String(q.descOperacao).trim() !== '';
+        const novaOperacao = temDescricaoOperacao ? String(q.descOperacao) : '';
         if (norm(novaOperacao) !== norm(e.operacao)) {
           e.operacaoTs = agora(); // acabou de entrar nesta operação
         }
         e.operacao = novaOperacao;
         e.cdOperacao = String(q.cdOperacao || '');
+        e.operacaoConfirmada = temDescricaoOperacao;
       }
       if (q.descOperador) {
         if (norm(q.descOperador) !== norm(e.operadorBruto)) e.operadorTs = agora();
@@ -513,6 +547,7 @@
         frente: '',
         operacao: '',
         cdOperacao: '',
+        operacaoConfirmada: false,
         operador: '',
         operadorBruto: '',
         estadoTxt: '',
@@ -543,6 +578,13 @@
       if (!id) continue;
       vistos.add(id);
       if (row.descGrupoEquipamento) frentes.add(row.descGrupoEquipamento);
+      const frenteAtual = row.descGrupoEquipamento || (frota.get(id) || {}).frente || '';
+      if (!frenteSelecionada(frenteAtual)) {
+        atualizarFrenteAtivos(id, frenteAtual);
+        frota.delete(id);
+        reconciliarEscopo();
+        continue;
+      }
       const e = mesclar(id);
       const p = partirEquipamento(row.descEquipamento, id);
       e.nome = p.nome || e.nome;
@@ -550,11 +592,14 @@
       e.tipo = row.descTpEquipamento || e.tipo;
       e.tipoCompleto = row.descFullTpEquipamento || e.tipoCompleto;
       e.frente = row.descGrupoEquipamento || e.frente;
-      if (row.descOperacao !== undefined && norm(row.descOperacao) !== norm(e.operacao)) {
+      const temDescricaoOperacao = row.descOperacao != null && String(row.descOperacao).trim() !== '';
+      const novaOperacao = temDescricaoOperacao ? String(row.descOperacao) : '';
+      if (norm(novaOperacao) !== norm(e.operacao)) {
         e.operacaoTs = agora();
-        e.operacao = String(row.descOperacao || '');
       }
-      e.cdOperacao = String(row.cdOperacao || e.cdOperacao || '');
+      e.operacao = novaOperacao;
+      e.cdOperacao = String(row.cdOperacao || '');
+      e.operacaoConfirmada = temDescricaoOperacao;
       e.estadoTxt = row.descEstado || e.estadoTxt;
       e.grupoOperacao = row.descGrupoOperacao || e.grupoOperacao;
       if (norm(row.descFuncionario) !== norm(e.operadorBruto)) {
@@ -583,15 +628,28 @@
     for (const [id, e] of frota) if (e.vistoEm < corte && !ativos.has(id + '|velocidade')) frota.delete(id);
   }
 
+  function frenteSelecionada(frente) {
+    if (!cfg.frentes || !cfg.frentes.length) return true;
+    return !!frente && cfg.frentes.some((f) => norm(f) === norm(frente));
+  }
+
+  function atualizarFrenteAtivos(id, frente) {
+    if (!frente) return;
+    const equipamento = String(id);
+    const e = frota.get(equipamento);
+    if (e) e.frente = frente;
+    for (const alerta of ativos.values()) {
+      if (alerta.e && String(alerta.e.id) === equipamento) alerta.e.frente = frente;
+    }
+  }
+
   function dentroDoEscopo(e) {
     if (String(e.ativo || 'T') === 'F') return false;
     if (e.atraso !== null && e.atraso !== undefined && e.atraso > cfg.maxAtrasoMin * 60) return false;
     if (cfg.seguirSelecaoMapa && ctx.selecao && ctx.selecao.size) {
       if (!ctx.selecao.has(String(e.id)) && !ctx.selecao.has(String(e.numero))) return false;
     }
-    if (cfg.frentes && cfg.frentes.length) {
-      if (!cfg.frentes.some((f) => norm(f) === norm(e.frente))) return false;
-    }
+    if (!frenteSelecionada(e.frente)) return false;
     const lista = (cfg.equipamentos || '')
       .split(/[^0-9A-Za-z]+/)
       .map((s) => s.trim())
@@ -601,6 +659,24 @@
       if (!lista.some((f) => alvo.includes(' ' + String(f) + ' '))) return false;
     }
     return true;
+  }
+
+  function reconciliarEscopo() {
+    for (const [chave, alerta] of ativos) {
+      if (dentroDoEscopo(alerta.e)) continue;
+      ativos.delete(chave);
+      if (alerta.fonte === 'portal') {
+        const st = estados.get(chave);
+        if (st) st.foraDoEscopo = true;
+      }
+    }
+    for (const [chave, st] of estados) {
+      if (String(st.regra).startsWith('sgpa:')) continue;
+      const e = frota.get(String(st.id));
+      if (e && dentroDoEscopo(e)) continue;
+      Object.assign(st, { firing: false, consec: 0, negados: 0, emitido: false, since: 0, ultimo: 0 });
+      ativos.delete(chave);
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -836,7 +912,16 @@
     const parado = (e.velocidade === null ? 0 : e.velocidade) <= 1;
     const ligado = e.rpm > 0 && (e.motor === null ? true : e.motor);
     const liga = ligado && parado && (rpmMax === 0 || e.rpm <= rpmMax);
-    const st = marcar(e.id, 'ocioso', liga, ts, e.rpm);
+    const semPonto = liga && e.operacaoConfirmada === true && policy.semApontamento(e);
+    const regra = semPonto ? 'ociosoSemApontamento' : 'ocioso';
+    const outraRegra = semPonto ? 'ocioso' : 'ociosoSemApontamento';
+    const chaveOutra = String(e.id) + '|' + outraRegra;
+    const stOutra = estados.get(chaveOutra);
+    if (stOutra) {
+      Object.assign(stOutra, { firing: false, consec: 0, negados: 0, emitido: false, since: 0, ultimo: 0 });
+      ativos.delete(chaveOutra);
+    }
+    const st = marcar(e.id, regra, liga, ts, e.rpm);
     if (!st.firing) return;
     const min = Math.max(1, num(cfg.minutosOcioso) || 5);
     const durou = (ts - inicioReal(st, e)) / 60000;
@@ -844,11 +929,13 @@
     if (!podeDisparar(st, ts)) return;
     emitir({
       chave: st.chave,
-      regra: 'ocioso',
+      regra,
       e,
       valor: Math.round(durou),
       limite: Math.round(min),
-      texto: `com motor ocioso há ${minutosTxt(durou)} (${milhar(e.rpm || 0)} RPM parado)`,
+      texto: semPonto
+        ? `com motor ocioso e sem apontamento há ${minutosTxt(durou)} (${milhar(e.rpm || 0)} RPM parado)`
+        : `com motor ocioso há ${minutosTxt(durou)} (${milhar(e.rpm || 0)} RPM parado)`,
       detalhe: `${e.nome} · ${e.frente || 'sem frente'} · operação ${e.operacao || '—'} · limiar ${minutosTxt(min)}`,
       inicio: inicioReal(st, e),
     });
@@ -937,8 +1024,6 @@
     }
     if (a.descGrupoEquipamento) e.frente = a.descGrupoEquipamento;
     if (a.descOperacao) e.operacao = String(a.descOperacao);
-    if (!dentroDoEscopo(e)) return;
-
     const codigo = String(a.cdTpAlarme || 'desconhecido');
     const nomeAlarme = a.descTpAlarme || a.descAlarme || nomeTipo(codigo);
     registrarTipo(codigo, nomeAlarme);
@@ -947,16 +1032,24 @@
     // Diferentes tipos são independentes. Stream e REST da mesma ocorrência se unem.
     if (a.cdId && st.ocorrencia && String(a.cdId) !== st.ocorrencia) {
       st.emitido = false;
+      st.foraDoEscopo = false;
       st.since = agora();
       ativos.delete(chave);
       delete acks[chave];
     }
     if (a.cdId) st.ocorrencia = String(a.cdId);
     st.consec = Math.max(st.consec, Math.max(1, cfg.amostras)); // SGPA já confirmou o alarme
-    const replay = st.ocorrencia && (st.ocorrenciasEncerradas || []).includes(st.ocorrencia);
+    const estavaForaDoEscopo = !!st.foraDoEscopo;
+    if (!dentroDoEscopo(e)) {
+      st.foraDoEscopo = true;
+      return;
+    }
+    st.foraDoEscopo = false;
+    const replay = estavaForaDoEscopo || (st.ocorrencia && (st.ocorrenciasEncerradas || []).includes(st.ocorrencia));
     const medidaOficial = valorMedido(a.vlAlarme) ?? valorMedido(a.vlAlarmeMaximoAtingido);
     let valor = medidaOficial;
     let fonteVelocidade = regra === 'velocidade' && medidaOficial !== null ? 'alarme oficial SGPA' : '';
+    let medicaoPendente = false;
     if (regra === 'velocidade' && valor === null) {
       const idade = agora() - (Number(e.velocidadeTs) || 0);
       if (e.velocidadeTs && idade >= -5000 && idade <= Math.max(90_000, cfg.intervaloSeg * 2000)) {
@@ -965,7 +1058,7 @@
       }
       if (valor === null && !a.__medicaoTentada) {
         solicitarMedicaoVelocidade(a, via);
-        return;
+        medicaoPendente = true;
       }
     }
     let texto;
@@ -987,6 +1080,7 @@
         (fonteVelocidade === 'telemetria SGPA' ? ' · velocidade complementada pela telemetria SGPA' : '') +
         ` · frente/grupo ${e.frente || 'não informado'} · operação ${e.operacao || '—'}`,
       inicio: dataArray(a.dtHrLocal) || (typeof a.dtHrLocal === 'number' ? a.dtHrLocal : st.since),
+      medicaoPendente,
       servidor: true,
     };
     if (replay) {
@@ -999,8 +1093,9 @@
       // Melhor medição no REST atualiza a central sem segunda fala/histórico/INSERT.
       const anterior = ativos.get(chave);
       if (anterior) {
-        const valorAnterior = anterior.valor;
-        const medida = valor !== null ? { valor, texto, fonteVelocidade } : {};
+        const medida = valor !== null
+          ? { valor, texto, fonteVelocidade, medicaoPendente: false }
+          : regra === 'velocidade' ? { texto, medicaoPendente: false } : {};
         Object.assign(anterior, medida, { detalhe: alerta.detalhe, e, numero: e.numero, nomeAlarme });
         anterior.fala = montarFala(anterior);
         anterior.notificar = policy.notificar(cfg, anterior);
@@ -1008,10 +1103,6 @@
         if (registro && valor !== null) {
           Object.assign(registro, { valor, texto, fala: anterior.fala, detalhe: alerta.detalhe, fonteVelocidade });
           salvar(KEY_HIST, hist);
-        }
-        if (valorAnterior == null && valor !== null && anterior.notificar) {
-          if (cfg.voz) falar(anterior.fala);
-          if (cfg.notificacao) notificar(anterior);
         }
         renderAtivos();
       }
@@ -1057,7 +1148,7 @@
       contagem: (prev && prev.contagem ? prev.contagem : 0) + 1,
       repeticao: !!prev,
     };
-    alerta.notificar = policy.notificar(cfg, alerta);
+    alerta.notificar = alerta.fonte === 'portal' && policy.notificar(cfg, alerta);
     alerta.fala = montarFala(alerta);
     ativos.set(chave, alerta);
     if (a.replay) {
@@ -1066,46 +1157,57 @@
       return;
     }
 
-    hist.unshift({
-      ts,
-      chave,
-      regra: alerta.regra,
-      tipoAlarme: alerta.tipoAlarme,
-      nomeAlarme: alerta.nomeAlarme,
-      frente: alerta.e.frente || '',
-      notificacaoSelecionada: alerta.notificar,
-      equipamento: alerta.numero,
-      descricao: alerta.descricao,
-      operador: alerta.operador,
-      valor: alerta.valor,
-      fonteVelocidade: alerta.fonteVelocidade,
-      texto: alerta.texto,
-      detalhe: alerta.detalhe,
-      fonte: alerta.fonte,
-      fala: alerta.fala,
-      unidade: ctx.unidade || '',
-      usuario: ctx.usuario || '',
-    });
-    if (hist.length > MAX_HIST) hist.length = MAX_HIST;
-    salvar(KEY_HIST, hist);
+    if (!a.simulado) {
+      hist.unshift({
+        ts,
+        chave,
+        regra: alerta.regra,
+        tipoAlarme: alerta.tipoAlarme,
+        nomeAlarme: alerta.nomeAlarme,
+        frente: alerta.e.frente || '',
+        notificacaoSelecionada: alerta.notificar,
+        equipamento: alerta.numero,
+        descricao: alerta.descricao,
+        operador: alerta.operador,
+        valor: alerta.valor,
+        fonteVelocidade: alerta.fonteVelocidade,
+        texto: alerta.texto,
+        detalhe: alerta.detalhe,
+        fonte: alerta.fonte,
+        fala: alerta.fala,
+        unidade: ctx.unidade || '',
+        usuario: ctx.usuario || '',
+      });
+      if (hist.length > MAX_HIST) hist.length = MAX_HIST;
+      salvar(KEY_HIST, hist);
+    }
     if (!a.simulado) registrarNoServidor(alerta);
-    if (!alerta.notificar && !a.simulado) {
+    const vozLocalSemPontoConfirmado = alerta.fonte === 'app' &&
+      alerta.regra === 'ociosoSemApontamento' &&
+      alerta.e.operacaoConfirmada === true && policy.semApontamento(alerta.e);
+    if (!alerta.notificar && !a.simulado && !vozLocalSemPontoConfirmado) {
       renderAtivos();
       renderCabecalho();
       return; // só central/histórico: não consome rajada nem entrega canais
     }
 
     const silenciado = ts < (Number(cfg.silencioAte) || 0) || jaReconhecido;
-    // rajada: ao abrir o app podem nascer dezenas de alertas de uma vez — só os
-    // primeiros N falam; o resto entra mudo na central (histórico completo).
-    if (ts - rajada.ts > 20000) rajada = { ts, voz: 0 };
-    const demais = ++rajada.voz > Math.max(1, Number(cfg.maxPorCiclo) || 4);
-    if (cfg.popup) mostrarToast(alerta, silenciado || demais);
+    const oficial = alerta.fonte === 'portal';
+    // Alarmes oficiais chegam pelo stream e não podem ser suprimidos pela proteção
+    // de rajada destinada apenas aos cálculos locais e exemplos.
+    let demais = false;
+    if (!oficial) {
+      if (ts - rajada.ts > 20000) rajada = { ts, voz: 0, aviso: false };
+      demais = ++rajada.voz > Math.max(1, Number(cfg.maxPorCiclo) || 4);
+    }
+    if (cfg.popup && (oficial || a.simulado)) mostrarToast(alerta, silenciado || demais);
     if (!silenciado && !demais) {
-      if (cfg.som) tocar(regra.severidade);
-      if (cfg.voz && (!alerta.repeticao || cfg.repetirVoz)) falar(alerta.fala);
-      if (cfg.vibrar) vibrar(regra.severidade);
-      notificar(alerta);
+      if ((oficial || a.simulado) && cfg.som) tocar(regra.severidade);
+      if (cfg.voz && (oficial || a.simulado || vozLocalSemPontoConfirmado) && (!alerta.repeticao || cfg.repetirVoz)) {
+        falar(alerta.fala, { oficial });
+      }
+      if ((oficial || a.simulado) && cfg.vibrar) vibrar(regra.severidade);
+      if (oficial) notificar(alerta);
     }
     if (demais && rajada.aviso !== true && ts - rajada.ts < 5000) {
       rajada.aviso = true;
@@ -1137,33 +1239,74 @@
     return p && typeof p.falar === 'function' ? p : null;
   }
 
+  function idVozWeb(v) {
+    return 'web:' + String(v.voiceURI || (v.name + '|' + v.lang));
+  }
+
+  function vozesNativas() {
+    const n = ponteNativa();
+    if (!n || typeof n.vozes !== 'function') return [];
+    try {
+      const lista = n.vozes();
+      const itens = typeof lista === 'string' ? JSON.parse(lista) : lista;
+      return Array.isArray(itens) ? itens : [];
+    } catch {
+      return [];
+    }
+  }
+
   function escolherVoz() {
     const s = sintetizador();
     if (!s) return;
     const vozes = s.getVoices() || [];
     if (!vozes.length) return;
-    let v = cfg.vozNome ? vozes.find((x) => x.name === cfg.vozNome) : null;
+    let v = cfg.vozURI && String(cfg.vozURI).startsWith('web:')
+      ? vozes.find((x) => idVozWeb(x) === cfg.vozURI)
+      : null;
+    if (!v && cfg.vozURI && !String(cfg.vozURI).startsWith('android:')) {
+      v = vozes.find((x) => x.voiceURI === cfg.vozURI);
+    }
+    if (!v && cfg.vozNome) v = vozes.find((x) => x.name === cfg.vozNome);
     if (!v) v = vozes.find((x) => /pt[-_]br/i.test(x.lang));
     if (!v) v = vozes.find((x) => /^pt/i.test(x.lang));
     if (!v) v = vozes.find((x) => /brazil|brasil/i.test(x.name));
     vozEscolhida = v || null;
   }
 
-  function falar(texto) {
+  function falar(texto, opcoes) {
     if (!cfg.voz) return;
-    fila.push(String(texto));
-    if (fila.length > 8) fila.shift();
+    const item = { texto: String(texto), oficial: !!(opcoes && opcoes.oficial) };
+    if (item.oficial) {
+      let inserir = 0;
+      while (inserir < fila.length && fila[inserir].oficial) inserir++;
+      fila.splice(inserir, 0, item);
+    } else {
+      const naoOficiais = fila.filter((x) => !x.oficial).length;
+      if (naoOficiais >= 8) {
+        const antiga = fila.findIndex((x) => !x.oficial);
+        if (antiga >= 0) fila.splice(antiga, 1);
+        else return;
+      }
+      fila.push(item);
+    }
     descargarFila();
   }
 
   function descargarFila() {
     if (falando || !fila.length) return;
-    const texto = fila.shift();
+    const item = fila.shift();
+    const texto = item.texto;
     const nativa = ponteNativa();
-    if (nativa) {
+    const s = sintetizador();
+    const uriVoz = String(cfg.vozURI || '');
+    const androidSelecionado = uriVoz.startsWith('android:');
+    if (nativa && (androidSelecionado || !s)) {
       falando = true;
       try {
-        nativa.falar(texto, Number(cfg.volume) || 1, Number(cfg.taxa) || 1);
+        const idNativo = uriVoz.startsWith('android:') ? uriVoz.slice('android:'.length) : '';
+        if (typeof nativa.falarComVoz === 'function') {
+          nativa.falarComVoz(texto, Number(cfg.volume) || 1, Number(cfg.taxa) || 1, idNativo);
+        } else nativa.falar(texto, Number(cfg.volume) || 1, Number(cfg.taxa) || 1);
       } catch {
         /* segue sem voz */
       }
@@ -1173,9 +1316,9 @@
       }, Math.min(20000, 900 + texto.length * 65));
       return;
     }
-    const s = sintetizador();
     if (!s) {
       tocar(3);
+      setTimeout(descargarFila, 200);
       return;
     }
     escolherVoz();
@@ -1267,7 +1410,7 @@
   }
 
   function notificar(a) {
-    if (!cfg.notificacao || typeof Notification === 'undefined') return;
+    if (!a || a.fonte !== 'portal' || !a.notificar || !cfg.notificacao || typeof Notification === 'undefined') return;
     if (Notification.permission !== 'granted') return;
     const titulo = `${a.classe} ${a.numero} — ${a.nome}`;
     const opcoes = {
@@ -1282,7 +1425,7 @@
     // Android/PWA exige showNotification; new Notification pode lançar TypeError.
     if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
       navigator.serviceWorker.getRegistration().then((registro) => {
-        if (!cfg.ativo || !policy.notificar(cfg, a) || !cfg.notificacao) return;
+        if (!cfg.ativo || a.fonte !== 'portal' || !a.notificar || !policy.notificar(cfg, a) || !cfg.notificacao) return;
         if (registro && registro.showNotification) return registro.showNotification(titulo, opcoes);
         notificarDesktop(titulo, opcoes, a);
       }).catch(() => notificarDesktop(titulo, opcoes, a));
@@ -1292,7 +1435,7 @@
   }
 
   function notificarDesktop(titulo, opcoes, a) {
-    if (!cfg.ativo || !cfg.notificacao || !policy.notificar(cfg, a)) return;
+    if (!cfg.ativo || !a || a.fonte !== 'portal' || !a.notificar || !cfg.notificacao || !policy.notificar(cfg, a)) return;
     try {
       const n = new Notification(titulo, opcoes);
       n.onclick = () => {
@@ -1420,11 +1563,15 @@
 
 <div id="toasts" aria-live="assertive" aria-atomic="false"></div>
 
-<div id="cfg-alertas" class="hide">
+<div id="cfg-alertas" class="hide" role="dialog" aria-modal="true" aria-labelledby="cfg-titulo">
   <div class="card cfg">
-    <img class="marca" src="/icons/logo-mark.png" alt="" width="44" height="44" />
-    <h2>Preferências de alertas</h2>
-    <p class="fine">Escolha o que deve avisar neste aparelho. Todos os alarmes oficiais continuam na central e no histórico; as chaves controlam apenas pop-up, som, fala, vibração e notificação.</p>
+    <div class="cfg-topo">
+      <span aria-hidden="true"></span>
+      <img class="marca" src="/icons/logo-mark.png" alt="" width="44" height="44" />
+      <button id="cfg-fechar-x" class="icone cfg-fechar-x" type="button" title="Fechar preferências" aria-label="Fechar preferências">✕</button>
+    </div>
+    <h2 id="cfg-titulo">Preferências de alertas</h2>
+    <p class="fine">Alertas calculados localmente ficam na central e no histórico. Só “Motor ocioso sem apontamento”, quando confirmado por uma descrição atual do SGPA, pode ser falado como exceção; não gera notificação do sistema. Os demais cálculos locais não são falados nem notificados. A amostra manual do botão de teste não envia notificação do sistema.</p>
     <div class="fonte-oficial"><strong>Velocidade: somente SGPA</strong><span>O app notifica quando o SGPA emitir o alarme. Os limites são os cadastrados no portal, não um cálculo genérico do aplicativo.</span></div>
     <p class="rotulo">Quais alertas devem notificar</p>
     <div id="cfg-categorias" class="alert-switch-list"></div>
@@ -1439,7 +1586,7 @@
     </details>
     <details class="catalogo-detalhes"><summary>Regras auditadas da unidade</summary><p id="cfg-regras-status" class="fine"></p><div id="cfg-regras-auditadas" class="regras-auditadas"></div><p class="fine">Inventário para consulta. As expressões permanecem executadas pelo SGPA, sem recriar condições ambíguas no aplicativo.</p></details>
     <h3 class="secao-alertas">Leitura e cálculos complementares</h3>
-    <p class="fine">RPM, ociosidade e troca de turno podem ter cálculo local complementar. A espera por caminhão usa a operação da telemetria mesmo com esses cálculos desligados.</p>
+    <p class="fine">RPM, ociosidade e troca de turno podem ter cálculo local complementar. Se o motor estiver ocioso e a descrição atual da operação SGPA confirmar “Sem Apontamento”, a central registra um alerta local combinado após o tempo configurado. Só esse alerta confirmado pode ser falado; não gera notificação do sistema, som, vibração ou pop-up. Os demais cálculos locais ficam na central/histórico sem fala nem notificação. A espera por caminhão usa a operação da telemetria mesmo com esses cálculos desligados.</p>
     <div class="grade">
       <label class="campo"><span>RPM máxima do motor</span><input id="cfg-rpm" type="number" min="0" step="10" inputmode="numeric"></label>
       <label class="campo"><span>Motor ocioso (min)</span><input id="cfg-ocioso" type="number" min="1" step="1" inputmode="numeric"></label>
@@ -1454,6 +1601,7 @@
     <label class="campo"><span>Só estes equipamentos (separados por espaço ou vírgula; vazio = todos)</span>
       <input id="cfg-eq" type="text" placeholder="ex.: 8833 4462 74073" spellcheck="false" autocomplete="off"></label>
     <p class="rotulo">Frentes / grupos monitorados</p>
+    <p class="fine">Marque somente os grupos que deseja monitorar. Com um ou mais marcados, alertas fora desses grupos saem dos ativos; sem nenhum marcado, vale a unidade toda.</p>
     <div id="cfg-frentes" class="chips"></div>
     <h3 class="secao-alertas">Fontes e canais de aviso</h3>
     <div class="switches">
@@ -1474,6 +1622,10 @@
       <label class="campo"><span>Volume <b id="lb-vol"></b></span><input id="cfg-vol" type="range" min="0" max="1" step="0.05"></label>
       <label class="campo"><span>Ritmo <b id="lb-taxa"></b></span><input id="cfg-taxa" type="range" min="0.6" max="1.6" step="0.05"></label>
       <label class="campo"><span>Tom <b id="lb-tom"></b></span><input id="cfg-tom" type="range" min="0.6" max="1.4" step="0.05"></label>
+    </div>
+    <div class="voice-actions">
+      <button id="cfg-gerenciar-vozes" type="button" class="hide">Instalar ou gerenciar vozes do Android</button>
+      <p class="fine">A lista mostra as vozes instaladas e disponibilizadas pelo navegador ou aparelho. Para aparecerem novas vozes, instale pacotes de voz nas configurações do dispositivo. Vozes IA online não estão configuradas; nenhum serviço pago será usado sem sua autorização explícita. A opção gratuita também depende de autorização e credencial segura. Não classificamos vozes locais por IA ou gênero sem informação confiável.</p>
     </div>
     <div class="row">
       <button id="cfg-salvar" class="primary">Salvar preferências</button>
@@ -1538,7 +1690,16 @@
     $('btn-exportar').onclick = exportarCsv;
     $('btn-teste').onclick = testar;
     $('cfg-fechar').onclick = fecharConfig;
+    $('cfg-fechar-x').onclick = fecharConfig;
     $('cfg-salvar').onclick = lerConfig;
+    $('cfg-vozel').onchange = () => {
+      configurar(preferenciaVoz($('cfg-vozel').value));
+      escolherVoz();
+    };
+    $('cfg-gerenciar-vozes').onclick = () => {
+      const nativa = ponteNativa();
+      if (nativa && typeof nativa.gerenciarVozes === 'function') nativa.gerenciarVozes();
+    };
     $('cfg-teste2').onclick = () => falar(policy.montarFala({ regra: 'velocidade', numero: '8833', valor: 85 }));
     $('cfg-busca-tipo').oninput = () => { limiteTipos = 80; renderTipos(); };
     $('cfg-todos-tipos').onchange = () => { limiteTipos = 80; renderTipos(); };
@@ -1562,7 +1723,7 @@
   function renderCabecalho() {
     if (!el.painel) return;
     const n = ativos.size;
-    const avisaveis = [...ativos.values()].filter((a) => policy.notificar(cfg, a)).length;
+    const avisaveis = [...ativos.values()].filter((a) => a.fonte === 'portal' && a.notificar).length;
     if (el.badge) {
       el.badge.textContent = n ? String(n) : '';
       el.badge.classList.toggle('hide', !n);
@@ -1571,7 +1732,8 @@
     const s = Math.max(0, Math.round((proximo - agora()) / 1000));
     if (el.proximo) el.proximo.textContent = estado.ligado ? `próxima leitura em ${s}s` : 'central desligada';
     if (el.status) {
-      el.status.textContent = `${n} ativo${n === 1 ? '' : 's'} · ${estado.monitorados} equipamentos vigiados`;
+      const sessao = estado.sessao === 'ativa' ? 'sessão SGPA ativa' : `sessão SGPA ${estado.sessao}`;
+      el.status.textContent = `${n} ativo${n === 1 ? '' : 's'} · ${estado.monitorados} equipamentos vigiados · ${sessao}`;
     }
     if (el.stream) {
       const vivo = estado.stream === 'ao vivo' && agora() - ultimoQuadro < 120000;
@@ -1608,7 +1770,8 @@
         <strong class="a-eq">${esc(a.classe)} ${esc(a.numero)}</strong>
         <span class="a-chip">${esc(a.nome)}</span>
         ${a.fonte === 'portal' ? '<span class="a-chip oficial">SGPA</span>' : ''}
-        ${!policy.notificar(cfg, a) ? '<span class="a-chip cinza">notificações desligadas</span>' : ''}
+        ${a.fonte === 'teste' ? '<span class="a-chip cinza">AMOSTRA MANUAL</span>' : ''}
+        ${!a.notificar ? '<span class="a-chip cinza">sem notificação do sistema</span>' : ''}
         ${a.contagem > 1 ? `<span class="a-chip cinza">×${a.contagem}</span>` : ''}
         <span class="a-hora" title="há ${desde(a.ts)}">${hora(a.ts)}</span>
       </div>
@@ -1721,9 +1884,14 @@
     setTimeout(() => fecharCard(d), 4200);
   }
 
-  /* "ver no mapa": o micro-frontend só aceita 'props'; rastroBI.equipment faz flyTo + popup */
+  /* `rastroBI.equipment` sem período aciona no mapa oficial flyTo, zoom e popup do equipamento. */
   function abrirNoMapa(a) {
-    const id = String((a.e && a.e.id) || a.numero || '');
+    const codigo = a && a.e && a.e.cdEquipamento != null
+      ? a.e.cdEquipamento
+      : a && a.e && a.e.id != null
+        ? a.e.id
+        : a && a.cdEquipamento;
+    const id = codigo == null ? '' : String(codigo).trim();
     if (!id) return;
     const iframe = $('map');
     const iframeUrl = iframe && (iframe.getAttribute('src') || iframe.src);
@@ -1734,9 +1902,14 @@
         const iframeOrigin = new URL(iframeUrl || mapUrl, window.location.href).origin;
         if (origin !== iframeOrigin) throw new Error('a origem do mapa incorporado não confere');
         const props = JSON.parse(JSON.stringify(ctx.props));
-        props.rastroBI = Object.assign({}, props.rastroBI || {}, {
-          equipment: isNaN(Number(id)) ? id : Number(id),
+        const rastroBI = Object.assign({}, props.rastroBI || {}, {
+          // O mapa compara cdEquipamento como string; sem datas, seleciona a posição atual.
+          equipment: id,
         });
+        // Datas herdadas fariam o portal priorizar o rastro e impedir o flyTo atual.
+        delete rastroBI.start;
+        delete rastroBI.end;
+        props.rastroBI = rastroBI;
         iframe.contentWindow.postMessage({ type: 'props', data: props }, origin);
         fecharPainel();
         mostrarAviso(`Centralizando ${a.classe || ''} ${a.numero} no mapa.`, 'info');
@@ -1754,16 +1927,19 @@
     if (!el.cfg) montar();
     renderConfig();
     el.cfg.classList.remove('hide');
+    $('cfg-fechar-x').focus();
     carregarCatalogo().then(renderSelecao).catch(() => {});
   }
   function fecharConfig() {
     el.cfg.classList.add('hide');
+    const gatilho = el.painel && !el.painel.classList.contains('hide') ? $('btn-cfg') : $('btn-alertas');
+    if (gatilho) gatilho.focus();
   }
 
   const DESCRICOES_CATEGORIAS = {
     velocidade: 'Somente alarme oficial de velocidade emitido pelo SGPA.',
     rpm: 'Tipos oficiais de RPM e cálculo complementar, se ativado.',
-    ocioso: 'Motor ocioso oficial e cálculo complementar, se ativado.',
+    ocioso: 'Motor ocioso oficial e cálculo complementar; identifica também o caso sem apontamento SGPA.',
     turno: 'Troca de turno oficial e cálculo complementar, se ativado.',
     motorCondicao: 'Condições combinadas do motor; não são velocidade pura.',
     aguardandoCaminhao: 'Trator/transbordo com a operação Aguardando Caminhão. Informa a frente/grupo.',
@@ -1929,6 +2105,7 @@
     if (!sel) return;
     const s = sintetizador();
     const vozes = s ? s.getVoices() || [] : [];
+    const nativas = vozesNativas();
     sel.innerHTML = '';
     const add = (v, t) => {
       const o = document.createElement('option');
@@ -1936,15 +2113,45 @@
       o.textContent = t;
       sel.appendChild(o);
     };
-    if (ponteNativa()) add('__nativa__', 'Voz do aparelho (Android)');
-    if (!vozes.length) {
-      add('', 'voz padrão do navegador');
-      return;
-    }
+    if (nativas.length) {
+      for (const v of nativas) {
+        const nome = String(v.name || v.id || 'Voz do aparelho');
+        add('android:' + nome, `${nome} (Android${v.lang ? ' · ' + v.lang : ''})`);
+      }
+    } else if (ponteNativa()) add('__nativa__', 'Voz padrão do aparelho (Android)');
     const pt = vozes.filter((v) => /^pt/i.test(v.lang));
     const outras = vozes.filter((v) => !/^pt/i.test(v.lang));
-    for (const v of [...pt, ...outras]) add(v.name, `${v.name} (${v.lang})`);
-    sel.value = cfg.vozNome || '';
+    for (const v of [...pt, ...outras]) add(idVozWeb(v), `${v.name} (${v.lang || 'idioma não informado'})`);
+    if (!sel.options.length) add('', 'voz padrão do navegador');
+
+    let escolhida = cfg.vozURI && [...sel.options].some((o) => o.value === cfg.vozURI) ? cfg.vozURI : '';
+    if (!escolhida && cfg.vozURI === 'android:') escolhida = '__nativa__';
+    if (!escolhida && cfg.vozNome) {
+      const web = vozes.find((v) => v.name === cfg.vozNome);
+      const nativa = nativas.find((v) => v.name === cfg.vozNome || v.id === cfg.vozNome);
+      escolhida = web ? idVozWeb(web) : nativa ? 'android:' + String(nativa.name || nativa.id) : '';
+    }
+    if (!escolhida) {
+      const preferida = pt[0] || vozes[0];
+      escolhida = preferida ? idVozWeb(preferida) : sel.options[0].value;
+    }
+    sel.value = escolhida;
+    if (sel.value && typeof sel.onchange === 'function') sel.onchange();
+  }
+
+  function preferenciaVoz(value) {
+    if (value === '__nativa__') return { vozURI: 'android:', vozNome: '' };
+    if (String(value).startsWith('android:')) {
+      const id = String(value).slice(8);
+      const nativa = vozesNativas().find((v) => String(v.name || v.id) === id);
+      return { vozURI: value, vozNome: nativa ? String(nativa.name || nativa.id) : id };
+    }
+    if (String(value).startsWith('web:')) {
+      const s = sintetizador();
+      const v = s && (s.getVoices() || []).find((x) => idVozWeb(x) === value);
+      return { vozURI: value, vozNome: v ? v.name : '' };
+    }
+    return { vozURI: '', vozNome: value || '' };
   }
 
   function renderConfig() {
@@ -1983,11 +2190,14 @@
     $('lb-vol').textContent = Number(cfg.volume).toFixed(2);
     $('lb-taxa').textContent = Number(cfg.taxa).toFixed(2);
     $('lb-tom').textContent = Number(cfg.tom).toFixed(2);
+    const gerenciarVozes = $('cfg-gerenciar-vozes');
+    const ponteVoz = ponteNativa();
+    if (gerenciarVozes) gerenciarVozes.classList.toggle('hide', !(ponteVoz && typeof ponteVoz.gerenciarVozes === 'function'));
     preencherVozes();
 
     const box = $('cfg-frentes');
     box.innerHTML = '';
-    const lista = (estado.frentes || []).slice(0, 60);
+    const lista = (estado.frentes || []).slice();
     if (!lista.length) {
       const i = document.createElement('span');
       i.className = 'fine';
@@ -2005,6 +2215,9 @@
         else set.add(f);
         configurar({ frentes: [...set] });
         b.classList.toggle('on', set.has(f));
+        renderAtivos();
+        renderCabecalho();
+        cicloImediato();
       };
       box.appendChild(b);
     }
@@ -2047,7 +2260,7 @@
       silencioAte: 0,
     };
     const sel = $('cfg-vozel');
-    if (sel) patch.vozNome = sel.value === '__nativa__' ? '' : sel.value;
+    if (sel) Object.assign(patch, preferenciaVoz(sel.value));
     configurar(patch);
     if (patch.notificacao && typeof Notification !== 'undefined' && Notification.permission === 'default') {
       try {
@@ -2145,9 +2358,15 @@
       }
       if (!id) return;
       if (/event-|online|command|alarm|select|click/i.test(t) || t === 'props') {
+        const novaSelecao = !ctx.selecao.has(id);
         ctx.selecao.add(id);
         if (ctx.selecao.size > 30) ctx.selecao.delete(ctx.selecao.values().next().value);
-        if (cfg.seguirSelecaoMapa) cicloImediato();
+        if (cfg.seguirSelecaoMapa && novaSelecao) {
+          reconciliarEscopo();
+          renderAtivos();
+          renderCabecalho();
+          cicloImediato();
+        }
       }
     });
   }
@@ -2159,11 +2378,16 @@
   function configurar(patch) {
     const antes = cfg;
     patch = patch || {};
+    const escopoAlterado = ['frentes', 'equipamentos', 'seguirSelecaoMapa'].some((k) => Object.prototype.hasOwnProperty.call(patch, k));
     cfg = policy.normalizeCfg(Object.assign({}, cfg, patch, {
       notificarCategorias: Object.assign({}, cfg.notificarCategorias, patch.notificarCategorias),
       tiposNotificacao: Object.assign({}, cfg.tiposNotificacao, patch.tiposNotificacao),
     }));
     cfg.incluirOutros = cfg.notificarCategorias.generico;
+    if (escopoAlterado) {
+      reconciliarEscopo();
+      renderAtivos();
+    }
     if (!cfg.ativo || !cfg.voz || patch.notificarCategorias || patch.tiposNotificacao) pararVoz();
     if (!cfg.ativo || !cfg.usarStream) { fecharStream(); estado.stream = 'desligado'; }
     else if ((!antes.ativo || !antes.usarStream) && ctx.token) abrirStream();
@@ -2190,10 +2414,30 @@
     if (!iniciar.escutou) {
       iniciar.escutou = true;
       escutarMapa();
+      window.addEventListener('bperes-vozes-atualizadas', () => {
+        escolherVoz();
+        preencherVozes();
+      });
       const s = sintetizador();
       if (s) {
         escolherVoz();
-        s.onvoiceschanged = escolherVoz;
+        const atualizarVozes = () => {
+          escolherVoz();
+          preencherVozes();
+        };
+        if (typeof s.addEventListener === 'function') s.addEventListener('voiceschanged', atualizarVozes);
+        else s.onvoiceschanged = atualizarVozes;
+      }
+      const nativa = ponteNativa();
+      if (nativa && typeof nativa.vozes === 'function') {
+        let tentativas = 0;
+        const procurarVozes = setInterval(() => {
+          tentativas++;
+          if (vozesNativas().length) {
+            preencherVozes();
+            clearInterval(procurarVozes);
+          } else if (tentativas >= 20) clearInterval(procurarVozes);
+        }, 500);
       }
       setInterval(tique, 1000);
       setInterval(() => {
@@ -2240,10 +2484,20 @@
 
   /* a sessão do portal é renovada em segundo plano: trocamos o token sem reiniciar tudo */
   function atualizarSessao(sess) {
-    if (!sess || !sess.props || !cfg.ativo) return;
+    if (!sess || !sess.props) {
+      if (sess && sess.erro) {
+        estado.sessao = 'expirada';
+        estado.proximoErro = 'sessão SGPA: ' + String(sess.erro);
+        renderCabecalho();
+      }
+      return false;
+    }
     const mudou = sess.props.token !== ctx.token;
     ctx = Object.assign({}, ctx, contextoDa(sess));
+    estado.sessao = 'ativa';
+    if (String(estado.proximoErro || '').startsWith('sessão SGPA:')) estado.proximoErro = '';
     if (mudou && cfg.usarStream) abrirStream();
+    renderCabecalho();
     return mudou;
   }
 

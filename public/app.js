@@ -9,7 +9,9 @@
   'use strict';
 
   const ENDPOINT = '/.netlify/functions/session';
-  const REPOST_MS = 1000 * 60 * 60 * 4; // reenvia as props a cada 4h
+  const REPOST_MS = 1000 * 60 * 60 * 4; // revalida a sessão e sincroniza as props a cada 4h
+  const FORCE_RENEW_MS = 1000 * 60 * 60 * 24; // renova antes do prazo de cache de 5 dias
+  const RESUME_RENEW_MS = 1000 * 60 * 10; // retomada após suspensão prolongada
   const $ = (id) => document.getElementById(id);
 
   const el = {
@@ -30,12 +32,20 @@
     loginNote: $('login-note'),
     about: $('about'),
     who: $('who'),
+    sessionStatus: $('session-status'),
     bar: $('bar'),
     stage: $('stage'),
   };
 
   let session = null;
   let repostTimer = null;
+  let sessionRetryTimer = null;
+  let sessionSyncPending = null;
+  let sessionSyncWasForced = false;
+  let lastSessionRenewalAt = 0;
+  let hiddenSince = 0;
+  let lastOnlineRecoveryAt = 0;
+  let sessionRetryDelay = 30_000;
   let alertasLigados = false;
   const ALERTAS_ON =
     new URLSearchParams(location.search).get('alertas') !== '0' &&
@@ -76,6 +86,14 @@
       hide(el.errGuide);
     }
     show(el.error);
+  }
+
+  function statusSessao(mensagem, erro) {
+    if (!el.sessionStatus) return;
+    el.sessionStatus.textContent = mensagem || '';
+    el.sessionStatus.classList.toggle('erro', !!erro && !!mensagem);
+    if (mensagem) show(el.sessionStatus);
+    else hide(el.sessionStatus);
   }
 
   /* --------------------------- sessão/mapa -------------------------- */
@@ -130,6 +148,60 @@
     throw erroServidor;
   }
 
+  function sincronizarSessao(forcar) {
+    if (!session) return Promise.resolve(null);
+    if (sessionSyncPending) {
+      if (!forcar || sessionSyncWasForced) return sessionSyncPending;
+      // Uma recuperação forçada por 401 tem precedência sobre uma checagem de cache em andamento.
+      return sessionSyncPending.catch(() => {}).then(() => sincronizarSessao(true));
+    }
+    sessionSyncWasForced = !!forcar;
+    sessionSyncPending = (async () => {
+      const atualizada = await obterSessao(!!forcar);
+      session = atualizada;
+      statusSessao('');
+      if (forcar || !lastSessionRenewalAt) lastSessionRenewalAt = Date.now();
+      clearTimeout(sessionRetryTimer);
+      sessionRetryTimer = null;
+      sessionRetryDelay = 30_000;
+      sendProps();
+      const w = session.who || {};
+      el.who.textContent = [w.usuario, w.unidade].filter(Boolean).join(' · ') +
+        (session.modo === 'local' ? ' · local' : '');
+      if (ALERTAS_ON && alertasLigados) MonitoramentoAlertas.atualizarSessao(session);
+      return session;
+    })().catch((erro) => {
+      const mensagem = erro && erro.message ? erro.message : 'falha ao renovar a sessão';
+      statusSessao(
+        'Sessão SGPA indisponível. O app tentará renovar automaticamente; se persistir, abra ⚙ e escolha “Nova sessão” ou “Entrar com minha senha neste aparelho”.',
+        true,
+      );
+      if (ALERTAS_ON && alertasLigados) MonitoramentoAlertas.atualizarSessao({ erro: mensagem });
+      console.warn('Sessão SGPA indisponível; o aplicativo tentará novamente:', mensagem);
+      if (!sessionRetryTimer) {
+        const espera = sessionRetryDelay;
+        sessionRetryDelay = Math.min(15 * 60_000, sessionRetryDelay * 2);
+        sessionRetryTimer = setTimeout(() => {
+          sessionRetryTimer = null;
+          sincronizarSessao(true).catch(() => {});
+        }, espera);
+      }
+      throw erro;
+    }).finally(() => {
+      sessionSyncPending = null;
+      sessionSyncWasForced = false;
+    });
+    return sessionSyncPending;
+  }
+
+  function iniciarVigiaSessao() {
+    clearInterval(repostTimer);
+    repostTimer = setInterval(() => {
+      const forcar = !lastSessionRenewalAt || Date.now() - lastSessionRenewalAt >= FORCE_RENEW_MS;
+      sincronizarSessao(forcar).catch(() => {});
+    }, REPOST_MS);
+  }
+
   function sendProps() {
     if (!session) return;
     try {
@@ -144,6 +216,8 @@
     boot('Validando sua sessão no portal…', 'tela: mapa analítico v4 (analytic-map-v4)');
     try {
       session = await obterSessao(force);
+      statusSessao('');
+      if (force || !lastSessionRenewalAt) lastSessionRenewalAt = Date.now();
     } catch (e) {
       if (e.pedeCredencial) {
         abrirLogin(e.guia, e.message);
@@ -163,6 +237,7 @@
 
   function iniciarMapa() {
     hide(el.login);
+    statusSessao('');
     const w = session.who || {};
     el.who.textContent = [w.usuario, w.unidade].filter(Boolean).join(' · ') +
       (session.modo === 'local' ? ' · local' : '');
@@ -176,8 +251,7 @@
       setTimeout(() => hide(el.boot), 2500);
       // o motor de alertas começa junto com o mapa (mesma sessão, mesmo token)
       setTimeout(ligarAlertas, 1200);
-      clearInterval(repostTimer);
-      repostTimer = setInterval(sendProps, REPOST_MS);
+      iniciarVigiaSessao();
     };
 
     boot('Carregando o mapa…', 'unidade ' + (w.unidade || '—'));
@@ -192,7 +266,7 @@
       MonitoramentoAlertas.iniciar({
         props: session.props,
         mapUrl: session.mapUrl,
-        renovar: () => obterSessao(true),
+        renovar: () => sincronizarSessao(true),
       });
       alertasLigados = true;
     } catch (e) {
@@ -349,16 +423,22 @@
     }
   });
 
-  // ao voltar para a aba, revalida a sessão e reenvia as props (token pode ter expirado)
+  // Ao voltar de uma suspensão longa, autentica de novo; em retornos curtos, reusa o cache.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible' || !EMBEDAVEL.has(TELA)) return;
-    fetchSession(false)
-      .then((d) => {
-        session = d;
-        sendProps();
-        if (ALERTAS_ON && alertasLigados) MonitoramentoAlertas.atualizarSessao(d);
-      })
-      .catch(() => {});
+    if (document.visibilityState !== 'visible') {
+      hiddenSince = Date.now();
+      return;
+    }
+    if (!EMBEDAVEL.has(TELA) || !session) return;
+    const suspensa = hiddenSince > 0 && Date.now() - hiddenSince >= RESUME_RENEW_MS;
+    hiddenSince = 0;
+    sincronizarSessao(suspensa || !lastSessionRenewalAt || Date.now() - lastSessionRenewalAt >= FORCE_RENEW_MS).catch(() => {});
+  });
+
+  window.addEventListener('online', () => {
+    if (!EMBEDAVEL.has(TELA) || !session || Date.now() - lastOnlineRecoveryAt < 5 * 60_000) return;
+    lastOnlineRecoveryAt = Date.now();
+    sincronizarSessao(true).catch(() => {});
   });
 
   /* --------------------------- instalação --------------------------- */

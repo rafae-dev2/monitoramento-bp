@@ -90,6 +90,28 @@ body {
   text-overflow: ellipsis;
 }
 
+#session-status {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 9px);
+  right: 12px;
+  max-width: min(620px, calc(100vw - 24px));
+  padding: 8px 12px;
+  border: 1px solid rgba(224, 82, 82, 0.55);
+  border-radius: 10px;
+  background: rgba(55, 25, 28, 0.97);
+  color: #ffd5d5;
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+#session-status:not(.erro) {
+  border-color: rgba(224, 161, 6, 0.55);
+  background: rgba(54, 43, 20, 0.97);
+  color: #ffe6a3;
+}
+
 /* em celular: nome completo menor, usuário sai da barra (fica em ⚙ → Sobre) */
 @media (max-width: 480px) {
   #brand {
@@ -106,6 +128,11 @@ body {
   #who {
     position: absolute;
     left: -9999px;
+  }
+  #session-status {
+    left: 12px;
+    right: 12px;
+    max-width: none;
   }
   #actions {
     gap: 4px;

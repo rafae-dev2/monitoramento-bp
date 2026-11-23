@@ -60,6 +60,8 @@ const JSON_HEADERS = {
 /* ------------------------------------------------------------------ */
 
 let cache = { props: null, expiresAt: 0 };
+let propsPending = null;
+let propsPendingForce = false;
 const hits = new Map();
 
 function rateLimited(ip) {
@@ -196,12 +198,26 @@ async function buildProps() {
   return props;
 }
 
-function props() {
-  if (cache.props && cache.expiresAt > Date.now()) return Promise.resolve(cache.props);
-  return buildProps().then((p) => {
-    cache = { props: p, expiresAt: Date.now() + PROPS_TTL * 1000 };
-    return p;
-  });
+function props(force = false) {
+  if (propsPending) {
+    if (propsPendingForce || !force) return propsPending;
+    return propsPending.catch(() => {}).then(() => props(true));
+  }
+  if (!force && cache.props && cache.expiresAt > Date.now()) return Promise.resolve(cache.props);
+  propsPendingForce = !!force;
+  const pending = buildProps()
+    .then((p) => {
+      cache = { props: p, expiresAt: Date.now() + PROPS_TTL * 1000 };
+      return p;
+    })
+    .finally(() => {
+      if (propsPending === pending) {
+        propsPending = null;
+        propsPendingForce = false;
+      }
+    });
+  propsPending = pending;
+  return pending;
 }
 
 /**
@@ -259,10 +275,20 @@ async function dadosDaRota(rota) {
     err.status = 403;
     throw err;
   }
-  const p = await props();
-  const url = `${SGPA_API}${alvo}${alvo.includes('?') ? '&' : '?'}buId=${(p.cdUnidadeRegional || [1])[0]}&language=pt-br`;
-  const headers = { ...COMMON_HEADERS, 'request-origin': `sgpa-front-${CLIENT_OWNER}`, 'X-Auth-Token': p.token, locale: '1' };
-  const res = await fetch(url, { headers, method: 'GET' });
+  let p = await props();
+  const urlPara = (sessao) => `${SGPA_API}${alvo}${alvo.includes('?') ? '&' : '?'}buId=${(sessao.cdUnidadeRegional || [1])[0]}&language=pt-br`;
+  const consultar = (sessao) => fetch(urlPara(sessao), {
+    headers: { ...COMMON_HEADERS, 'request-origin': `sgpa-front-${CLIENT_OWNER}`, 'X-Auth-Token': sessao.token, locale: '1' },
+    method: 'GET',
+  });
+  let res = await consultar(p);
+  if (res.status === 401) {
+    const renovada = cache.props && cache.expiresAt > Date.now() && cache.props.token !== p.token
+      ? cache.props
+      : await props(true);
+    p = renovada;
+    res = await consultar(p); // no máximo uma repetição com sessão nova
+  }
   const texto = await res.text();
   if (!res.ok) {
     const err = new Error(`${res.status} em ${caminho}`);
@@ -368,7 +394,7 @@ export default async function handler(req, ctx) {
     }
   }
 
-  if (url.searchParams.get('fresh') === '1') cache = { props: null, expiresAt: 0 };
+  const force = url.searchParams.get('fresh') === '1';
 
   const ip = (req.headers.get('x-forwarded-for') || 'anon').split(',')[0].trim();
   if (rateLimited(ip)) {
@@ -386,7 +412,7 @@ export default async function handler(req, ctx) {
   }
 
   try {
-    const p = await props();
+    const p = await props(force);
     registrarAcesso(ip, p.user, p.descUnidade, p.cdCliente, 'sucesso');
     // deep-link de fallback: abre o portal oficial autenticado, direto na tela pedida
     const portalLogin = `${PORTAL_URL}/#!/login/${encodeURIComponent(
@@ -412,7 +438,6 @@ export default async function handler(req, ctx) {
       { status: 200, headers: JSON_HEADERS },
     );
   } catch (e) {
-    cache = { props: null, expiresAt: 0 };
     registrarAcesso(ip, process.env.SOLINF_USER, null, null, 'falha_login', e.message);
     if (e.config) {
       return new Response(
