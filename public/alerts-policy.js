@@ -169,7 +169,14 @@
     { id: 'aguardBasculamento', nome: 'Aguardando basculamento', min: 15, re: /^ag(?:uardando|uard)? bascul/ },
     { id: 'equipamentoEncalhado', nome: 'Equipamento encalhado', min: 10, re: /^equipamento encalhado/ },
     { id: 'faltaOperador', nome: 'Falta operador', min: 5, re: /^falta (?:de )?operador/ },
-    { id: 'paradaIndustrial', nome: 'Parada industrial (911)', min: 30, codigo: '911', re: /^parada industrial/ }
+    { id: 'paradaIndustrial', nome: 'Parada industrial (911)', min: 30, codigo: '911', re: /^parada industrial/ },
+    { id: 'aguardMuda', nome: 'Aguardando muda (plantio)', min: 15, re: /^ag(?:uardando|uard)? (?:muda|carreg\w* (?:de )?muda)/ },
+    { id: 'aguardInsumo', nome: 'Aguardando insumo/adubo/calda', min: 15, re: /^ag(?:uardando|uard)? (?:insumo|adubo|fertilizante|calda|defensivo|herbicida|vinhaca)/ },
+    { id: 'aguardAgua', nome: 'Aguardando água / pipa', min: 15, re: /^ag(?:uardando|uard)? (?:agua|pipa|caminhao pipa)/ },
+    { id: 'aguardComboio', nome: 'Aguardando comboio/abastecimento', min: 20, re: /^ag(?:uardando|uard)? (?:comboio|abastec)/ },
+    { id: 'aguardOrdemServico', nome: 'Aguardando ordem de serviço / liberação de área', min: 20, re: /^(?:ag(?:uardando|uard)? (?:ordem|os\b|liberacao|area|instru|orientacao|topograf))|^sem (?:ordem|os\b)/ },
+    { id: 'aguardPrancha', nome: 'Aguardando prancha/transporte', min: 30, re: /^ag(?:uardando|uard)? (?:transp\w* )?prancha/ },
+    { id: 'aguardMecanico', nome: 'Aguardando mecânico/socorro', min: 30, re: /^ag(?:uardando|uard)? (?:mecanico|socorro|manutencao|borracheiro|eletricista)/ }
   ];
   function paradaImprodutiva(e) {
     if (!e || typeof e !== 'object') return null;
