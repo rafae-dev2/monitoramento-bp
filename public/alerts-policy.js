@@ -444,6 +444,19 @@
   function montarFala(alert, cfg) {
     return aplicarGlossario(montarFalaBase(alert), cfg);
   }
+  function classeEquipamentoFalado(alert, event) {
+    var classe = alert && alert.classe != null ? String(alert.classe).trim() : '';
+    if (classe) return classe;
+    var tipo = norm([
+      event && event.tipoCompleto, event && event.tipo, event && event.nome,
+      alert && alert.tipoCompleto, alert && alert.tipo, alert && alert.descricao
+    ].filter(Boolean).join(' '));
+    if (/\btrator\b/.test(tipo)) return 'Trator';
+    if (/\bcolhedora\b/.test(tipo)) return 'Colhedora';
+    if (/\btransbordo\b/.test(tipo)) return 'Transbordo';
+    if (/\bcaminh(?:ao|oes)\b|\btruck\b/.test(tipo)) return 'Caminhão';
+    return 'Veículo';
+  }
   function frenteOuGrupo(event) {
     var frente = event && event.frente;
     if (frente != null && String(frente).trim() !== '') return String(frente).trim();
@@ -455,6 +468,7 @@
     var item = isObject(alert) ? alert : {};
     var event = eventFor(item);
     var selectedCategory = categoryFromAlert(item);
+    var vehicleClass = classeEquipamentoFalado(item, event);
 
     if (selectedCategory === 'aguardandoCaminhao' || (!item.regra && !item.categoria && !codeFromAlert(item) && aguardandoCaminhao(event))) {
       var front = frenteOuGrupo(event);
@@ -534,7 +548,6 @@
         '. Frente/grupo ' + String(frente).trim() + '. Verificar.';
     }
     var identification = vehicleNumber(item, event);
-    var vehicleClass = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
     var aprovada = FALAS_SGPA[codeFromAlert(item)];
     if (aprovada) {
       var complemento = '';
@@ -551,9 +564,9 @@
     if (selectedCategory === 'velocidade') {
       var speed = numericAlertValue(item.valor);
       if (speed === null) {
-        return 'Veículo ' + identification + ' com alarme oficial de velocidade excedida. Verificar.';
+        return vehicleClass + ' ' + identification + ' com alarme oficial de velocidade excedida. Verificar.';
       }
-      return 'Veículo ' + identification + ' excedeu a velocidade a ' + String(speed) + ' quilômetros por hora. Verificar.';
+      return vehicleClass + ' ' + identification + ' excedeu a velocidade a ' + String(speed) + ' quilômetros por hora. Verificar.';
     }
 
     var message = cleanMessage(item.texto);

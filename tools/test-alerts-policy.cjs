@@ -90,6 +90,10 @@ assert.equal(policy.limiteRefeicao({ refeicaoGrupos: { 'Frente 1': 60 } }, { fre
 assert.equal(policy.montarFala({ codigo: 2203, numero: '8833', valor: 85 }), 'Veículo oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.');
 assert.equal(policy.montarFala({ codigo: 2203, numero: '0083', valor: '85.6', operador: 'Ana' }), 'Veículo zero zero oito três excedeu a velocidade a 86 quilômetros por hora. Verificar.');
 assert.equal(policy.montarFala({ codigo: 2203, numero: '8833', valor: null }), 'Veículo oito oito três três com alarme oficial de velocidade excedida. Verificar.');
+assert.equal(policy.montarFala({ codigo: 5, classe: 'Trator', numero: '32308', valor: null }), 'Trator três dois três zero oito com alarme oficial de velocidade excedida. Verificar.');
+assert.equal(policy.montarFala({ codigo: 5, classe: 'Trator', numero: '32277', valor: 36 }), 'Trator três dois dois sete sete excedeu a velocidade a 36 quilômetros por hora. Verificar.');
+assert.equal(policy.montarFala({ codigo: 5, numero: '32308', valor: 36, e: { tipo: 'TRATOR DE PNEU LEVE' } }), 'Trator três dois três zero oito excedeu a velocidade a 36 quilômetros por hora. Verificar.');
+assert.equal(policy.montarFala({ codigo: 5, classe: 'Veículo', numero: '6614', valor: 60 }), 'Veículo seis seis um quatro excedeu a velocidade a 60 quilômetros por hora. Verificar.');
 for (const value of [undefined, '', '   ', 'N/A', 'null', 'NaN', Infinity, -1]) {
   assert.match(policy.montarFala({ codigo: 5, numero: '12', valor: value }), /com alarme oficial de velocidade excedida/);
 }
@@ -132,6 +136,10 @@ assert.equal(
 assert.equal(
   policy.montarFala({ tipoAlarme: '12724', numero: '8833', valor: 62 }),
   'Veículo oito oito três três: alerta de velocidade, referência de 60 quilômetros por hora, velocidade medida de 62 quilômetros por hora. Verificar.'
+);
+assert.equal(
+  policy.montarFala({ tipoAlarme: '10820', classe: 'Trator', numero: '32308', valor: 85 }),
+  'Trator três dois três zero oito: controle de velocidade do equipamento, velocidade medida de 85 quilômetros por hora. Verificar.'
 );
 assert.equal(policy.montarFala({ tipoAlarme: '3484', numero: '8833', texto: 'SEM APONTAMENTO' }), 'Veículo oito oito três três: SEM APONTAMENTO. Verificar.');
 
@@ -200,7 +208,7 @@ assert.equal(policy.notificar({ notificarCategorias: { rpm: false } }, { regra: 
 assert.equal(policy.notificar({ notificarCategorias: { aguardandoCaminhao: false } }, { regra: 'aguardandoCaminhao' }), false);
 const speedWhileWaiting = { regra: 'velocidade', tipoAlarme: '5', numero: '8833', valor: 85, e: { tipo: 'Trator', operacao: 'Aguardando Caminhão', frente: 'Frente teste' } };
 assert.equal(policy.notificar({ notificarCategorias: { aguardandoCaminhao: false } }, speedWhileWaiting), true);
-assert.equal(policy.montarFala(speedWhileWaiting), 'Veículo oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.');
+assert.equal(policy.montarFala(speedWhileWaiting), 'Trator oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.');
 assert.equal(policy.aplicarGlossario('Veículo Caminhões Canavieiro Terc'), 'Veículo Caminhões Canavieiro Terceiro');
 assert.equal(policy.aplicarGlossario('Terc', { glossarioFala: 'Terc=Terceiro' }), 'Terceiro');
 assert.equal(policy.notificar({}, { regra: 'aguardandoBasculamento' }), true);

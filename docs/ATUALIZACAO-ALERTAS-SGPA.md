@@ -162,3 +162,7 @@ Nova seção “Controle de refeições” nas configurações da Central. Cada 
 ## Publicação verificada da versão 1.8.4 — 24/11/2026
 
 A versão **1.8.4** do commit `76b0c40` foi publicada no site Netlify existente `https://sgpa-solinftec-bpa.netlify.app/`. O deploy `6b059e8df5f32e6a061c7aa1` foi confirmado como **ready** em contexto **production**. O deploy manteve as sete Functions e o agendamento `push-monitor` (`* * * * *`). `index.html`, `alerts.js`, `alerts-policy.js` e `sw.js` responderam HTTP 200; os hashes SHA-256 dos quatro arquivos servidos coincidiram com os arquivos validados localmente. O motor servido é 1.8.4 e o cache PWA é `bperes-shell-v41`.
+
+## Versão 1.8.5 — classe correta na fala de velocidade
+
+Alarmes de velocidade oficiais agora usam a classe já identificada para o equipamento no próprio cartão. Assim, tratores são anunciados como “Trator 32308…”, enquanto equipamentos classificados como veículo continuam como “Veículo 6614…”. O comportamento se aplica tanto quando o SGPA informa a velocidade quanto quando a medição está ausente ou chega da telemetria; códigos de velocidade com fala específica também preservam a classe do equipamento. O cache PWA passa a `bperes-shell-v42`. Testes unitários e integrados verificam trator e veículo com/sem medição; fixture-only, sem chamadas ou gravações de produção.

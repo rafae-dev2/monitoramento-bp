@@ -184,7 +184,7 @@ with sync_playwright() as pw:
       const a = {cdEquipamento:row.cdEquipamento, cdId:'EPISODIO-1', cdTpAlarme:5, descTpAlarme:'VELOCIDADE', vlAlarme:85, fgOnline:true};
       t.espelharAlarmes([a]);
       ok(api.ativos().length===1 && api.ativos()[0].fonte==='portal', 'alarme oficial gera alerta');
-      ok(api.ativos()[0].fala==='Veículo zero zero oito três excedeu a velocidade a 85 quilômetros por hora. Verificar.', 'fala oficial preserva zeros e valor normal');
+      ok(api.ativos()[0].fala==='Trator zero zero oito três excedeu a velocidade a 85 quilômetros por hora. Verificar.', 'fala oficial usa a classe Trator e preserva zeros e valor normal');
       const n = api.historico().length;
       t.processarQuadros([{type:'alarme',cdEquipamento:row.cdEquipamento,cdTpAlarme:5,descAlarme:'VELOCIDADE',fgOnline:true}]);
       ok(api.historico().length===n && api.ativos()[0].valor===85, 'stream e REST não duplicam nem apagam medição');
@@ -616,7 +616,7 @@ with sync_playwright() as pw:
     }""")
     assert local_measure == {
         'valor': 77, 'fonte': 'telemetria SGPA',
-        'fala': 'Veículo zero zero sete sete excedeu a velocidade a 77 quilômetros por hora. Verificar.'
+        'fala': 'Trator zero zero sete sete excedeu a velocidade a 77 quilômetros por hora. Verificar.'
     }, local_measure
     print('OK: alarme oficial sem valor usa apenas a telemetria SGPA recente')
 
