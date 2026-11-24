@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.6.2';
+  const VERSAO = '1.6.3';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -2408,7 +2408,46 @@
 
   function fecharCard(d) {
     d.classList.add('saindo');
-    setTimeout(() => d.remove(), 200);
+    setTimeout(() => { d.remove(); atualizarBotaoLimparToasts(); }, 200);
+  }
+  let listenerResizeLimparToasts = false;
+  function prepararBotaoLimparToasts() {
+    if (!el.toasts) return null;
+    if (!listenerResizeLimparToasts) {
+      window.addEventListener('resize', atualizarBotaoLimparToasts);
+      listenerResizeLimparToasts = true;
+    }
+    let b = document.getElementById('btn-limpar-toasts');
+    if (b) return b;
+    b = document.createElement('button');
+    b.type = 'button';
+    b.id = 'btn-limpar-toasts';
+    b.className = 'toast-limpar hide';
+    b.setAttribute('aria-label', 'Limpar todas as notificações flutuantes; os alertas continuam na Central e no histórico');
+    b.title = 'Limpa somente as notificações flutuantes; mantém alertas ativos e histórico';
+    b.textContent = 'Limpar tudo';
+    b.addEventListener('click', limparToasts);
+    document.body.appendChild(b);
+    return b;
+  }
+  function atualizarBotaoLimparToasts() {
+    if (!el.toasts) return;
+    const b = document.getElementById('btn-limpar-toasts');
+    if (!b) return;
+    const temCards = !!el.toasts.querySelector('.toast, .aviso');
+    b.classList.toggle('hide', !temCards);
+    if (!temCards) return;
+    const r = el.toasts.getBoundingClientRect();
+    const w = b.getBoundingClientRect().width || 96;
+    b.style.top = Math.max(4, r.top + 3) + 'px';
+    b.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.right - w)) + 'px';
+    b.style.right = 'auto';
+  }
+  function limparToasts() {
+    if (!el.toasts) return;
+    el.toasts.querySelectorAll('.toast, .aviso').forEach((cardFlutuante) => cardFlutuante.remove());
+    el.toasts.scrollTop = 0;
+    atualizarBotaoLimparToasts();
   }
 
   function correspondeBuscaCentral(campos) {
@@ -2468,6 +2507,7 @@
 
   function mostrarToast(a, silenciado) {
     if (!el.toasts) return;
+    prepararBotaoLimparToasts();
     const d = card(a, !silenciado);
     d.classList.add('toast');
     if (silenciado) d.classList.add('mudo');
@@ -2478,11 +2518,9 @@
     barra.style.animationDuration = (a.severidade >= 3 ? 26 : 18) + 's';
     d.appendChild(barra);
     const maxVisiveis = Math.max(4, Math.min(8, Math.floor(innerHeight / 120))); // retém mais notificações; a área continua rolável
-    while (el.toasts.children.length > maxVisiveis) {
-      const alvo = el.toasts.firstElementChild;
-      if (alvo.classList.contains('aviso')) break;
-      alvo.remove();
-    }
+    const cardsFlutuantes = () => Array.from(el.toasts.children).filter((n) => n.matches('.toast, .aviso'));
+    while (cardsFlutuantes().length > maxVisiveis) cardsFlutuantes()[0].remove();
+    atualizarBotaoLimparToasts();
     rolarToastMaisNovo();
     const t = setTimeout(() => fecharCard(d), (a.severidade >= 3 ? 26 : 18) * 1000);
     d.addEventListener('mouseenter', () => {
@@ -2503,10 +2541,12 @@
 
   function mostrarAviso(txt, tipo) {
     if (!el.toasts) return;
+    prepararBotaoLimparToasts();
     const d = document.createElement('div');
     d.className = 'aviso ' + (tipo || '');
     d.textContent = txt;
     el.toasts.appendChild(d);
+    atualizarBotaoLimparToasts();
     rolarToastMaisNovo();
     setTimeout(() => fecharCard(d), 4200);
   }

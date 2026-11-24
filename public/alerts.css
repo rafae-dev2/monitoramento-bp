@@ -741,6 +741,8 @@ button.mudo {
 }
 
 #toasts {
+  box-sizing: border-box;
+  padding-top: 42px; /* espaço visual para o botão que acompanha o topo da pilha */
   max-height: calc(100vh - 70px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   max-height: calc(100dvh - 70px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   overflow-x: hidden;
@@ -1053,3 +1055,16 @@ button.mudo {
 #cfg-glossario-previa { padding: 9px 11px; border-left: 3px solid #f0cc0c; background: rgba(240,204,12,.07); border-radius: 4px 9px 9px 4px; }
 
 /* A área rolável sobe até imediatamente abaixo do cabeçalho, inclusive em telas baixas. */
+
+/* Ação da pilha de notificações: limpa apenas os pop-ups, nunca alertas/histórico. */
+#btn-limpar-toasts {
+  pointer-events: auto;
+  position: fixed; top: 4px; right: 14px; z-index: 41;
+  min-height: 32px; padding: 6px 11px; border-radius: 9px;
+  border: 1px solid rgba(240, 204, 12, .45);
+  background: rgba(17, 27, 36, .96); color: #ffe680;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+  box-shadow: 0 5px 14px rgba(0, 0, 0, .32);
+}
+#btn-limpar-toasts:hover { background: #273744; border-color: #f0cc0c; }
+#btn-limpar-toasts.hide { display: none !important; }

@@ -533,8 +533,8 @@ with sync_playwright() as pw:
     toast_layout = page.evaluate("""() => {
       const box = document.querySelector('#toasts');
       const r = box.getBoundingClientRect();
-      const newest = box.lastElementChild.getBoundingClientRect();
-      return {count:box.children.length,top:r.top,bottom:r.bottom,left:r.left,right:r.right,
+      const newest = box.querySelector('.toast:last-child').getBoundingClientRect();
+      return {count:box.querySelectorAll('.toast').length,top:r.top,bottom:r.bottom,left:r.left,right:r.right,
         scrollHeight:box.scrollHeight,clientHeight:box.clientHeight,scrollTop:box.scrollTop,
         newestTop:newest.top,newestBottom:newest.bottom,active:MonitoramentoAlertas.ativos().length,history:__test.historico().length};
     }""")
@@ -561,6 +561,15 @@ with sync_playwright() as pw:
     assert desktop_toasts['top'] <= 75 and desktop_toasts['height'] >= desktop_toasts['vh'] * 0.88, desktop_toasts
     assert desktop_toasts['scrollHeight'] > desktop_toasts['height'] and desktop_toasts['top'] >= 0 and desktop_toasts['bottom'] <= desktop_toasts['vh'], desktop_toasts
     print('OK: área das notificações chega perto do cabeçalho em celular e computador:', mobile_toasts['height'], desktop_toasts['height'])
+    assert page.locator('#btn-limpar-toasts').is_visible(), 'botão Limpar tudo deve aparecer com notificações'
+    assert page.locator('#toasts .toast').first.locator('.barra').count() == 1, 'timer visual de desaparecimento automático permanece'
+    page.evaluate('MonitoramentoAlertas.fecharPainel()')
+    page.click('#btn-limpar-toasts')
+    assert page.locator('#toasts .toast, #toasts .aviso').count() == 0, 'Limpar tudo remove apenas cartões flutuantes'
+    assert page.locator('#btn-limpar-toasts').evaluate("el => el.classList.contains('hide')"), 'botão some quando não há pop-ups'
+    assert page.evaluate('MonitoramentoAlertas.ativos().length') == 7, 'alertas continuam ativos na Central'
+    assert len(page.evaluate('__test.historico()')) == 7, 'histórico não é removido'
+    print('OK: Limpar tudo remove só os pop-ups; alertas ativos e histórico permanecem, timer automático inalterado')
 
     page.set_viewport_size({'width': 412, 'height': 915})
     page.evaluate("""() => {
