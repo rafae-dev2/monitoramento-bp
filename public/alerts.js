@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.4.0';
+  const VERSAO = '1.5.0';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -2042,17 +2042,19 @@
       <div class="push-acoes"><button id="push-ativar" class="primary" type="button">Ativar notificações Push neste aparelho</button><button id="push-desligar" class="push-desligar hide" type="button">Desligar notificações Push neste aparelho</button></div>
     </section>
     <p class="rotulo">Quais alertas devem notificar</p>
+    <div class="busca-modulo"><input id="cfg-busca-categoria" type="search" placeholder="Pesquisar alerta (ex.: fila, velocidade, refeição)" aria-label="Pesquisar alertas" autocomplete="off"></div>
     <div id="cfg-categorias" class="alert-switch-list"></div>
+    <p id="cfg-categorias-vazio" class="busca-vazia hide">Nenhum alerta encontrado.</p>
     <details class="catalogo-detalhes">
       <summary>Escolher tipos individuais do SGPA</summary>
       <p id="cfg-catalogo-status" class="fine">Carregando catálogo auditado…</p>
-      <label class="campo"><span>Buscar por nome ou código oficial</span><input id="cfg-busca-tipo" type="search" placeholder="Velocidade, motor, desvio de rota…"></label>
+      <label class="campo"><span>Buscar por nome ou código oficial</span><input id="cfg-busca-tipo" type="search" placeholder="Pesquisar por nome ou código (ex.: velocidade, 12724)" autocomplete="off"></label>
       <div class="catalogo-filtros"><label class="chk"><input id="cfg-todos-tipos" type="checkbox"><span>Mostrar catálogo geral, não só tipos utilizados/conhecidos</span></label><button id="cfg-atualizar-catalogo" type="button">Atualizar SGPA</button></div>
       <p class="fine">Um tipo marcado individualmente recebe aviso mesmo se a categoria geral estiver desligada; a fala depende da chave “Falar alerta em português”. Desmarque para silenciar o código. O catálogo geral não significa que todos esses alarmes estão configurados para esta unidade.</p>
       <div id="cfg-tipos" class="alert-switch-list catalogo-lista"></div>
       <button id="cfg-mais-tipos" type="button" class="hide">Mostrar mais tipos</button>
     </details>
-    <details class="catalogo-detalhes"><summary>Regras auditadas da unidade</summary><p id="cfg-regras-status" class="fine"></p><div id="cfg-regras-auditadas" class="regras-auditadas"></div><p class="fine">Inventário para consulta. As expressões permanecem executadas pelo SGPA, sem recriar condições ambíguas no aplicativo.</p></details>
+    <details class="catalogo-detalhes"><summary>Regras auditadas da unidade</summary><p id="cfg-regras-status" class="fine"></p><div class="busca-modulo"><input id="cfg-busca-regra" type="search" placeholder="Pesquisar regra, tipo de equipamento ou condição" aria-label="Pesquisar regras auditadas" autocomplete="off"></div><p id="cfg-regras-contagem" class="busca-contagem"></p><div id="cfg-regras-auditadas" class="regras-auditadas"></div><p class="fine">Inventário para consulta. As expressões permanecem executadas pelo SGPA, sem recriar condições ambíguas no aplicativo.</p></details>
     <h3 class="secao-alertas">Leitura e cálculos complementares</h3>
     <p class="fine">RPM, ociosidade e troca de turno podem ter cálculo local complementar. Se o motor estiver ocioso e a descrição atual da operação SGPA confirmar “Sem Apontamento”, a central registra um alerta local combinado após o tempo configurado. Só esse alerta confirmado pode ser falado; não gera notificação do sistema, som, vibração ou pop-up. Os demais cálculos locais ficam na central/histórico sem fala nem notificação. A espera por caminhão usa a operação da telemetria mesmo com esses cálculos desligados.</p>
     <div class="grade">
@@ -2210,6 +2212,8 @@
     };
     $('cfg-teste2').onclick = () => falar(policy.montarFala({ regra: 'velocidade', numero: '8833', valor: 85 }));
     $('cfg-busca-tipo').oninput = () => { limiteTipos = 80; renderTipos(); };
+    if ($('cfg-busca-categoria')) $('cfg-busca-categoria').oninput = filtrarCategorias;
+    if ($('cfg-busca-regra')) $('cfg-busca-regra').oninput = filtrarRegras;
     $('cfg-todos-tipos').onchange = () => { limiteTipos = 80; renderTipos(); };
     $('cfg-mais-tipos').onclick = () => { limiteTipos += 80; renderTipos(); };
     $('cfg-atualizar-catalogo').onclick = atualizarCatalogo;
@@ -2527,6 +2531,7 @@
         renderTipos();
       }));
     }
+    filtrarCategorias();
     renderTipos();
     const status = $('cfg-regras-status');
     if (status) status.textContent = `${catalogo.totalRegras || 0} regras e ${catalogo.totalExpressoes || 0} expressões auditadas em ${catalogo.auditadoEm || '23/11/2026'}. Não são o catálogo geral de tipos.`;
@@ -2542,8 +2547,31 @@
       d.append(strong, small);
       regras.appendChild(d);
     }
+    filtrarRegras();
   }
 
+  function filtrarLista(box, termo) {
+    const q = norm(termo || '').trim();
+    let vis = 0;
+    if (!box) return { vis, total: 0 };
+    const itens = Array.from(box.children);
+    for (const it of itens) {
+      const ok = !q || q.split(/\s+/).every((p) => norm(it.textContent).includes(p));
+      it.classList.toggle('hide', !ok);
+      if (ok) vis++;
+    }
+    return { vis, total: itens.length };
+  }
+  function filtrarCategorias() {
+    const r = filtrarLista($('cfg-categorias'), ($('cfg-busca-categoria') || {}).value);
+    const v = $('cfg-categorias-vazio');
+    if (v) v.classList.toggle('hide', r.vis > 0 || !r.total);
+  }
+  function filtrarRegras() {
+    const r = filtrarLista($('cfg-regras-auditadas'), ($('cfg-busca-regra') || {}).value);
+    const c = $('cfg-regras-contagem');
+    if (c) c.textContent = r.total ? `Mostrando ${r.vis} de ${r.total} regras` : '';
+  }
   function renderTipos() {
     const box = $('cfg-tipos');
     if (!box) return;

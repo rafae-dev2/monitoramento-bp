@@ -431,6 +431,20 @@ with sync_playwright() as pw:
     page.click('#btn-cfg')
     page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 11")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
+    page.fill('#cfg-busca-categoria', 'fila')
+    vis = page.evaluate("[...document.querySelectorAll('#cfg-categorias > *')].filter(x => !x.classList.contains('hide')).length")
+    assert 1 <= vis < 11, f'busca de categorias deve filtrar ({vis})'
+    page.fill('#cfg-busca-categoria', 'xyzinexistente')
+    assert page.locator('#cfg-categorias-vazio').is_visible(), 'mensagem de nenhum alerta'
+    page.fill('#cfg-busca-categoria', '')
+    page.evaluate("document.querySelectorAll('details.catalogo-detalhes').forEach(d => d.open = true)")
+    page.fill('#cfg-busca-regra', 'velocidade')
+    txt = page.locator('#cfg-regras-contagem').text_content()
+    assert txt.startswith('Mostrando'), txt
+    page.screenshot(path='/tmp/busca.png')
+    page.fill('#cfg-busca-regra', '')
+    page.evaluate("document.querySelectorAll('details.catalogo-detalhes').forEach(d => d.open = false)")
+    print('OK: barras de pesquisa em Quais alertas devem notificar e Regras auditadas:', txt)
     page.locator('.catalogo-detalhes').first.locator('summary').click()
     page.fill('#cfg-busca-tipo','12480')
     assert page.locator('#cfg-tipos input[role=switch]').count()==1

@@ -26,16 +26,19 @@
   <body>
     <header id="bar">
       <div id="brand">
-        <img id="brand-logo" src="/icons/logo-mark.png" alt="Branco Peres" width="30" height="30" />
-        <span id="brand-nome">Monitoramento <b>BP</b></span>
+        <span class="brand-ring"><img id="brand-logo" src="/icons/logo-mark.png" alt="Branco Peres" width="34" height="34" /></span>
+        <span class="brand-text">
+          <span id="brand-nome">Monitoramento <b>BP</b></span>
+          <span class="brand-sub">Branco Peres · Centro de Operações Agrícolas</span>
+        </span>
         <span id="who"></span>
       </div>
       <div id="session-status" class="hide" role="status" aria-live="polite" aria-atomic="true"></div>
       <div id="actions">
         <button id="btn-install" class="hide" title="Instalar este app">Instalar</button>
-        <button id="btn-alertas" title="Central de alertas" aria-label="Central de alertas">🔔<span id="alert-badge" class="hide"></span></button>
-        <button id="btn-reload" title="Recarregar o mapa" aria-label="Recarregar">⟳</button>
-        <button id="btn-menu" title="Opções" aria-label="Opções">⚙</button>
+        <button id="btn-alertas" class="icon-btn" title="Central de alertas" aria-label="Central de alertas"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span id="alert-badge" class="hide"></span></button>
+        <button id="btn-reload" class="icon-btn" title="Recarregar o mapa" aria-label="Recarregar"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+        <button id="btn-menu" class="icon-btn" title="Opções" aria-label="Opções"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       </div>
     </header>
 

@@ -1013,3 +1013,20 @@ button.mudo {
 .refeicao-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,.04); }
 .refeicao-item span { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: .92em; }
 .refeicao-item select { flex: 0 0 auto; min-width: 120px; }
+
+/* barras de pesquisa dos módulos de alertas (v1.5.0) */
+.busca-modulo { position: relative; margin: 6px 0 8px; }
+.busca-modulo input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px 9px 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%2393a4b3' stroke-width='2' viewBox='0 0 24 24'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") no-repeat 11px center;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+}
+.busca-modulo input:focus { outline: none; border-color: rgba(240, 204, 12, 0.55); }
+.busca-contagem { font-size: 11px; opacity: 0.7; margin: 2px 2px 0; }
+.busca-vazia { font-size: 12px; opacity: 0.7; padding: 8px 2px; }
