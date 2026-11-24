@@ -157,6 +157,13 @@ assert.equal(
   }),
   'Caminhão quatro quatro dois seis aguardando carregamento há 31 minutos, se encontra na Frente 1. Verificar.'
 );
+const falaFazendaFundo25 = policy.montarFala({
+  regra: 'paradaImprodutiva', paradaId: 'aguardandoCarregamento', paradaNome: 'Aguardando carregamento (caminhão)',
+  numero: '4426', classe: 'Caminhão', valor: 31,
+  e: { tipo: 'CAMINHÕES CANAVIEIRO TERC', frente: 'Fazenda Fundo 25' }
+});
+assert.equal(falaFazendaFundo25, 'Caminhão quatro quatro dois seis aguardando carregamento há 31 minutos, se encontra na Fazenda Fundo 25. Verificar.');
+assert.doesNotMatch(falaFazendaFundo25, /dentro da usina/i);
 const semFrenteColheita = policy.montarFala({
   regra: 'paradaImprodutiva', paradaId: 'aguardandoCarregamento', paradaNome: 'Aguardando carregamento (caminhão)',
   numero: '4426', classe: 'Caminhão', valor: 31,

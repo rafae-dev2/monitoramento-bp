@@ -498,7 +498,7 @@
       if (item.paradaId === 'aguardandoCarregamento' && caminhaoCanavieiroTerceiro(event)) {
         var frenteColheita = event.frente == null ? '' : String(event.frente).trim();
         var localColheita = frenteColheita
-          ? (/^frente\b/i.test(frenteColheita) ? 'na ' + frenteColheita : 'na frente de colheita ' + frenteColheita)
+          ? (/^(?:frente|fazenda|s[ií]tio|propriedade)\b/i.test(frenteColheita) ? 'na ' + frenteColheita : 'na frente de colheita ' + frenteColheita)
           : 'na frente de colheita não informada';
         return prefixo + 'Caminhão ' + vehicleNumber(item, event) + ' aguardando carregamento' +
           (mp ? ' há ' + String(mp) + (mp === 1 ? ' minuto' : ' minutos') : '') +

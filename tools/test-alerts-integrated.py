@@ -249,6 +249,15 @@ with sync_playwright() as pw:
       const falaCaminhaoCarregamento=api.ativos().find(a=>a.regra==='paradaImprodutiva' && a.e.id==='TRUCK-SPEECH-4426');
       ok(!!falaCaminhaoCarregamento && falaCaminhaoCarregamento.fala==='Caminhão quatro quatro dois seis aguardando carregamento há 31 minutos, se encontra na Frente 1. Verificar.','fala do caminhão 4426 pronuncia a frente de colheita real e não o grupo');
       t.reset();
+      const truckSpeechFazenda={...truckSpeech,cdEquipamento:'TRUCK-SPEECH-FUNDO-25',descFrente:'Fazenda Fundo 25'};
+      t.aplicarTelemetria([truckSpeechFazenda]);
+      const truckSpeechFazendaRow=t.frota().find(e=>e.id==='TRUCK-SPEECH-FUNDO-25');
+      const inicioParadaFazenda=Date.now();
+      t.regraParada(truckSpeechFazendaRow,inicioParadaFazenda);
+      t.regraParada(truckSpeechFazendaRow,inicioParadaFazenda+31*60_000);
+      const falaFazenda=api.ativos().find(a=>a.regra==='paradaImprodutiva' && a.e.id==='TRUCK-SPEECH-FUNDO-25');
+      ok(!!falaFazenda && falaFazenda.fala.includes('na Fazenda Fundo 25') && !falaFazenda.fala.toLowerCase().includes('dentro da usina'),'fala do caminhão informa Fazenda Fundo 25 em vez de dizer dentro da usina');
+      t.reset();
       const grupoSemFrente={...truckSpeech,cdEquipamento:'TRUCK-GROUP-FRONT',descGrupoEquipamento:'Frente 3'};
       delete grupoSemFrente.descFrente;
       t.aplicarTelemetria([grupoSemFrente]);
