@@ -254,9 +254,11 @@
       if (Object.prototype.hasOwnProperty.call(eq, semZeros)) return eq[semZeros];
     }
     var grupos = isObject(cfg.refeicaoGrupos) ? cfg.refeicaoGrupos : {};
-    var frente = norm(e.frente);
-    for (var g in grupos) {
-      if (Object.prototype.hasOwnProperty.call(grupos, g) && norm(g) === frente) return Math.max(0, Number(grupos[g]) || 0);
+    var locais = [e.grupoEquipamento, e.frente].filter(function (v) { return v != null && String(v).trim() !== ''; }).map(norm);
+    for (var l = 0; l < locais.length; l += 1) {
+      for (var g in grupos) {
+        if (Object.prototype.hasOwnProperty.call(grupos, g) && norm(g) === locais[l]) return Math.max(0, Number(grupos[g]) || 0);
+      }
     }
     return 0;
   }
@@ -430,20 +432,26 @@
   function montarFala(alert, cfg) {
     return aplicarGlossario(montarFalaBase(alert), cfg);
   }
+  function frenteOuGrupo(event) {
+    var frente = event && event.frente;
+    if (frente != null && String(frente).trim() !== '') return String(frente).trim();
+    var grupo = event && event.grupoEquipamento;
+    if (grupo != null && String(grupo).trim() !== '') return String(grupo).trim();
+    return 'frente não informada';
+  }
   function montarFalaBase(alert) {
     var item = isObject(alert) ? alert : {};
     var event = eventFor(item);
     var selectedCategory = categoryFromAlert(item);
 
     if (selectedCategory === 'aguardandoCaminhao' || (!item.regra && !item.categoria && !codeFromAlert(item) && aguardandoCaminhao(event))) {
-      var front = event.frente;
-      if (front == null || String(front).trim() === '') front = 'frente não informada';
+      var front = frenteOuGrupo(event);
       return 'Trator ' + vehicleNumber(item, event) + ' aguardando caminhão. Frente/grupo ' + String(front).trim() + '. Verificar.';
     }
 
     if (selectedCategory === 'aguardandoBasculamento') {
       var truckIds = Array.isArray(item.caminhoes) ? item.caminhoes.map(function (id) { return idFalado(id); }).filter(Boolean) : [];
-      var basculamentoFrente = event.frente == null || String(event.frente).trim() === '' ? 'frente não informada' : String(event.frente).trim();
+      var basculamentoFrente = frenteOuGrupo(event);
       var truckText = truckIds.length > 1
         ? 'os caminhões ' + truckIds.join(', ') + ' estão aguardando carregamento na mesma frente'
         : truckIds.length === 1
@@ -454,7 +462,7 @@
     }
 
     if (selectedCategory === 'frenteDividida') {
-      var frenteDividida = event.frente == null || String(event.frente).trim() === '' ? 'frente não informada' : String(event.frente).trim();
+      var frenteDividida = frenteOuGrupo(event);
       var tipoFrenteDividida = norm([event.tipo, event.tipoCompleto, event.nome].filter(Boolean).join(' '));
       var classeFrenteDividida = item.classe || (/transbordo/.test(tipoFrenteDividida) ? 'Transbordo' : 'Trator');
       return 'Atenção COA: ' + classeFrenteDividida + ' ' + vehicleNumber(item, event) +
@@ -462,8 +470,7 @@
     }
 
     if (selectedCategory === 'refeicao') {
-      var fr = event.frente;
-      if (fr == null || String(fr).trim() === '') fr = 'frente não informada';
+      var fr = frenteOuGrupo(event);
       var vc = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
       var dur = numericAlertValue(item.valor);
       var lim = numericAlertValue(item.limite);
@@ -473,12 +480,21 @@
         '. Frente/grupo ' + String(fr).trim() + '. Verificar.';
     }
     if (selectedCategory === 'paradaImprodutiva') {
-      var fp = event.frente;
-      if (fp == null || String(fp).trim() === '') fp = 'frente não informada';
+      var fp = frenteOuGrupo(event);
       var cp = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
       var mp = numericAlertValue(item.valor);
       var prefixo = item.nivel >= 3 ? 'Escalonamento. ' : item.nivel === 2 ? 'Urgente, parada continua. ' : '';
       var sufixo = item.nivel >= 3 ? ' Acionar ' + (item.lider ? 'líder ' + item.lider : 'líder da frente') + '.' : '';
+      var tipoParada = norm([item.classe, event.tipo, event.tipoCompleto, event.nome].filter(Boolean).join(' '));
+      if (item.paradaId === 'aguardandoCarregamento' && /caminh(?:ao|oes)/.test(tipoParada)) {
+        var frenteColheita = event.frente == null ? '' : String(event.frente).trim();
+        var localColheita = frenteColheita
+          ? (/^frente\b/i.test(frenteColheita) ? 'na ' + frenteColheita : 'na frente de colheita ' + frenteColheita)
+          : 'na frente de colheita não informada';
+        return prefixo + 'Caminhão ' + vehicleNumber(item, event) + ' aguardando carregamento' +
+          (mp ? ' há ' + String(mp) + (mp === 1 ? ' minuto' : ' minutos') : '') +
+          ', se encontra ' + localColheita + '.' + (sufixo || ' Verificar.');
+      }
       return prefixo + cp + ' ' + vehicleNumber(item, event) + ' em ' + String(item.paradaNome || 'parada improdutiva').replace(/\s*\(\d+\)/, '') +
         (mp ? ' há ' + String(mp) + (mp === 1 ? ' minuto' : ' minutos') : '') +
         '. Frente/grupo ' + String(fp).trim() + '.' + (sufixo || ' Verificar.');
@@ -489,8 +505,7 @@
         (item.lider ? ' Líder ' + item.lider + '.' : '') + ' Verificar.';
     }
     if (selectedCategory === 'semApontamento') {
-      var frente = event.frente;
-      if (frente == null || String(frente).trim() === '') frente = 'frente não informada';
+      var frente = frenteOuGrupo(event);
       var vClass = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
       var minutos = numericAlertValue(item.valor);
       return vClass + ' ' + vehicleNumber(item, event) + ' sem apontamento' +

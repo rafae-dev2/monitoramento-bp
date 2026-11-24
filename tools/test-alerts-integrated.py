@@ -16,7 +16,7 @@ hooks = """
   const chamarReal = chamar;
   const avaliarFrotaReal = avaliarFrota;
   window.__test = {
-    aplicarTelemetria, avaliarFrota, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, regraFrenteDividida, regrasFrente, enviarAudit, ciclo, abrirNoMapa, timestampEquipamento,
+    aplicarTelemetria, avaliarFrota, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, regraParada, regraFrenteDividida, regrasFrente, enviarAudit, ciclo, abrirNoMapa, timestampEquipamento,
     frota: () => [...frota.values()],
     setCtx: (v) => { ctx = Object.assign(ctx, v); },
     setChamar: (fn) => { chamar = fn; },
@@ -28,6 +28,7 @@ hooks = """
       chamar = chamarReal; avaliarFrota = avaliarFrotaReal;
       frota.clear(); estados.clear(); ativos.clear(); hist = []; filaAudit.length = 0;
       gestaoUltimoDisparo.clear();
+      paradaAtual.clear();
       cfg = policy.normalizeCfg(JSON.parse(JSON.stringify(PADRAO)));
       cfg.popup = false; cfg.som = false; cfg.voz = false; cfg.vibrar = false; cfg.usarStream = false; cfg.notificacao = false;
       rajada = {ts: 0, voz: 0};
@@ -152,7 +153,7 @@ with sync_playwright() as pw:
       const checks = [];
       const ok = (v, name) => { if (!v) throw new Error(name); checks.push(name); };
       const api = MonitoramentoAlertas, t = __test;
-      const row = {cdEquipamento:'TESTE-01', descEquipamento:'0083 - Trator fixture', descTpEquipamento:'TRATOR', descGrupoEquipamento:'Frente fixture', descOperacao:'Operação fixture', vlVelocidade:85, vlParametro4:0, vlEd1:'0', vlTempoSemComunicacao:'0 DIA(S) 00:00:00', fgMonitoramentoAtivo:'T', dtHrLocal:new Date().toISOString()};
+      const row = {cdEquipamento:'TESTE-01', descEquipamento:'0083 - Trator fixture', descTpEquipamento:'TRATOR', descFrente:'Frente fixture', descGrupoEquipamento:'Frente fixture', descOperacao:'Operação fixture', vlVelocidade:85, vlParametro4:0, vlEd1:'0', vlTempoSemComunicacao:'0 DIA(S) 00:00:00', fgMonitoramentoAtivo:'T', dtHrLocal:new Date().toISOString()};
       const instanteTenant=Date.now();
       const parteTenant=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/Sao_Paulo',calendar:'gregory',numberingSystem:'latn',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(instanteTenant)).filter(p=>p.type!=='literal').map(p=>[p.type,p.value]));
       const arrayTenant=[parteTenant.year,parteTenant.month,parteTenant.day,parteTenant.hour,parteTenant.minute,parteTenant.second].map(Number);
@@ -238,18 +239,40 @@ with sync_playwright() as pw:
       ok(!api.ativos().some(a=>a.regra==='frenteDividida'),'Frente dividida em caminhão não entra na regra de trator/transbordo');
 
       t.reset();
-      const frenteCana='Caminhões Canavieiro Terc';
-      const caminhaoFila={...row,cdEquipamento:'TRUCK-4451',descEquipamento:'4451 - Caminhão Canavieiro',descTpEquipamento:'CAMINHÕES CANAVIEIRO TERC',descGrupoEquipamento:frenteCana,cdOperacao:908,descOperacao:'908 - Aguardando Carregamento'};
-      const trator905={...row,cdEquipamento:'TRACTOR-8833',descEquipamento:'8833 - Trator fixture',descTpEquipamento:'TRATOR',descGrupoEquipamento:frenteCana,cdOperacao:905,descOperacao:'905 - Aguardando Caminhão'};
+      const truckSpeech={...row,cdEquipamento:'TRUCK-SPEECH-4426',descEquipamento:'4426 - Caminhão Canavieiro',descTpEquipamento:'CAMINHÕES CANAVIEIRO TERC',descFrente:'Frente 1',descGrupoEquipamento:'Caminhões Canavieiro Terc',cdOperacao:908,descOperacao:'908 - Aguardando Carregamento'};
+      t.aplicarTelemetria([truckSpeech]);
+      const truckSpeechRow=t.frota().find(e=>e.id==='TRUCK-SPEECH-4426');
+      ok(truckSpeechRow.frente==='Frente 1' && truckSpeechRow.grupoEquipamento==='Caminhões Canavieiro Terc','descFrente real fica separado do grupo cadastral do caminhão');
+      const inicioParadaCaminhao=Date.now();
+      t.regraParada(truckSpeechRow,inicioParadaCaminhao);
+      t.regraParada(truckSpeechRow,inicioParadaCaminhao+31*60_000);
+      const falaCaminhaoCarregamento=api.ativos().find(a=>a.regra==='paradaImprodutiva' && a.e.id==='TRUCK-SPEECH-4426');
+      ok(!!falaCaminhaoCarregamento && falaCaminhaoCarregamento.fala==='Caminhão quatro quatro dois seis aguardando carregamento há 31 minutos, se encontra na Frente 1. Verificar.','fala do caminhão 4426 pronuncia a frente de colheita real e não o grupo');
+      t.reset();
+      const grupoSemFrente={...truckSpeech,cdEquipamento:'TRUCK-GROUP-FRONT',descGrupoEquipamento:'Frente 3'};
+      delete grupoSemFrente.descFrente;
+      t.aplicarTelemetria([grupoSemFrente]);
+      const caminhaoSemFrente=t.frota().find(e=>e.id==='TRUCK-GROUP-FRONT');
+      ok(caminhaoSemFrente.frente==='' && caminhaoSemFrente.grupoEquipamento==='Frente 3','grupo cadastral chamado Frente 3 não substitui o campo descFrente ausente');
+      const inicioSemFrente=Date.now();
+      t.regraParada(caminhaoSemFrente,inicioSemFrente); t.regraParada(caminhaoSemFrente,inicioSemFrente+31*60_000);
+      const falaSemFrente=api.ativos().find(a=>a.regra==='paradaImprodutiva' && a.e.id==='TRUCK-GROUP-FRONT');
+      ok(!!falaSemFrente && falaSemFrente.fala.includes('frente de colheita não informada') && !falaSemFrente.fala.includes('Frente 3'),'fala não trata o nome de grupo Frente 3 como frente de colheita');
+      t.reset();
+      const frenteCana='Frente 2', grupoCaminhoes='Caminhões Canavieiro Terc';
+      const caminhaoFila={...row,cdEquipamento:'TRUCK-4451',descEquipamento:'4451 - Caminhão Canavieiro',descTpEquipamento:'CAMINHÕES CANAVIEIRO TERC',descFrente:frenteCana,descGrupoEquipamento:grupoCaminhoes,cdOperacao:908,descOperacao:'908 - Aguardando Carregamento'};
+      const trator905={...row,cdEquipamento:'TRACTOR-8833',descEquipamento:'8833 - Trator fixture',descTpEquipamento:'TRATOR',descFrente:frenteCana,descGrupoEquipamento:'Tratores Transbordos',cdOperacao:905,descOperacao:'905 - Aguardando Caminhão'};
       t.aplicarTelemetria([caminhaoFila,trator905]);
       const tratorConsolidado=t.frota().find(e=>e.id==='TRACTOR-8833'), inicioCorrelacao=Date.now();
+      const caminhaoConsolidado=t.frota().find(e=>e.id==='TRUCK-4451');
+      ok(caminhaoConsolidado.frente==='Frente 2' && caminhaoConsolidado.grupoEquipamento===grupoCaminhoes,'caminhão conserva frente de colheita e grupo em campos distintos');
       t.regraAguardandoCaminhao(tratorConsolidado,inicioCorrelacao);
       ok(!api.ativos().some(a=>a.regra==='aguardandoCaminhao'),'caminhão em Aguardando Carregamento na mesma frente suprime o falso 905');
       ok(!api.ativos().some(a=>a.regra==='aguardandoBasculamento'),'basculamento inferido respeita tolerância de 15 minutos');
       t.regraAguardandoCaminhao(tratorConsolidado,inicioCorrelacao+16*60_000);
       const basculamento=api.ativos().find(a=>a.regra==='aguardandoBasculamento');
       ok(!!basculamento && basculamento.notificar && basculamento.texto.includes('inferido pelo app') && basculamento.detalhe.includes('905') && basculamento.detalhe.includes('nenhum apontamento foi alterado'),'correlação gera alerta de basculamento inferido sem alterar o SGPA');
-      ok(basculamento.fala.includes('caminhão quatro quatro cinco um') && basculamento.fala.includes('Frente/grupo Caminhões Canavieiro Terceiro') && basculamento.fala.includes('permanece Aguardando Caminhão'),'fala cita caminhão, frente, pronúncia de Terc e o apontamento original');
+      ok(basculamento.fala.includes('caminhão quatro quatro cinco um') && basculamento.fala.includes('Frente/grupo Frente 2') && basculamento.fala.includes('permanece Aguardando Caminhão'),'fala cita caminhão, Frente 2 e o apontamento original');
       t.reset();
       const streamTrator905={...trator905,cdEquipamento:'STREAM-TRACTOR',descFrente:frenteCana};
       const streamCaminhaoFila={...caminhaoFila,cdEquipamento:'STREAM-TRUCK',descFrente:frenteCana};
@@ -263,7 +286,7 @@ with sync_playwright() as pw:
       t.processarQuadros([streamCaminhaoSeparado]);
       ok(!api.ativos().some(a=>a.regra==='aguardandoCaminhao') && !api.ativos().some(a=>a.regra==='aguardandoBasculamento'),'caminhão recebido em lote posterior e na mesma frente suprime o 905 falso');
       t.reset();
-      const caminhaoOutraFrente={...caminhaoFila,descGrupoEquipamento:'Frente diferente'};
+      const caminhaoOutraFrente={...caminhaoFila,descFrente:'Frente 3'};
       t.aplicarTelemetria([caminhaoOutraFrente,trator905]);
       const tratorOutraFrente=t.frota().find(e=>e.id==='TRACTOR-8833');
       t.regraAguardandoCaminhao(tratorOutraFrente,Date.now()-10_000);
@@ -303,7 +326,8 @@ with sync_playwright() as pw:
       t.aplicarTelemetria(filaGestao); t.regrasFrente(inicioGestao);
       const historicoGestao=()=>api.historico().filter(a=>a.regra==='gestaoFrente').length;
       const toastsGestao=()=>[...document.querySelectorAll('.toast[data-chave]')].filter(c=>c.dataset.chave.includes('|gestao:')).length;
-      ok(historicoGestao()===1 && api.ativos().some(a=>a.regra==='gestaoFrente' && a.fala.includes('Terceiro')) && toastsGestao()===1,'Atenção gestão emite uma vez, abre um pop-up e pronuncia Terc como Terceiro');
+      const alertaGestao=api.ativos().find(a=>a.regra==='gestaoFrente');
+      ok(historicoGestao()===1 && !!alertaGestao && alertaGestao.fala.includes('Frente 2') && !alertaGestao.fala.includes('Caminhões Canavieiro Terceiro') && toastsGestao()===1,'Atenção gestão usa a frente de colheita, não o grupo cadastral, e abre um pop-up');
       t.regrasFrente(inicioGestao+15_000);
       ok(historicoGestao()===1,'cooldown de gestão impede repetição em leituras seguidas');
       t.aplicarTelemetria([{...filaGestao[0],descOperacao:'Transporte de cana'}]);
@@ -317,7 +341,7 @@ with sync_playwright() as pw:
       t.regrasFrente(inicioGestao+11*60_000+1);
       ok(!api.ativos().some(a=>a.regra==='gestaoFrente') && toastsGestao()===0 && api.historico().length===historicoAntesDesligar,'desligar gestão remove ativos/pop-ups e bloqueia novos alertas sem apagar histórico');
       t.reset(); api.configurar({calcularLocal:false});
-      const leve = {...row,cdEquipamento:'LEVE-6614',descEquipamento:'6614 - VEICULO LEVE - IVECO',descTpEquipamento:'VEICULO LEVE',descGrupoEquipamento:'VEICULO LEVE',descOperacao:'953 - Sem Apontamento',vlVelocidade:0};
+      const leve = {...row,descFrente:'',cdEquipamento:'LEVE-6614',descEquipamento:'6614 - VEICULO LEVE - IVECO',descTpEquipamento:'VEICULO LEVE',descGrupoEquipamento:'VEICULO LEVE',descOperacao:'953 - Sem Apontamento',vlVelocidade:0};
       feed(leve);
       ok(!api.ativos().some(x=>x.regra==='semApontamento'),'sem apontamento respeita tolerância de 5 minutos');
       t.avaliarFrota(Date.now()+4*60_000,'tempo');
@@ -331,7 +355,7 @@ with sync_playwright() as pw:
       ok(spOff && spOff.notificar===false, 'chave desligada mantém sem apontamento só na central');
       api.configurar({notificarCategorias:{semApontamento:true}});
       t.reset(); api.configurar({calcularLocal:false,refeicaoGrupos:{'APOIO':30,'LINHA AMARELA':60},refeicaoEquipamentos:'7001=45'});
-      const apoio = {...row,cdEquipamento:'AP-1',descEquipamento:'5001 - Caminhão apoio',descTpEquipamento:'CAMINHAO',descGrupoEquipamento:'APOIO',descOperacao:'820 - REFEIÇÃO',vlVelocidade:0};
+      const apoio = {...row,descFrente:'',cdEquipamento:'AP-1',descEquipamento:'5001 - Caminhão apoio',descTpEquipamento:'CAMINHAO',descGrupoEquipamento:'APOIO',descOperacao:'820 - REFEIÇÃO',vlVelocidade:0};
       const amarela = {...apoio,cdEquipamento:'LA-1',descEquipamento:'6001 - Pá carregadeira',descGrupoEquipamento:'LINHA AMARELA',descOperacao:'REFEIÇÃO (1 HORA)'};
       const excecao = {...amarela,cdEquipamento:'LA-2',descEquipamento:'7001 - Escavadeira'};
       const livre = {...apoio,cdEquipamento:'OUT-1',descEquipamento:'8001 - Outro',descGrupoEquipamento:'SEM CONTROLE'};
@@ -385,6 +409,10 @@ with sync_playwright() as pw:
       api.configurar({frentes:[]});
       t.espelharAlarmes([{cdEquipamento:'EQ-SEM-GRUPO',cdId:'SEM-GRUPO-1',cdTpAlarme:12480,descTpAlarme:'Alarme geral fixture',fgOnline:true}]);
       ok(api.ativos().some(a=>a.e.id==='EQ-SEM-GRUPO'), 'sem grupo selecionado, o escopo volta à unidade toda');
+      t.reset();
+      t.espelharAlarmes([{cdEquipamento:'GROUP-FRONT-ALARM',cdId:'GROUP-FRONT-1',cdTpAlarme:12480,descTpAlarme:'Alarme geral fixture',descGrupoEquipamento:'Frente 3',fgOnline:true}]);
+      const alertaGrupoFrente=api.ativos().find(a=>a.e.id==='GROUP-FRONT-ALARM');
+      ok(!!alertaGrupoFrente && alertaGrupoFrente.e.frente==='' && alertaGrupoFrente.e.grupoEquipamento==='Frente 3','alarme oficial não converte grupo cadastral Frente 3 em frente de colheita');
 
       t.reset(); t.capturarFalas(); window.__systemNotifications.length=0;
       api.configurar({calcularLocal:true,limiteRpm:1500,voz:true,notificacao:true,popup:false,som:false,vibrar:false});

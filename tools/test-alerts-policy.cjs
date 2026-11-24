@@ -83,6 +83,8 @@ assert.equal(policy.notificar({}, { e: { tipo: 'Transbordo', operacao: 'Aguardan
 assert.equal(policy.notificar({}, { regra: 'frenteDividida' }), true);
 assert.equal(policy.notificar({ notificarCategorias: { frenteDividida: false } }, { regra: 'frenteDividida' }), false);
 assert.equal(policy.notificar({ tiposNotificacao: { 41: false } }, { e: { codigo: 41, tipo: 'Trator', operacao: 'Aguardando Caminhao' } }), false);
+assert.equal(policy.limiteRefeicao({ refeicaoGrupos: { APOIO: 30, 'Frente 1': 60 } }, { frente: 'Frente 1', grupoEquipamento: 'APOIO' }), 30);
+assert.equal(policy.limiteRefeicao({ refeicaoGrupos: { 'Frente 1': 60 } }, { frente: 'Frente 1', grupoEquipamento: 'Caminhões Canavieiro Terc' }), 60);
 
 // Fala: identificador soletrado; valor da velocidade numérico arredondado; ausência não vira zero.
 assert.equal(policy.montarFala({ codigo: 2203, numero: '8833', valor: 85 }), 'Veículo oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.');
@@ -142,6 +144,21 @@ assert.equal(
   policy.montarFala({ numero: '12', e: { tipo: 'Transbordo', operacao: 'Aguardando Caminhao' } }),
   'Trator um dois aguardando caminhão. Frente/grupo frente não informada. Verificar.'
 );
+assert.equal(
+  policy.montarFala({
+    regra: 'paradaImprodutiva', paradaId: 'aguardandoCarregamento', paradaNome: 'Aguardando carregamento (caminhão)',
+    numero: '4426', classe: 'Caminhão', valor: 31,
+    e: { tipo: 'CAMINHÕES CANAVIEIRO TERC', frente: 'Frente 1', grupoEquipamento: 'Caminhões Canavieiro Terc' }
+  }),
+  'Caminhão quatro quatro dois seis aguardando carregamento há 31 minutos, se encontra na Frente 1. Verificar.'
+);
+const semFrenteColheita = policy.montarFala({
+  regra: 'paradaImprodutiva', paradaId: 'aguardandoCarregamento', paradaNome: 'Aguardando carregamento (caminhão)',
+  numero: '4426', classe: 'Caminhão', valor: 31,
+  e: { tipo: 'CAMINHÕES CANAVIEIRO TERC', grupoEquipamento: 'Frente 3' }
+});
+assert.match(semFrenteColheita, /frente de colheita não informada/);
+assert.doesNotMatch(semFrenteColheita, /Frente 3/);
 
 // Demais mensagens limpam o prefixo de alarme e expandem unidades sem reformular valores.
 assert.equal(

@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.8.0';
+  const VERSAO = '1.8.1';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -807,9 +807,11 @@
         continue;
       }
       const id = String(q.cdEquipamento);
-      const frenteAtual = q.descFrente || (frota.get(id) || {}).frente || '';
-      if (!frenteSelecionada(frenteAtual)) {
-        atualizarFrenteAtivos(id, frenteAtual);
+      const existente = frota.get(id) || {};
+      const frenteAtual = frenteDoRegistro(q, existente, false);
+      const grupoAtual = grupoDoRegistro(q, existente);
+      if (!frenteSelecionada({ frente: frenteAtual, grupoEquipamento: grupoAtual })) {
+        atualizarFrenteAtivos(id, frenteAtual, grupoAtual);
         frota.delete(id);
         reconciliarEscopo();
         continue;
@@ -820,8 +822,10 @@
         e.nome = p.nome || e.nome;
         e.numero = p.numero || e.numero;
       }
+      if (q.descTpEquipamento) e.tipo = q.descTpEquipamento;
       if (q.descFullTpEquipamento) e.tipoCompleto = q.descFullTpEquipamento;
-      e.frente = q.descFrente || e.frente;
+      e.frente = frenteAtual;
+      e.grupoEquipamento = grupoAtual;
       if (q.descOperacao !== undefined || (q.cdOperacao !== undefined && q.cdOperacao !== null)) {
         const temDescricaoOperacao = q.descOperacao != null && String(q.descOperacao).trim() !== '';
         const novaOperacao = temDescricaoOperacao ? String(q.descOperacao) : '';
@@ -842,7 +846,6 @@
       if (q.fgTpAlerta !== undefined) e.fgTpAlerta = String(q.fgTpAlerta);
       if (q.vlDirecao !== undefined) e.direcao = num(q.vlDirecao);
       if (q.horimetro !== undefined) e.horimetro = q.horimetro;
-      if (q.descFrente) e.frente = q.descFrente;
       e.ativo = String(q.fgMonitoramentoAtivo || e.ativo || 'T');
       if (q.deleted === true) {
         frota.delete(e.id);
@@ -852,7 +855,6 @@
       if (ts) e.tsEquipamento = ts;
       e.vistoEm = agora();
       if (!e.fonte) e.fonte = 'stream';
-      if (q.descTpEquipamento) e.tipo = q.descTpEquipamento;
       if (q.descOperacao !== undefined && dentroDoEscopo(e)) {
         regraSemApontamento(e, agora());
         regraParada(e, agora());
@@ -892,7 +894,8 @@
       cdTpAlarme: q.cdTpAlarme,
       nomeOperador: q.descOperador || e.operadorBruto,
       descOperacao: q.descOperacao || e.operacao,
-      descGrupoEquipamento: q.descFrente || e.frente,
+      descFrente: q.descFrente || e.frente || undefined,
+      descGrupoEquipamento: q.descGrupoEquipamento || e.grupoEquipamento || undefined,
       // vlPeso é peso, não velocidade. Sem medição explícita, não inventar km/h.
       vlAlarme: q.vlAlarme,
       vlAlarmeMaximoAtingido: q.vlAlarmeMaximoAtingido,
@@ -928,6 +931,7 @@
         nome: '',
         tipo: '',
         frente: '',
+        grupoEquipamento: '',
         operacao: '',
         cdOperacao: '',
         operacaoConfirmada: false,
@@ -961,9 +965,11 @@
       if (!id) continue;
       vistos.add(id);
       if (row.descGrupoEquipamento) frentes.add(row.descGrupoEquipamento);
-      const frenteAtual = row.descGrupoEquipamento || (frota.get(id) || {}).frente || '';
-      if (!frenteSelecionada(frenteAtual)) {
-        atualizarFrenteAtivos(id, frenteAtual);
+      const existente = frota.get(id) || {};
+      const frenteAtual = frenteDoRegistro(row, existente, true);
+      const grupoAtual = grupoDoRegistro(row, existente);
+      if (!frenteSelecionada({ frente: frenteAtual, grupoEquipamento: grupoAtual })) {
+        atualizarFrenteAtivos(id, frenteAtual, grupoAtual);
         frota.delete(id);
         reconciliarEscopo();
         continue;
@@ -974,7 +980,8 @@
       e.numero = p.numero;
       e.tipo = row.descTpEquipamento || e.tipo;
       e.tipoCompleto = row.descFullTpEquipamento || e.tipoCompleto;
-      e.frente = row.descGrupoEquipamento || e.frente;
+      e.frente = frenteAtual;
+      e.grupoEquipamento = grupoAtual;
       const temDescricaoOperacao = row.descOperacao != null && String(row.descOperacao).trim() !== '';
       const novaOperacao = temDescricaoOperacao ? String(row.descOperacao) : '';
       if (norm(novaOperacao) !== norm(e.operacao)) {
@@ -1011,18 +1018,40 @@
     for (const [id, e] of frota) if (e.vistoEm < corte && !ativos.has(id + '|velocidade')) frota.delete(id);
   }
 
-  function frenteSelecionada(frente) {
-    if (!cfg.frentes || !cfg.frentes.length) return true;
-    return !!frente && cfg.frentes.some((f) => norm(f) === norm(frente));
+  function frenteDoRegistro(registro, anterior, limparAusente) {
+    if (registro && registro.descFrente != null) {
+      const direta = String(registro.descFrente).trim();
+      if (direta || limparAusente) return direta;
+    }
+    return limparAusente ? '' : String(anterior && anterior.frente || '').trim();
   }
 
-  function atualizarFrenteAtivos(id, frente) {
-    if (!frente) return;
+  function grupoDoRegistro(registro, anterior) {
+    if (registro && registro.descGrupoEquipamento != null) return String(registro.descGrupoEquipamento).trim();
+    return String(anterior && anterior.grupoEquipamento || '').trim();
+  }
+
+  function frenteSelecionada(alvo) {
+    if (!cfg.frentes || !cfg.frentes.length) return true;
+    const valores = alvo && typeof alvo === 'object'
+      ? [alvo.frente, alvo.grupoEquipamento]
+      : [alvo];
+    return valores.some((valor) => valor != null && String(valor).trim() !== '' &&
+      cfg.frentes.some((f) => norm(f) === norm(valor)));
+  }
+
+  function atualizarFrenteAtivos(id, frente, grupoEquipamento) {
     const equipamento = String(id);
     const e = frota.get(equipamento);
-    if (e) e.frente = frente;
+    if (e) {
+      e.frente = frente;
+      e.grupoEquipamento = grupoEquipamento;
+    }
     for (const alerta of ativos.values()) {
-      if (alerta.e && String(alerta.e.id) === equipamento) alerta.e.frente = frente;
+      if (alerta.e && String(alerta.e.id) === equipamento) {
+        alerta.e.frente = frente;
+        alerta.e.grupoEquipamento = grupoEquipamento;
+      }
     }
   }
 
@@ -1032,7 +1061,7 @@
     if (cfg.seguirSelecaoMapa && ctx.selecao && ctx.selecao.size) {
       if (!ctx.selecao.has(String(e.id)) && !ctx.selecao.has(String(e.numero))) return false;
     }
-    if (!frenteSelecionada(e.frente)) return false;
+    if (!frenteSelecionada(e)) return false;
     const lista = (cfg.equipamentos || '')
       .split(/[^0-9A-Za-z]+/)
       .map((s) => s.trim())
@@ -1698,7 +1727,10 @@
       e.operadorBruto = String(a.nomeOperador);
       e.operador = nomeOperador(a.nomeOperador);
     }
-    if (a.descGrupoEquipamento) e.frente = a.descGrupoEquipamento;
+    if (a.descFrente != null && String(a.descFrente).trim() !== '') e.frente = String(a.descFrente).trim();
+    if (a.descGrupoEquipamento != null) {
+      e.grupoEquipamento = String(a.descGrupoEquipamento).trim();
+    }
     if (a.descOperacao) e.operacao = String(a.descOperacao);
     const codigo = String(a.cdTpAlarme || 'desconhecido');
     const nomeAlarme = a.descTpAlarme || a.descAlarme || nomeTipo(codigo);
