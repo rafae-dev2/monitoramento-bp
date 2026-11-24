@@ -550,7 +550,7 @@ with sync_playwright() as pw:
       const r = box.getBoundingClientRect();
       return {height:box.clientHeight,scrollHeight:box.scrollHeight,top:r.top,bottom:r.bottom,vh:innerHeight};
     }''')
-    assert mobile_toasts['height'] > mobile_toasts['vh'] * 0.55 and mobile_toasts['height'] <= mobile_toasts['vh'] * 0.66, mobile_toasts
+    assert mobile_toasts['top'] <= 80 and mobile_toasts['height'] >= mobile_toasts['vh'] * 0.88, mobile_toasts
     assert mobile_toasts['scrollHeight'] > mobile_toasts['height'] and mobile_toasts['top'] >= 0 and mobile_toasts['bottom'] <= mobile_toasts['vh'], mobile_toasts
     page.set_viewport_size({'width': 1280, 'height': 900})
     desktop_toasts = page.evaluate('''() => {
@@ -558,9 +558,9 @@ with sync_playwright() as pw:
       const r = box.getBoundingClientRect();
       return {height:box.clientHeight,scrollHeight:box.scrollHeight,top:r.top,bottom:r.bottom,vh:innerHeight};
     }''')
-    assert desktop_toasts['height'] > desktop_toasts['vh'] * 0.65 and desktop_toasts['height'] <= desktop_toasts['vh'] * 0.71, desktop_toasts
+    assert desktop_toasts['top'] <= 75 and desktop_toasts['height'] >= desktop_toasts['vh'] * 0.88, desktop_toasts
     assert desktop_toasts['scrollHeight'] > desktop_toasts['height'] and desktop_toasts['top'] >= 0 and desktop_toasts['bottom'] <= desktop_toasts['vh'], desktop_toasts
-    print('OK: área das notificações aumentada e rolável em celular e computador:', mobile_toasts['height'], desktop_toasts['height'])
+    print('OK: área das notificações chega perto do cabeçalho em celular e computador:', mobile_toasts['height'], desktop_toasts['height'])
 
     page.set_viewport_size({'width': 412, 'height': 915})
     page.evaluate("""() => {

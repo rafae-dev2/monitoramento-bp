@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.6.1';
+  const VERSAO = '1.6.2';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
