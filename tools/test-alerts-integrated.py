@@ -16,7 +16,7 @@ hooks = """
   const chamarReal = chamar;
   const avaliarFrotaReal = avaliarFrota;
   window.__test = {
-    aplicarTelemetria, avaliarFrota, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, regrasFrente, enviarAudit, ciclo, abrirNoMapa, timestampEquipamento,
+    aplicarTelemetria, avaliarFrota, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, regraFrenteDividida, regrasFrente, enviarAudit, ciclo, abrirNoMapa, timestampEquipamento,
     frota: () => [...frota.values()],
     setCtx: (v) => { ctx = Object.assign(ctx, v); },
     setChamar: (fn) => { chamar = fn; },
@@ -212,6 +212,31 @@ with sync_playwright() as pw:
       t.reset(); t.aplicarTelemetria([{...row,cdEquipamento:'COL-905',cdOperacao:905,descOperacao:'Aguardando Caminhão Colheita'}]); t.avaliarFrota(Date.now(),'lotes');
       t.regraAguardandoCaminhao(t.frota().find(e=>e.id==='COL-905'),Date.now()+3000);
       ok(api.ativos().some(x=>x.e.id==='COL-905' && x.regra==='aguardandoCaminhao'),'código 905 reconhecido pelo código da operação');
+
+      t.reset(); t.capturarFalas(); window.__systemNotifications.length=0;
+      api.configurar({voz:true,notificacao:true,popup:false,cooldownMin:10});
+      const frenteDivididaStream={cdEquipamento:'FD-8833',descEquipamento:'8833 - Trator fixture',descTpEquipamento:'TRATOR',descFullTpEquipamento:'Trator agrícola',descFrente:'Frente Norte',cdOperacao:991,descOperacao:'991 - Frente Dividida',fgMonitoramentoAtivo:'T',dtHrLocal:new Date().toISOString()};
+      t.processarQuadros([frenteDivididaStream]);
+      const fdStream=api.ativos().find(a=>a.e.id==='FD-8833' && a.regra==='frenteDividida');
+      ok(!!fdStream && fdStream.fonte==='app' && fdStream.notificar && fdStream.numero==='8833' && fdStream.texto.includes('Frente Norte'),'primeiro quadro de Frente dividida no stream gera alerta local imediato com veículo e frente');
+      ok(fdStream.fala.includes('Atenção COA') && fdStream.fala.includes('Frente dividida') && fdStream.fala.includes('sistema FUT') && fdStream.detalhe.includes('não foram alteradas'),'fala orienta validar a chamada no FUT sem atribuir intenção ou alterar operação/fila');
+      const historicoFd=api.historico().filter(a=>a.regra==='frenteDividida').length;
+      t.processarQuadros([frenteDivididaStream]);
+      await new Promise(resolve=>setTimeout(resolve,30));
+      ok(historicoFd===1 && api.historico().filter(a=>a.regra==='frenteDividida').length===1 && t.falasCapturadas().length===1 && window.__systemNotifications.length===1,'quadros repetidos respeitam cooldown e não duplicam fala/notificação');
+
+      t.reset(); t.capturarFalas();
+      api.configurar({calcularLocal:false,voz:true,notificacao:true,notificarCategorias:{frenteDividida:false}});
+      const fdSilenciado={...row,cdEquipamento:'FD-OFF',descEquipamento:'8834 - Transbordo fixture',descTpEquipamento:'TRANSBORDO',descGrupoEquipamento:'Frente Sul',descOperacao:'009 - FRENTE DIVIDIDA'};
+      feed(fdSilenciado);
+      const fdOff=api.ativos().find(a=>a.e.id==='FD-OFF' && a.regra==='frenteDividida');
+      ok(!!fdOff && fdOff.notificar===false && api.historico().length===1 && t.falasCapturadas().length===0,'chave desligada mantém o alerta na central/histórico sem fala/notificação');
+
+      t.reset();
+      const caminhaoFrenteDividida={...row,cdEquipamento:'FD-TRUCK',descEquipamento:'4451 - Caminhão fixture',descTpEquipamento:'CAMINHÃO CANAVIEIRO',descOperacao:'Frente dividida'};
+      feed(caminhaoFrenteDividida);
+      ok(!api.ativos().some(a=>a.regra==='frenteDividida'),'Frente dividida em caminhão não entra na regra de trator/transbordo');
+
       t.reset();
       const frenteCana='Caminhões Canavieiro Terc';
       const caminhaoFila={...row,cdEquipamento:'TRUCK-4451',descEquipamento:'4451 - Caminhão Canavieiro',descTpEquipamento:'CAMINHÕES CANAVIEIRO TERC',descGrupoEquipamento:frenteCana,cdOperacao:908,descOperacao:'908 - Aguardando Carregamento'};
@@ -529,8 +554,9 @@ with sync_playwright() as pw:
     assert page.locator('#cfg-alertas').evaluate("el => el.classList.contains('hide')"), 'O X deve fechar as preferências'
     assert page.evaluate('document.activeElement.id === "btn-cfg"'), 'Ao fechar, o foco deve voltar ao controle de configurações visível'
     page.click('#btn-cfg')
-    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 12")
+    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 13")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
+    assert page.locator('#cfg-categorias input[aria-label="Notificar: Frente dividida (validar FUT)"]').is_checked(), 'Frente dividida deve aparecer ligada por padrão nas preferências'
     assert page.locator('#cfg-gestao-frente').is_checked(), 'Atenção gestão deve ter opção mestre ligada por padrão'
     assert page.locator('#cfg-glossario').get_attribute('autocomplete') == 'off', 'textarea do glossário precisa ter atributo autocomplete válido'
     assert 'AG=Aguardando' in page.locator('#cfg-glossario').get_attribute('placeholder'), 'placeholder do glossário deve permanecer acessível'
@@ -560,7 +586,7 @@ with sync_playwright() as pw:
     print('OK: expansão de AG/COLH, prévia, substituição personalizada e persistência do glossário')
     page.fill('#cfg-busca-categoria', 'fila')
     vis = page.evaluate("[...document.querySelectorAll('#cfg-categorias > *')].filter(x => !x.classList.contains('hide')).length")
-    assert 1 <= vis < 12, f'busca de categorias deve filtrar ({vis})'
+    assert 1 <= vis < 13, f'busca de categorias deve filtrar ({vis})'
     page.fill('#cfg-busca-categoria', 'xyzinexistente')
     assert page.locator('#cfg-categorias-vazio').is_visible(), 'mensagem de nenhum alerta'
     page.fill('#cfg-busca-categoria', '')

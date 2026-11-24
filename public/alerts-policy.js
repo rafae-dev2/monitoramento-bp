@@ -7,7 +7,7 @@
 }(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis), function () {
   'use strict';
 
-  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'aguardandoBasculamento', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente'];
+  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'aguardandoBasculamento', 'frenteDividida', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente'];
   var DEFAULTS = {
     velocidade: true,
     rpm: true,
@@ -17,6 +17,7 @@
     generico: true,
     aguardandoCaminhao: true,
     aguardandoBasculamento: true,
+    frenteDividida: true,
     semApontamento: true,
     refeicao: true,
     paradaImprodutiva: true,
@@ -132,10 +133,14 @@
     return result.replace(/\s+/g, ' ').trim();
   }
 
-  function aguardandoCaminhao(e) {
+  function tratorOuTransbordo(e) {
     if (!e || typeof e !== 'object') return false;
     var tipo = norm([e.tipo, e.tipoCompleto].filter(function (v) { return v != null; }).join(' '));
-    if (!/(?:^|[^a-z0-9])(?:trator|transbordo)(?:$|[^a-z0-9])/.test(tipo)) return false;
+    return /(?:^|[^a-z0-9])(?:trator|transbordo)(?:$|[^a-z0-9])/.test(tipo);
+  }
+
+  function aguardandoCaminhao(e) {
+    if (!tratorOuTransbordo(e)) return false;
 
     var operacao = e.operacao == null ? '' : String(e.operacao);
     // Código 905 = Aguardando Caminhão no SGPA da unidade.
@@ -143,6 +148,14 @@
     operacao = operacao.replace(/^\s*\d+\s*-\s*/, '');
     var normalized = norm(operacao);
     return /^aguardando caminhao(?:\s*-\s*(?:hd|hr))?$/.test(normalized);
+  }
+
+  function frenteDividida(e) {
+    if (!e || e.operacaoConfirmada !== true || !tratorOuTransbordo(e)) return false;
+    var operacao = e.operacao;
+    if (operacao == null || String(operacao).trim() === '') operacao = e.descOperacao;
+    var normalized = norm(operacao).replace(/^\s*\d+\s*-\s*/, '');
+    return normalized === 'frente dividida';
   }
 
   function semApontamento(e) {
@@ -274,7 +287,7 @@
       var compact = norm(directText).replace(/[\s_-]+/g, '');
       var aliases = {
         velocidade: 'velocidade', rpm: 'rpm', ocioso: 'ocioso', turno: 'turno',
-        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', aguardandobasculamento: 'aguardandoBasculamento', semapontamento: 'semApontamento', refeicao: 'refeicao', paradaimprodutiva: 'paradaImprodutiva', gestaofrente: 'gestaoFrente',
+        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', aguardandobasculamento: 'aguardandoBasculamento', frentedividida: 'frenteDividida', semapontamento: 'semApontamento', refeicao: 'refeicao', paradaimprodutiva: 'paradaImprodutiva', gestaofrente: 'gestaoFrente',
         ociososemapontamento: 'ocioso'
       };
       if (aliases[compact]) return aliases[compact];
@@ -440,6 +453,14 @@
         '. Frente/grupo ' + basculamentoFrente + '. No SGPA, o apontamento permanece Aguardando Caminhão. Verificar.';
     }
 
+    if (selectedCategory === 'frenteDividida') {
+      var frenteDividida = event.frente == null || String(event.frente).trim() === '' ? 'frente não informada' : String(event.frente).trim();
+      var tipoFrenteDividida = norm([event.tipo, event.tipoCompleto, event.nome].filter(Boolean).join(' '));
+      var classeFrenteDividida = item.classe || (/transbordo/.test(tipoFrenteDividida) ? 'Transbordo' : 'Trator');
+      return 'Atenção COA: ' + classeFrenteDividida + ' ' + vehicleNumber(item, event) +
+        ' apontou Frente dividida. Frente/grupo ' + frenteDividida + '. Verificar a sequência de chamada da colhedora no sistema FUT.';
+    }
+
     if (selectedCategory === 'refeicao') {
       var fr = event.frente;
       if (fr == null || String(fr).trim() === '') fr = 'frente não informada';
@@ -508,6 +529,7 @@
     categoria: categoria,
     idFalado: idFalado,
     aguardandoCaminhao: aguardandoCaminhao,
+    frenteDividida: frenteDividida,
     semApontamento: semApontamento,
     emRefeicao: emRefeicao,
     PARADAS: PARADAS,

@@ -43,6 +43,14 @@ assert.equal(policy.aguardandoCaminhao({ tipo: 'Transbordo', operacao: 'Aguard B
 assert.equal(policy.aguardandoCaminhao({ tipo: 'Trator', operacao: 'Aguardando Caminhao - XX' }), false);
 assert.equal(policy.aguardandoCaminhao({ tipo: 'Trator', operacao: 'prefixo 123 - Aguardando Caminhao' }), false);
 
+// Frente dividida só corresponde ao apontamento confirmado e a trator/transbordo.
+assert.equal(policy.frenteDividida({ tipo: 'TRATOR', operacao: '009 - Frente DIVIDIDA', operacaoConfirmada: true }), true);
+assert.equal(policy.frenteDividida({ tipoCompleto: 'Transbordo agrícola', operacao: '', descOperacao: 'Frente dividida', operacaoConfirmada: true }), true);
+assert.equal(policy.frenteDividida({ tipo: 'Caminhão canavieiro', operacao: 'Frente dividida', operacaoConfirmada: true }), false);
+assert.equal(policy.frenteDividida({ tipo: 'Caminhão', nome: 'Trator fixture', operacao: 'Frente dividida', operacaoConfirmada: true }), false);
+assert.equal(policy.frenteDividida({ tipo: 'Trator', operacao: 'Frente dividida', operacaoConfirmada: false }), false);
+assert.equal(policy.frenteDividida({ tipo: 'Trator', operacao: 'Frente dividida - teste', operacaoConfirmada: true }), false);
+
 // Só classifica operações explicitamente sem apontamento, não carregamento ou nomes parecidos.
 assert.equal(policy.semApontamento({ operacao: '3484 - SEM APONTAMENTO' }), true);
 assert.equal(policy.semApontamento({ operacao: 'SEM APONTAMENTO - TPL' }), true);
@@ -57,6 +65,7 @@ assert.equal(cfgLegacy.notificarCategorias.velocidade, false);
 assert.equal(cfgLegacy.notificarCategorias.generico, false);
 assert.equal(cfgLegacy.notificarCategorias.rpm, true);
 assert.equal(cfgLegacy.notificarCategorias.aguardandoCaminhao, true);
+assert.equal(cfgLegacy.notificarCategorias.frenteDividida, true);
 const cfgExplicit = policy.normalizeCfg({ incluirOutros: false, notificarCategorias: { generico: true, rpm: false } });
 assert.equal(cfgExplicit.notificarCategorias.generico, true);
 assert.equal(cfgExplicit.notificarCategorias.rpm, false);
@@ -71,6 +80,8 @@ assert.equal(policy.notificar({ incluirOutros: false, notificarCategorias: { gen
 assert.equal(policy.notificar({ tiposNotificacao: { 2697: false } }, { codigo: 2697, descricao: 'Velocidade' }), false);
 assert.equal(policy.notificar({ notificarCategorias: { aguardandoCaminhao: false } }, { e: { tipo: 'Trator', operacao: 'Aguardando Caminhão' } }), false);
 assert.equal(policy.notificar({}, { e: { tipo: 'Transbordo', operacao: 'Aguardando Caminhao' } }), true);
+assert.equal(policy.notificar({}, { regra: 'frenteDividida' }), true);
+assert.equal(policy.notificar({ notificarCategorias: { frenteDividida: false } }, { regra: 'frenteDividida' }), false);
 assert.equal(policy.notificar({ tiposNotificacao: { 41: false } }, { e: { codigo: 41, tipo: 'Trator', operacao: 'Aguardando Caminhao' } }), false);
 
 // Fala: identificador soletrado; valor da velocidade numérico arredondado; ausência não vira zero.
@@ -158,5 +169,12 @@ assert.equal(
     e: { frente: 'Caminhões Canavieiro Terc' }
   }),
   'Trator oito oito três três: aguardando basculamento, inferido pelo aplicativo porque o caminhão quatro quatro cinco um está aguardando carregamento na mesma frente. Frente/grupo Caminhões Canavieiro Terceiro. No SGPA, o apontamento permanece Aguardando Caminhão. Verificar.'
+);
+assert.equal(
+  policy.montarFala({
+    regra: 'frenteDividida', classe: 'Transbordo', numero: '8833',
+    e: { tipo: 'Transbordo', operacao: '123 - Frente dividida', frente: 'Frente Norte' }
+  }),
+  'Atenção COA: Transbordo oito oito três três apontou Frente dividida. Frente/grupo Frente Norte. Verificar a sequência de chamada da colhedora no sistema FUT.'
 );
 console.log('test-alerts-policy: contrato integrado passou.');

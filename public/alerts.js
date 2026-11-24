@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.7.0';
+  const VERSAO = '1.8.0';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -72,6 +72,7 @@
     motorCondicao: { id: 'motorCondicao', nome: 'Motor ligado — condição combinada', icone: 'M', cor: '#c6a0e8', severidade: 2 },
     aguardandoCaminhao: { id: 'aguardandoCaminhao', nome: 'Aguardando caminhão', icone: 'T', cor: '#e9b457', severidade: 2 },
     aguardandoBasculamento: { id: 'aguardandoBasculamento', nome: 'Aguardando basculamento (inferido)', icone: '↻', cor: '#d79238', severidade: 2 },
+    frenteDividida: { id: 'frenteDividida', nome: 'Frente dividida (validar FUT)', icone: '⇄', cor: '#e05252', severidade: 3 },
     refeicao: { id: 'refeicao', nome: 'Refeição excedida', icone: '🍽️', cor: '#d9822b', severidade: 2 },
     semApontamento: { id: 'semApontamento', nome: 'Sem apontamento', icone: '📝', cor: '#e07b39', severidade: 2 },
     paradaImprodutiva: { id: 'paradaImprodutiva', nome: 'Parada improdutiva', icone: '⏸️', cor: '#c96b3b', severidade: 2 },
@@ -814,6 +815,12 @@
         continue;
       }
       const e = mesclar(id);
+      if (q.descEquipamento) {
+        const p = partirEquipamento(q.descEquipamento, id);
+        e.nome = p.nome || e.nome;
+        e.numero = p.numero || e.numero;
+      }
+      if (q.descFullTpEquipamento) e.tipoCompleto = q.descFullTpEquipamento;
       e.frente = q.descFrente || e.frente;
       if (q.descOperacao !== undefined || (q.cdOperacao !== undefined && q.cdOperacao !== null)) {
         const temDescricaoOperacao = q.descOperacao != null && String(q.descOperacao).trim() !== '';
@@ -859,6 +866,8 @@
       if (!dentroDoEscopo(e)) continue;
       const stCaminhao = estados.get(e.id + '|aguardandoCaminhao');
       const stBasculamento = estados.get(e.id + '|aguardandoBasculamento');
+      const stFrenteDividida = estados.get(e.id + '|frenteDividida');
+      if (policy.frenteDividida(e) || stFrenteDividida) regraFrenteDividida(e, tsAguardando);
       if (policy.aguardandoCaminhao(e) || stCaminhao || stBasculamento) regraAguardandoCaminhao(e, tsAguardando);
     }
     estado.quadros += lista.length;
@@ -1217,6 +1226,7 @@
       if (lotes) {
         regraRpm(e, ts);
       }
+      regraFrenteDividida(e, ts);
       regraAguardandoCaminhao(e, ts);
       regraSemApontamento(e, ts);
       regraParada(e, ts);
@@ -1338,6 +1348,34 @@
       e,
       texto: `aguardando caminhão · frente/grupo: ${e.frente || 'não informada'}`,
       detalhe: `Rastreio operacional SGPA · ${e.tipo || 'trator/transbordo'} · operação ${e.operacao || '—'}`,
+      inicio: st.since,
+    });
+  }
+
+  /* “Frente dividida” é um apontamento operacional, não uma acusação: alerta
+     no primeiro quadro para o COA validar a sequência da chamada pelo FUT. */
+  function regraFrenteDividida(e, ts) {
+    const liga = policy.frenteDividida(e);
+    const st = marcar(e.id, 'frenteDividida', liga, ts, null);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!liga || !st.firing) return;
+
+    const instante = Math.max(Number(ts) || 0, agora());
+    if (!st.emitido) {
+      st.emitido = true;
+      st.ultimo = instante;
+    } else {
+      const cd = Math.max(0, Number(cfg.cooldownMin) || 0) * 60000;
+      if (!cd || instante - st.ultimo < cd) return;
+      st.ultimo = instante;
+    }
+    const operacao = e.operacao || e.descOperacao || 'Frente dividida';
+    emitir({
+      chave: st.chave,
+      regra: 'frenteDividida',
+      e,
+      texto: `apontou Frente dividida · frente/grupo: ${e.frente || 'não informada'}`,
+      detalhe: `Apontamento SGPA ${operacao} · validar a sequência de chamada da colhedora no sistema FUT. A operação e a fila não foram alteradas.`,
       inicio: st.since,
     });
   }
@@ -2124,7 +2162,7 @@
   /* Exceção pedida pelo usuário: “Sem apontamento” (cálculo do app) usa todos os
      canais, mas só enquanto o app está aberto — nunca passa pelo Web Push. */
   function localComCanais(a) {
-    return !!a && a.fonte === 'app' && (a.regra === 'semApontamento' || a.regra === 'refeicao' || a.regra === 'paradaImprodutiva' || a.regra === 'gestaoFrente' || a.regra === 'aguardandoBasculamento');
+    return !!a && a.fonte === 'app' && (a.regra === 'semApontamento' || a.regra === 'refeicao' || a.regra === 'paradaImprodutiva' || a.regra === 'gestaoFrente' || a.regra === 'aguardandoBasculamento' || a.regra === 'frenteDividida');
   }
   function canalSistema(a) {
     return !!a && (a.fonte === 'portal' || localComCanais(a));
@@ -2803,6 +2841,7 @@
     motorCondicao: 'Condições combinadas do motor; não são velocidade pura.',
     aguardandoCaminhao: 'Trator/transbordo com a operação Aguardando Caminhão. Informa a frente/grupo.',
     aguardandoBasculamento: 'Correlação local: se trator/transbordo estiver em 905 e houver caminhão na mesma frente em “Aguardando Carregamento”, classifica a situação como basculamento provável após a tolerância configurada de 15 min. O apontamento SGPA não é alterado.',
+    frenteDividida: 'Apontamento “Frente dividida” observado no stream/telemetria em trator/transbordo. Alerta sem tolerância para o COA validar a chamada da colhedora no FUT. Fala/notificação locais dependem do PWA aberto e conectado.',
     refeicao: 'Refeição acima do tempo configurado por grupo ou equipamento (seção Controle de refeições). Fala e notifica só com o app aberto.',
     semApontamento: 'Equipamento na operação SGPA “Sem Apontamento” por 5 min ou mais (sem alarme do portal). Fala e notifica só com o app aberto.',
     paradaImprodutiva: 'Paradas improdutivas de maior impacto (fila, aguardando carregamento, 983, falta de transbordo etc.) acima da tolerância da seção Paradas improdutivas. Fala e notifica com o app aberto.',
