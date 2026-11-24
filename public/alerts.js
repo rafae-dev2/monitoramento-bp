@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.6.0';
+  const VERSAO = '1.6.1';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -2477,7 +2477,7 @@
     barra.className = 'barra';
     barra.style.animationDuration = (a.severidade >= 3 ? 26 : 18) + 's';
     d.appendChild(barra);
-    const maxVisiveis = innerHeight < 760 ? 3 : 5;   // na tela do celular não cobre o mapa
+    const maxVisiveis = Math.max(4, Math.min(8, Math.floor(innerHeight / 120))); // retém mais notificações; a área continua rolável
     while (el.toasts.children.length > maxVisiveis) {
       const alvo = el.toasts.firstElementChild;
       if (alvo.classList.contains('aviso')) break;

@@ -1,8 +1,8 @@
 {
   "name": "monitoramento-bp",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
-  "description": "Monitoramento BP PWA — funções serverless e testes fixture-only",
+  "description": "Monitoramento BP PWA \u2014 fun\u00e7\u00f5es serverless e testes fixture-only",
   "scripts": {
     "test:push": "node --test tools/push/*.test.mjs",
     "test": "npm run test:push"

@@ -538,12 +538,29 @@ with sync_playwright() as pw:
         scrollHeight:box.scrollHeight,clientHeight:box.clientHeight,scrollTop:box.scrollTop,
         newestTop:newest.top,newestBottom:newest.bottom,active:MonitoramentoAlertas.ativos().length,history:__test.historico().length};
     }""")
-    assert toast_layout['count'] == 5 and toast_layout['active'] == 7 and toast_layout['history'] == 7, toast_layout
+    assert toast_layout['count'] == 7 and toast_layout['active'] == 7 and toast_layout['history'] == 7, toast_layout
     assert toast_layout['scrollHeight'] > toast_layout['clientHeight'] and toast_layout['scrollTop'] < 0, toast_layout
     assert toast_layout['top'] >= 0 and toast_layout['bottom'] <= 1050, toast_layout
     assert toast_layout['left'] >= 0 and toast_layout['right'] <= 652, toast_layout
     assert toast_layout['newestTop'] >= toast_layout['top'] - 1 and toast_layout['newestBottom'] <= toast_layout['bottom'] + 1, toast_layout
-    print('OK: toasts limitados à tela de 652×1050; o mais novo permanece visível e os sete alertas continuam ativos')
+    print('OK: toasts ampliados na tela de 652×1050; o mais novo permanece visível e os sete alertas continuam ativos')
+    page.set_viewport_size({'width': 412, 'height': 915})
+    mobile_toasts = page.evaluate('''() => {
+      const box = document.querySelector('#toasts');
+      const r = box.getBoundingClientRect();
+      return {height:box.clientHeight,scrollHeight:box.scrollHeight,top:r.top,bottom:r.bottom,vh:innerHeight};
+    }''')
+    assert mobile_toasts['height'] > mobile_toasts['vh'] * 0.55 and mobile_toasts['height'] <= mobile_toasts['vh'] * 0.66, mobile_toasts
+    assert mobile_toasts['scrollHeight'] > mobile_toasts['height'] and mobile_toasts['top'] >= 0 and mobile_toasts['bottom'] <= mobile_toasts['vh'], mobile_toasts
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    desktop_toasts = page.evaluate('''() => {
+      const box = document.querySelector('#toasts');
+      const r = box.getBoundingClientRect();
+      return {height:box.clientHeight,scrollHeight:box.scrollHeight,top:r.top,bottom:r.bottom,vh:innerHeight};
+    }''')
+    assert desktop_toasts['height'] > desktop_toasts['vh'] * 0.65 and desktop_toasts['height'] <= desktop_toasts['vh'] * 0.71, desktop_toasts
+    assert desktop_toasts['scrollHeight'] > desktop_toasts['height'] and desktop_toasts['top'] >= 0 and desktop_toasts['bottom'] <= desktop_toasts['vh'], desktop_toasts
+    print('OK: área das notificações aumentada e rolável em celular e computador:', mobile_toasts['height'], desktop_toasts['height'])
 
     page.set_viewport_size({'width': 412, 'height': 915})
     page.evaluate("""() => {
