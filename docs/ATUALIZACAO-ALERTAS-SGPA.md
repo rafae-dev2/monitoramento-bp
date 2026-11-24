@@ -166,3 +166,8 @@ A versão **1.8.4** do commit `76b0c40` foi publicada no site Netlify existente 
 ## Versão 1.8.5 — classe correta na fala de velocidade
 
 Alarmes de velocidade oficiais agora usam a classe já identificada para o equipamento no próprio cartão. Assim, tratores são anunciados como “Trator 32308…”, enquanto equipamentos classificados como veículo continuam como “Veículo 6614…”. O comportamento se aplica tanto quando o SGPA informa a velocidade quanto quando a medição está ausente ou chega da telemetria; códigos de velocidade com fala específica também preservam a classe do equipamento. O cache PWA passa a `bperes-shell-v42`. Testes unitários e integrados verificam trator e veículo com/sem medição; fixture-only, sem chamadas ou gravações de produção.
+
+
+## Publicação verificada da versão 1.8.5 — 24/11/2026
+
+A versão **1.8.5**, commit `6d61d4031c2ea646ccaea03e7db080c99eba5b7f`, foi publicada no site Netlify existente `https://sgpa-solinftec-bpa.netlify.app/`. O deploy `6b05a81f793ff6243c11dab9` está **ready** em contexto **production**, com as sete Functions e o agendamento `push-monitor` mantidos. `index.html`, `alerts.js`, `alerts-policy.js` e `sw.js` responderam HTTP 200 e seus hashes SHA-256 coincidiram com os arquivos validados localmente. O motor servido é 1.8.5 e o cache PWA é `bperes-shell-v42`. Testes: política de fala, 114 grupos integrados, 25 testes Push; sem erros de sintaxe ou gravações/chamadas de produção nos testes fixture-only.
