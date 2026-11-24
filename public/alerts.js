@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.8.3';
+  const VERSAO = '1.8.4';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -39,6 +39,12 @@
   const KEY_PUSH_DEVICE = 'bperes.push.deviceId.v1';
   const MAX_HIST = 600;
   const JANELA_CORRELACAO_905_MS = 3000;
+  const MAX_IDADE_POSICAO_FRENTE_MS = 5 * 60_000;
+  const MAX_DISTANCIA_FRENTE_M = 1000;
+  const MIN_REFERENCIAS_FRENTE = 3;
+  const MIN_CONSENSO_FRENTE = 0.75;
+  const MIN_MARGEM_FRENTE = 2;
+  const PRECISAO_MIN_GEOHASH = 7;
   const MONITORAMENTO_API = 'https://api-usa.saas-solinftec.com/monitoramento/v2';
 
   const $ = (id) => document.getElementById(id);
@@ -810,7 +816,14 @@
       const existente = frota.get(id) || {};
       const frenteAtual = frenteDoRegistro(q, existente, false);
       const grupoAtual = grupoDoRegistro(q, existente);
-      if (!frenteSelecionada({ frente: frenteAtual, grupoEquipamento: grupoAtual })) {
+      const candidato = {
+        tipo: q.descTpEquipamento || existente.tipo,
+        tipoCompleto: q.descFullTpEquipamento || existente.tipoCompleto,
+        nome: q.descEquipamento || existente.nome,
+        frente: frenteAtual,
+        grupoEquipamento: grupoAtual,
+      };
+      if (!frenteSelecionada({ frente: frenteAtual, frenteInferida: existente.frenteInferida, grupoEquipamento: grupoAtual }) && !manterParaInferencia(candidato)) {
         atualizarFrenteAtivos(id, frenteAtual, grupoAtual);
         frota.delete(id);
         reconciliarEscopo();
@@ -853,19 +866,26 @@
       }
       const ts = timestampEquipamento(q.dtHrLocal);
       if (ts) e.tsEquipamento = ts;
+      if (Object.prototype.hasOwnProperty.call(q, 'geohash')) {
+        const hash = String(q.geohash || '').trim().toLowerCase();
+        e.geohash = hash;
+        e.localizacaoTs = hash && ts ? ts : 0;
+      }
       e.vistoEm = agora();
       if (!e.fonte) e.fonte = 'stream';
       if (q.descOperacao !== undefined && dentroDoEscopo(e)) {
         regraSemApontamento(e, agora());
-        regraParada(e, agora());
+        if (!ehCaminhaoAguardandoCarregamento(e)) regraParada(e, agora());
         regraRefeicao(e, agora());
       }
     }
     // Avalia o 905 após consolidar o lote inteiro para não dispará-lo antes de
     // processar o caminhão da mesma frente que veio no mesmo quadro do stream.
     const tsAguardando = agora();
+    atualizarFrentesInferidas(tsAguardando);
     for (const e of frota.values()) {
       if (!dentroDoEscopo(e)) continue;
+      if (ehCaminhaoAguardandoCarregamento(e)) regraParada(e, tsAguardando);
       const stCaminhao = estados.get(e.id + '|aguardandoCaminhao');
       const stBasculamento = estados.get(e.id + '|aguardandoBasculamento');
       const stFrenteDividida = estados.get(e.id + '|frenteDividida');
@@ -968,7 +988,14 @@
       const existente = frota.get(id) || {};
       const frenteAtual = frenteDoRegistro(row, existente, true);
       const grupoAtual = grupoDoRegistro(row, existente);
-      if (!frenteSelecionada({ frente: frenteAtual, grupoEquipamento: grupoAtual })) {
+      const candidato = {
+        tipo: row.descTpEquipamento || existente.tipo,
+        tipoCompleto: row.descFullTpEquipamento || existente.tipoCompleto,
+        nome: row.descEquipamento || existente.nome,
+        frente: frenteAtual,
+        grupoEquipamento: grupoAtual,
+      };
+      if (!frenteSelecionada({ frente: frenteAtual, frenteInferida: existente.frenteInferida, grupoEquipamento: grupoAtual }) && !manterParaInferencia(candidato)) {
         atualizarFrenteAtivos(id, frenteAtual, grupoAtual);
         frota.delete(id);
         reconciliarEscopo();
@@ -1009,9 +1036,15 @@
         .join(' / ');
       const ts = timestampEquipamento(row.dtHrLocal);
       if (ts) e.tsEquipamento = ts;
+      const hash = String(row.geohash || '').trim().toLowerCase();
+      if (hash) {
+        e.geohash = hash;
+        e.localizacaoTs = ts || 0;
+      }
       e.fonte = 'telemetria';
       e.vistoEm = agora();
     }
+    atualizarFrentesInferidas(agora());
     estado.frentes = [...frentes].sort();
     // largura de banda/limite de requisições: só guarda o que a unidade tem hoje
     const corte = agora() - 30 * 60000;
@@ -1031,10 +1064,186 @@
     return String(anterior && anterior.grupoEquipamento || '').trim();
   }
 
+  function frenteConhecida(valor) {
+    const m = norm(valor).match(/^frente\s*([123])$/);
+    return m ? 'Frente ' + m[1] : '';
+  }
+
+  function equipamentoReferenciaFrente(e) {
+    if (!e) return false;
+    const tipo = norm([e.tipo, e.tipoCompleto, e.nome].filter(Boolean).join(' '));
+    const frente = frenteConhecida(e.frente) || frenteConhecida(e.grupoEquipamento);
+    return !!frente && /colhedora|transbordo|trator/.test(tipo) && !/caminh|munck|cacamb|bombeir/.test(tipo);
+  }
+
+  function manterParaInferencia(e) {
+    return policy.caminhaoCanavieiroTerceiro(e) || equipamentoReferenciaFrente(e);
+  }
+
+  function ehCaminhaoAguardandoCarregamento(e) {
+    if (!policy.caminhaoCanavieiroTerceiro(e)) return false;
+    const parada = e && e.operacaoConfirmada === true ? policy.paradaImprodutiva(e) : null;
+    return !!parada && parada.id === 'aguardandoCarregamento';
+  }
+
+  function frenteOperacional(e) {
+    const direta = e && e.frente != null ? String(e.frente).trim() : '';
+    if (direta) return direta;
+    return e && e.frenteInferida != null ? String(e.frenteInferida).trim() : '';
+  }
+
+  function centroGeohash(valor) {
+    const hash = String(valor || '').trim().toLowerCase();
+    if (hash.length < PRECISAO_MIN_GEOHASH || hash.length > 12) return null;
+    const alfabeto = '0123456789bcdefghjkmnpqrstuvwxyz';
+    let latMin = -90, latMax = 90, lonMin = -180, lonMax = 180, longitude = true;
+    for (const caractere of hash) {
+      const codigo = alfabeto.indexOf(caractere);
+      if (codigo < 0) return null;
+      for (let bit = 4; bit >= 0; bit--) {
+        const ligado = (codigo & (1 << bit)) !== 0;
+        if (longitude) {
+          const meio = (lonMin + lonMax) / 2;
+          if (ligado) lonMin = meio; else lonMax = meio;
+        } else {
+          const meio = (latMin + latMax) / 2;
+          if (ligado) latMin = meio; else latMax = meio;
+        }
+        longitude = !longitude;
+      }
+    }
+    return { lat: (latMin + latMax) / 2, lon: (lonMin + lonMax) / 2 };
+  }
+
+  function posicaoAtual(e, ts) {
+    if (!e || String(e.ativo || 'T').toUpperCase() === 'F') return null;
+    const posicao = centroGeohash(e.geohash);
+    const instante = Number(e.localizacaoTs);
+    if (!posicao || !Number.isFinite(instante) || instante <= 0) return null;
+    const idade = Number(ts) - instante;
+    if (!Number.isFinite(idade) || idade < -30_000 || idade > MAX_IDADE_POSICAO_FRENTE_MS) return null;
+    if (e.atraso != null && (!Number.isFinite(Number(e.atraso)) || Number(e.atraso) > MAX_IDADE_POSICAO_FRENTE_MS / 1000)) return null;
+    return posicao;
+  }
+
+  function distanciaMetros(a, b) {
+    const rad = (valor) => valor * Math.PI / 180;
+    const dLat = rad(b.lat - a.lat);
+    const dLon = rad(b.lon - a.lon);
+    const lat1 = rad(a.lat);
+    const lat2 = rad(b.lat);
+    const sinLat = Math.sin(dLat / 2);
+    const sinLon = Math.sin(dLon / 2);
+    const h = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
+    return 6_371_000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(Math.max(0, 1 - h)));
+  }
+
+  function inferirFrenteGeografica(alvo, referencias, ts) {
+    const posicaoAlvo = posicaoAtual(alvo, ts);
+    if (!posicaoAlvo) return null;
+    const contagens = new Map();
+    for (const referencia of referencias) {
+      if (String(referencia.e.id) === String(alvo.id)) continue;
+      const distancia = distanciaMetros(posicaoAlvo, referencia.posicao);
+      if (distancia > MAX_DISTANCIA_FRENTE_M) continue;
+      let item = contagens.get(referencia.frente);
+      if (!item) {
+        item = { frente: referencia.frente, quantidade: 0, distanciaMaxima: 0 };
+        contagens.set(referencia.frente, item);
+      }
+      item.quantidade++;
+      item.distanciaMaxima = Math.max(item.distanciaMaxima, distancia);
+    }
+    const ranking = [...contagens.values()].sort((a, b) => b.quantidade - a.quantidade || a.frente.localeCompare(b.frente));
+    const vencedor = ranking[0];
+    const totalProximo = ranking.reduce((soma, item) => soma + item.quantidade, 0);
+    const concorrente = ranking[1];
+    if (!vencedor || vencedor.quantidade < MIN_REFERENCIAS_FRENTE ||
+        (concorrente && vencedor.quantidade - concorrente.quantidade < MIN_MARGEM_FRENTE) ||
+        vencedor.quantidade / totalProximo < MIN_CONSENSO_FRENTE) return null;
+    return { frente: vencedor.frente, referencias: vencedor.quantidade, distanciaMaxima: vencedor.distanciaMaxima };
+  }
+
+  function textoLocalCaminhao(e) {
+    if (e.frente) return 'frente/grupo informado: ' + String(e.frente).trim();
+    if (e.frenteInferida) return 'frente inferida: ' + String(e.frenteInferida).trim();
+    return 'frente/grupo: não informada';
+  }
+
+  function atualizarAlertaFrenteInferida(e, frenteAnterior, frenteNova) {
+    let alterou = false;
+    let historicoAlterado = false;
+    for (const alerta of ativos.values()) {
+      if (!alerta.e || String(alerta.e.id) !== String(e.id) || alerta.regra !== 'paradaImprodutiva' || alerta.paradaId !== 'aguardandoCarregamento') continue;
+      alerta.e = e;
+      alerta.texto = (alerta.paradaNome || 'Aguardando carregamento') + ' há ' + minutosTxt(alerta.valor || 0) + ' · ' + textoLocalCaminhao(e);
+      alerta.detalhe = 'Operação SGPA ' + (e.operacao || '—') + ' · ' + (e.tipo || 'caminhão canavieiro terceiro') +
+        (e.frenteInferida ? ' · consenso espacial de ' + (e.frenteInferidaReferencias || 0) + ' equipamentos próximos' : '');
+      alerta.fala = montarFala(alerta);
+      if (!Array.isArray(alerta.frentesInferidasNotificadas)) alerta.frentesInferidasNotificadas = [];
+      if (frenteNova && !alerta.frentesInferidasNotificadas.includes(frenteNova)) {
+        alerta.frentesInferidasNotificadas.push(frenteNova);
+        const ts = agora();
+        const reconhecido = acks[alerta.chave] && ts - acks[alerta.chave] < 2 * 3600_000;
+        const silenciado = ts < (Number(cfg.silencioAte) || 0) || reconhecido;
+        if (cfg.voz && alerta.notificar && !silenciado) falar('Atualização de localização. ' + alerta.fala, { oficial: alerta.fonte === 'portal' });
+      }
+      const registro = hist.find((item) => item.chave === alerta.chave);
+      if (registro) {
+        Object.assign(registro, { frenteInferida: e.frenteInferida || '', texto: alerta.texto, detalhe: alerta.detalhe, fala: alerta.fala });
+        historicoAlterado = true;
+      }
+      if (el.toasts) {
+        for (const toast of el.toasts.querySelectorAll('.toast')) {
+          if (toast.dataset.chave !== alerta.chave) continue;
+          const texto = toast.querySelector('.a-txt');
+          const fala = toast.querySelector('.a-fala');
+          if (texto) texto.textContent = alerta.texto;
+          if (fala) fala.textContent = '🗣️ ' + alerta.fala;
+        }
+      }
+      alterou = true;
+    }
+    if (!alterou) return;
+    if (historicoAlterado) salvar(KEY_HIST, hist);
+    renderAtivos();
+    renderCabecalho();
+  }
+
+  function atualizarFrentesInferidas(ts = agora()) {
+    const referencias = [];
+    for (const e of frota.values()) {
+      const frente = frenteConhecida(e.frente) || frenteConhecida(e.grupoEquipamento);
+      if (!frente || !equipamentoReferenciaFrente(e)) continue;
+      const posicao = posicaoAtual(e, ts);
+      if (posicao) referencias.push({ e, frente, posicao });
+    }
+    const alterados = [];
+    for (const e of frota.values()) {
+      const frenteAnterior = String(e.frenteInferida || '');
+      const referenciasAnteriores = Number(e.frenteInferidaReferencias) || 0;
+      const inferencia = !String(e.frente || '').trim() && ehCaminhaoAguardandoCarregamento(e)
+        ? inferirFrenteGeografica(e, referencias, ts)
+        : null;
+      const frenteNova = inferencia ? inferencia.frente : '';
+      const quantidadeNova = inferencia ? inferencia.referencias : 0;
+      if (frenteAnterior !== frenteNova || referenciasAnteriores !== quantidadeNova) {
+        e.frenteInferida = frenteNova;
+        e.frenteInferidaReferencias = quantidadeNova;
+        e.frenteInferidaTs = inferencia ? ts : 0;
+        alterados.push({ e, frenteAnterior, frenteNova });
+      }
+    }
+    for (const alteracao of alterados) {
+      atualizarAlertaFrenteInferida(alteracao.e, alteracao.frenteAnterior, alteracao.frenteNova);
+    }
+    if (alterados.length) reconciliarEscopo();
+  }
+
   function frenteSelecionada(alvo) {
     if (!cfg.frentes || !cfg.frentes.length) return true;
     const valores = alvo && typeof alvo === 'object'
-      ? [alvo.frente, alvo.grupoEquipamento]
+      ? [alvo.frente, alvo.frenteInferida, alvo.grupoEquipamento]
       : [alvo];
     return valores.some((valor) => valor != null && String(valor).trim() !== '' &&
       cfg.frentes.some((f) => norm(f) === norm(valor)));
@@ -1249,6 +1458,7 @@
   function avaliarFrota(ts, modo) {
     const lotes = modo !== 'tempo';
     let cont = 0;
+    atualizarFrentesInferidas(ts);
     for (const e of frota.values()) {
       if (!dentroDoEscopo(e)) continue;
       cont++;
@@ -1287,7 +1497,7 @@
     const alvo = policy.norm(frente);
     if (!alvo) return [];
     return [...frota.values()].filter((e) => {
-      if (!dentroDoEscopo(e) || e.operacaoConfirmada !== true || policy.norm(e.frente) !== alvo) return false;
+      if (!dentroDoEscopo(e) || e.operacaoConfirmada !== true || policy.norm(frenteOperacional(e)) !== alvo) return false;
       if (!telemetriaRecente(e)) return false;
       if (!policy.caminhaoCanavieiroTerceiro(e)) return false;
       const parada = policy.paradaImprodutiva(e);
@@ -1455,18 +1665,21 @@
     const subiu = st.emitido && nivel > (st.nivel || 1);
     if (subiu) { st.ultimo = ts; } else if (!podeDisparar(st, ts)) return;
     st.nivel = Math.max(st.nivel || 1, nivel);
+    const caminhaoCanavieiroAguardando = p.id === 'aguardandoCarregamento' && policy.caminhaoCanavieiroTerceiro(e);
+    const localizacaoTexto = caminhaoCanavieiroAguardando ? textoLocalCaminhao(e) : 'frente/grupo: ' + (e.frente || 'não informada');
     emitir({
       chave: st.chave,
       regra: 'paradaImprodutiva',
       nivel,
-      lider: policy.liderFrente(cfg, e.frente),
+      lider: policy.liderFrente(cfg, frenteOperacional(e)),
       paradaId: p.id,
       paradaNome: p.nome,
       e,
       valor: Math.round(durou),
       limite: Math.round(lim),
-      texto: `${nivel >= 3 ? '[ESCALAR LÍDER] ' : nivel === 2 ? '[URGENTE] ' : ''}${p.nome} há ${minutosTxt(durou)} · frente/grupo: ${e.frente || 'não informada'}`,
-      detalhe: `Operação SGPA ${e.operacao || '—'} · ${e.tipo || 'equipamento'} · tolerância ${minutosTxt(lim)}`,
+      texto: `${nivel >= 3 ? '[ESCALAR LÍDER] ' : nivel === 2 ? '[URGENTE] ' : ''}${p.nome} há ${minutosTxt(durou)} · ${localizacaoTexto}`,
+      detalhe: `Operação SGPA ${e.operacao || '—'} · ${e.tipo || 'equipamento'} · tolerância ${minutosTxt(lim)}` +
+        (e.frenteInferida ? ` · consenso espacial de ${e.frenteInferidaReferencias || 0} equipamentos próximos` : ''),
       inicio: inicioReal(st, e),
     });
   }
@@ -1861,6 +2074,9 @@
       lider: a.lider || '',
       texto: a.texto,
       detalhe: a.detalhe || '',
+      frentesInferidasNotificadas: prev && Array.isArray(prev.frentesInferidasNotificadas)
+        ? prev.frentesInferidasNotificadas.slice()
+        : a.e.frenteInferida ? [a.e.frenteInferida] : [],
       fonte: a.servidor ? 'portal' : a.simulado ? 'teste' : 'app',
       contagem: (prev && prev.contagem ? prev.contagem : 0) + 1,
       repeticao: !!prev,
@@ -1882,6 +2098,7 @@
         tipoAlarme: alerta.tipoAlarme,
         nomeAlarme: alerta.nomeAlarme,
         frente: alerta.e.frente || '',
+        frenteInferida: alerta.e.frenteInferida || '',
         notificacaoSelecionada: alerta.notificar,
         equipamento: alerta.numero,
         descricao: alerta.descricao,
@@ -2632,6 +2849,7 @@
         <span class="a-chip">${esc(a.nome)}</span>
         ${a.fonte === 'portal' ? '<span class="a-chip oficial">SGPA</span>' : ''}
         ${a.fonte === 'teste' ? '<span class="a-chip cinza">AMOSTRA MANUAL</span>' : ''}
+        ${a.paradaId === 'aguardandoCarregamento' && a.e && a.e.frenteInferida ? `<span class="a-chip">Frente inferida: ${esc(a.e.frenteInferida)}</span>` : ''}
         ${!a.notificar ? '<span class="a-chip cinza">sem notificação do sistema</span>' : ''}
         ${a.contagem > 1 ? `<span class="a-chip cinza">×${a.contagem}</span>` : ''}
         <span class="a-hora" title="há ${desde(a.ts)}">${hora(a.ts)}</span>
@@ -2730,7 +2948,7 @@
     const lista = [...ativos.values()]
       .sort((x, y) => y.severidade - x.severidade || y.ts - x.ts)
       .filter((a) => correspondeBuscaCentral([
-        a.numero, a.e && a.e.id, a.e && a.e.nome, a.e && a.e.tipo, a.e && a.e.frente,
+        a.numero, a.e && a.e.id, a.e && a.e.nome, a.e && a.e.tipo, a.e && a.e.frente, a.e && a.e.frenteInferida,
         a.operador, a.nomeAlarme, a.tipoAlarme, a.regra, a.texto, a.detalhe,
       ]));
     el.ativos.innerHTML = '';
@@ -2748,7 +2966,7 @@
       el.historico.innerHTML = '';
       const resultados = hist.filter((h) => correspondeBuscaCentral([
         h.equipamento, h.descricao, h.nomeAlarme, h.tipoAlarme, h.regra,
-        h.texto, h.detalhe, h.operador, h.frente,
+        h.texto, h.detalhe, h.operador, h.frente, h.frenteInferida,
       ]));
       if (!resultados.length) {
         el.historico.innerHTML = norm(buscaCentral)
@@ -2762,7 +2980,7 @@
         d.style.setProperty('--cor', r.cor);
         d.innerHTML =
           `<div class="a-top"><span class="a-icone">${r.icone}</span><strong class="a-eq">${esc(h.equipamento)}</strong>` +
-          `<span class="a-chip">${esc(h.nomeAlarme || r.nome)}</span>${h.notificacaoSelecionada === false ? '<span class="a-chip cinza">sem aviso</span>' : ''}<span class="a-hora">${hora(h.ts)}</span></div>` +
+          `<span class="a-chip">${esc(h.nomeAlarme || r.nome)}</span>${h.frenteInferida ? `<span class="a-chip">Frente inferida: ${esc(h.frenteInferida)}</span>` : ''}${h.notificacaoSelecionada === false ? '<span class="a-chip cinza">sem aviso</span>' : ''}<span class="a-hora">${hora(h.ts)}</span></div>` +
           `<p class="a-txt">${esc(h.texto)}</p>` +
           `<p class="a-meta">${esc(h.descricao || '')}${h.operador ? ' · ' + esc(h.operador) : ''} · fonte ${esc(h.fonte)}</p>`;
         d.onclick = () => falar(h.fala || h.texto);

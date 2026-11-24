@@ -138,8 +138,12 @@ assert.equal(policy.montarFala({ tipoAlarme: '3484', numero: '8833', texto: 'SEM
 // Caminhão aguardado não inclui operador e usa frente ou fallback.
 assert.equal(policy.caminhaoCanavieiroTerceiro({ tipo: 'CAMINHÕES CANAVIEIRO TERC' }), true);
 assert.equal(policy.caminhaoCanavieiroTerceiro({ tipo: 'CAMINHÕES CANAVAREIRO TERC' }), true);
+assert.equal(policy.caminhaoCanavieiroTerceiro({ tipo: 'CAMINHAO CANAVIEIRO', grupoEquipamento: 'Caminhões Canavieiro Terc' }), true, 'campos reais do equipamento 4468');
 for (const tipo of ['CAMINHÕES CAÇAMBAS', 'CAMINHÕES MUNCK', 'CAMINHÕES BOMBEIROS', 'CAMINHÃO CANAVIEIRO']) {
   assert.equal(policy.caminhaoCanavieiroTerceiro({ tipo }), false, tipo + ' não entra no esquema da frente de colheita');
+}
+for (const tipo of ['CAMINHÕES CAÇAMBAS', 'CAMINHÕES MUNCK', 'CAMINHÕES BOMBEIROS']) {
+  assert.equal(policy.caminhaoCanavieiroTerceiro({ tipo, grupoEquipamento: 'Caminhões Canavieiro Terc' }), false, tipo + ' continua excluído apesar do nome cadastral do grupo');
 }
 assert.equal(
   policy.montarFala({ numero: '0083', e: { tipoCompleto: 'Trator', operacao: '123 - Aguardando Caminhão - HD', frente: 'Norte' }, operador: 'Ana' }),

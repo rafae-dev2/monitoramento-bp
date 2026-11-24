@@ -172,8 +172,10 @@
 
   function caminhaoCanavieiroTerceiro(e) {
     if (!e || typeof e !== 'object') return false;
-    var tipo = norm([e.tipo, e.tipoCompleto].filter(Boolean).join(' ')).replace(/[^a-z0-9]+/g, ' ');
-    var palavras = tipo.split(/\s+/);
+    var tipo = norm([e.tipo, e.tipoCompleto, e.nome].filter(Boolean).join(' ')).replace(/[^a-z0-9]+/g, ' ');
+    var grupo = norm([e.grupoEquipamento, e.descGrupoEquipamento].filter(Boolean).join(' ')).replace(/[^a-z0-9]+/g, ' ');
+    if (/cacamb|munck|bombeir/.test(tipo)) return false;
+    var palavras = (tipo + ' ' + grupo).trim().split(/\s+/);
     var caminhao = palavras.indexOf('caminhao') >= 0 || palavras.indexOf('caminhoes') >= 0;
     var canavieiro = palavras.some(function (palavra) { return /^canav/.test(palavra); });
     var terceiro = palavras.some(function (palavra) { return palavra === 'terc' || /^terceir[oa]s?$/.test(palavra); });
@@ -496,7 +498,9 @@
       var prefixo = item.nivel >= 3 ? 'Escalonamento. ' : item.nivel === 2 ? 'Urgente, parada continua. ' : '';
       var sufixo = item.nivel >= 3 ? ' Acionar ' + (item.lider ? 'líder ' + item.lider : 'líder da frente') + '.' : '';
       if (item.paradaId === 'aguardandoCarregamento' && caminhaoCanavieiroTerceiro(event)) {
-        var frenteColheita = event.frente == null ? '' : String(event.frente).trim();
+        var frenteDireta = event.frente == null ? '' : String(event.frente).trim();
+        var frenteInferida = event.frenteInferida == null ? '' : String(event.frenteInferida).trim();
+        var frenteColheita = frenteDireta || frenteInferida;
         var localColheita = frenteColheita
           ? (/^(?:frente|fazenda|s[ií]tio|propriedade)\b/i.test(frenteColheita) ? 'na ' + frenteColheita : 'na frente de colheita ' + frenteColheita)
           : 'na frente de colheita não informada';

@@ -16,7 +16,7 @@ hooks = """
   const chamarReal = chamar;
   const avaliarFrotaReal = avaliarFrota;
   window.__test = {
-    aplicarTelemetria, avaliarFrota, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, regraParada, regraFrenteDividida, regrasFrente, enviarAudit, ciclo, abrirNoMapa, timestampEquipamento,
+    aplicarTelemetria, atualizarFrentesInferidas, avaliarFrota, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, regraParada, regraFrenteDividida, regrasFrente, enviarAudit, ciclo, abrirNoMapa, timestampEquipamento,
     frota: () => [...frota.values()],
     setCtx: (v) => { ctx = Object.assign(ctx, v); },
     setChamar: (fn) => { chamar = fn; },
@@ -153,6 +153,21 @@ with sync_playwright() as pw:
       const checks = [];
       const ok = (v, name) => { if (!v) throw new Error(name); checks.push(name); };
       const api = MonitoramentoAlertas, t = __test;
+      const encodeGeohash = (latitude, longitude, precision=8) => {
+        const alphabet='0123456789bcdefghjkmnpqrstuvwxyz';
+        const lat=[-90,90], lon=[-180,180];
+        let longitudeNext=true, bits=0, value=0, result='';
+        while (result.length < precision) {
+          const range=longitudeNext ? lon : lat;
+          const coordinate=longitudeNext ? longitude : latitude;
+          const middle=(range[0]+range[1])/2;
+          value=(value<<1) | (coordinate>=middle ? 1 : 0);
+          if (coordinate>=middle) range[0]=middle; else range[1]=middle;
+          longitudeNext=!longitudeNext;
+          if (++bits===5) { result+=alphabet[value]; bits=0; value=0; }
+        }
+        return result;
+      };
       const row = {cdEquipamento:'TESTE-01', descEquipamento:'0083 - Trator fixture', descTpEquipamento:'TRATOR', descFrente:'Frente fixture', descGrupoEquipamento:'Frente fixture', descOperacao:'Operação fixture', vlVelocidade:85, vlParametro4:0, vlEd1:'0', vlTempoSemComunicacao:'0 DIA(S) 00:00:00', fgMonitoramentoAtivo:'T', dtHrLocal:new Date().toISOString()};
       const instanteTenant=Date.now();
       const parteTenant=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/Sao_Paulo',calendar:'gregory',numberingSystem:'latn',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(instanteTenant)).filter(p=>p.type!=='literal').map(p=>[p.type,p.value]));
@@ -257,6 +272,87 @@ with sync_playwright() as pw:
       t.regraParada(truckSpeechFazendaRow,inicioParadaFazenda+31*60_000);
       const falaFazenda=api.ativos().find(a=>a.regra==='paradaImprodutiva' && a.e.id==='TRUCK-SPEECH-FUNDO-25');
       ok(!!falaFazenda && falaFazenda.fala.includes('na Fazenda Fundo 25') && !falaFazenda.fala.toLowerCase().includes('dentro da usina'),'fala do caminhão informa Fazenda Fundo 25 em vez de dizer dentro da usina');
+
+      t.reset();
+      const geoNow=new Date().toISOString(), geoLat=-21.2, geoLon=-48.0;
+      const frenteGeo=(id,tipo,frente,lat=geoLat,lon=geoLon,dtHrLocal=geoNow)=>({
+        ...row,cdEquipamento:id,descEquipamento:id+' - '+tipo,descTpEquipamento:tipo,descFullTpEquipamento:tipo,
+        descFrente:'',descGrupoEquipamento:frente,descOperacao:'Operação fixture',geohash:encodeGeohash(lat,lon),dtHrLocal,
+        vlTempoSemComunicacao:'0 DIA(S) 00:00:00',fgMonitoramentoAtivo:'T'
+      });
+      const caminhao4468={...truckSpeech,cdEquipamento:'4468',descEquipamento:'4468 - Caminhão canavieiro terceiro',descTpEquipamento:'CAMINHAO CANAVIEIRO',descFullTpEquipamento:'Caminhão canavieiro',descFrente:'',descGrupoEquipamento:'Caminhões Canavieiro Terc',cdOperacao:908,descOperacao:'908 - Aguardando Carregamento',geohash:encodeGeohash(geoLat,geoLon),dtHrLocal:geoNow,vlTempoSemComunicacao:'0 DIA(S) 00:00:00'};
+      const refsFrente3=[frenteGeo('REF-3-COL','COLHEDORA','Frente 3',geoLat+0.0001,geoLon),frenteGeo('REF-3-TRANS','TRANSBORDO','Frente 3',geoLat,geoLon+0.0001),frenteGeo('REF-3-TRATOR','TRATOR','Frente 3',geoLat-0.0001,geoLon)];
+      const refFrente2=frenteGeo('REF-2-TRATOR','TRATOR','Frente 2',geoLat,geoLon-0.0001);
+      const caminhaoFundoGeo={...caminhao4468,cdEquipamento:'4468-FUNDO-25',descFrente:'Fazenda Fundo 25'};
+      t.aplicarTelemetria([caminhao4468,caminhaoFundoGeo,...refsFrente3,refFrente2]);
+      const consolidado4468=t.frota().find(e=>e.id==='4468');
+      const consolidadoFundoGeo=t.frota().find(e=>e.id==='4468-FUNDO-25');
+      ok(consolidado4468.tipo==='CAMINHAO CANAVIEIRO' && consolidado4468.grupoEquipamento==='Caminhões Canavieiro Terc' && consolidado4468.frente==='' && consolidado4468.frenteInferida==='Frente 3' && consolidado4468.frenteInferidaReferencias===3,'4468 usa tipo/grupo cadastral reais e consenso 3:1 para inferir Frente 3 sem sobrescrever a frente direta ou o grupo');
+      ok(consolidadoFundoGeo.frente==='Fazenda Fundo 25' && !consolidadoFundoGeo.frenteInferida,'Fazenda Fundo 25 como frente direta nunca é substituída pela inferência espacial');
+
+      t.reset();
+      const streamCaminhao4468={...caminhao4468,cdEquipamento:'4468-STREAM'};
+      t.processarQuadros([streamCaminhao4468,...refsFrente3]);
+      ok(t.frota().find(e=>e.id==='4468-STREAM').frenteInferida==='Frente 3','quadros do stream guardam geohash/horário e são consolidados antes de inferir a frente');
+
+      t.reset();
+      const truckWithoutLocation={...caminhao4468,cdEquipamento:'4468-SEM-POS',geohash:''};
+      t.aplicarTelemetria([truckWithoutLocation]);
+      ok(!t.frota().find(e=>e.id==='4468-SEM-POS').frenteInferida,'sem geohash/posição atual a localização permanece não informada');
+
+      t.reset();
+      const truckLowPrecision={...caminhao4468,cdEquipamento:'4468-GEO-5',geohash:'ezs42'};
+      t.aplicarTelemetria([truckLowPrecision,...refsFrente3]);
+      ok(!t.frota().find(e=>e.id==='4468-GEO-5').frenteInferida,'geohash com menos de sete caracteres não participa da inferência');
+
+      t.reset();
+      const posicaoAntiga=new Date(Date.now()-6*60_000).toISOString();
+      const truckOldPosition={...caminhao4468,cdEquipamento:'4468-POS-ANTIGA',dtHrLocal:posicaoAntiga};
+      t.aplicarTelemetria([truckOldPosition,...refsFrente3]);
+      ok(!t.frota().find(e=>e.id==='4468-POS-ANTIGA').frenteInferida,'posição do caminhão com mais de cinco minutos não pode inferir uma frente');
+
+      t.reset();
+      const refsAntigas=refsFrente3.map(e=>({...e,dtHrLocal:posicaoAntiga}));
+      t.aplicarTelemetria([{...caminhao4468,cdEquipamento:'4468-REF-ANTIGA'},...refsAntigas]);
+      ok(!t.frota().find(e=>e.id==='4468-REF-ANTIGA').frenteInferida,'referências com posição antiga não podem votar na inferência');
+
+      t.reset();
+      const refsConflitantes=[...refsFrente3.slice(0,2),frenteGeo('REF-3-TRATOR-2','TRATOR','Frente 3'),frenteGeo('REF-2-TRATOR-1','TRATOR','Frente 2'),frenteGeo('REF-2-COL','COLHEDORA','Frente 2')];
+      t.aplicarTelemetria([{...caminhao4468,cdEquipamento:'4468-AMBIGUA'},...refsConflitantes]);
+      ok(!t.frota().find(e=>e.id==='4468-AMBIGUA').frenteInferida,'posições concorrentes sem consenso de 75% mantêm a frente não informada');
+
+      t.reset();
+      t.aplicarTelemetria([{...caminhao4468,cdEquipamento:'4468-SO-DOIS'},...refsFrente3.slice(0,2)]);
+      ok(!t.frota().find(e=>e.id==='4468-SO-DOIS').frenteInferida,'duas referências não atendem ao mínimo conservador de três equipamentos');
+
+      t.reset();
+      const refsExcluidas=['CAMINHÕES CAÇAMBAS','CAMINHÕES MUNCK','CAMINHÕES BOMBEIROS'].map((tipo,i)=>frenteGeo('REF-EXCLUIDA-'+i,tipo,'Frente 3'));
+      t.aplicarTelemetria([{...caminhao4468,cdEquipamento:'4468-SEM-REF-VALIDA'},...refsExcluidas]);
+      ok(!t.frota().find(e=>e.id==='4468-SEM-REF-VALIDA').frenteInferida,'Caçamba, Munck e Bombeiro não contam como referências de frente');
+
+      t.reset(); t.capturarFalas();
+      api.configurar({calcularLocal:false,voz:true,notificacao:false,popup:false,som:false,vibrar:false});
+      const truckActive={...caminhao4468,cdEquipamento:'4468-ALERTA-ATIVO',geohash:''};
+      t.aplicarTelemetria([truckActive]);
+      const truckActiveRow=t.frota().find(e=>e.id==='4468-ALERTA-ATIVO'), inicioAlertaAtivo=Date.now();
+      t.regraParada(truckActiveRow,inicioAlertaAtivo);
+      t.regraParada(truckActiveRow,inicioAlertaAtivo+31*60_000);
+      const alertaSemFrenteAtivo=api.ativos().find(a=>a.e.id==='4468-ALERTA-ATIVO');
+      const falaAntesFrenteInferida=alertaSemFrenteAtivo && alertaSemFrenteAtivo.fala;
+      const historicoAntesFrenteInferida=api.historico().length;
+      t.aplicarTelemetria([{...truckActive,geohash:encodeGeohash(geoLat,geoLon),dtHrLocal:new Date().toISOString()},...refsFrente3,refFrente2]);
+      t.atualizarFrentesInferidas(Date.now());
+      const alertaFrenteAtualizada=api.ativos().find(a=>a.e.id==='4468-ALERTA-ATIVO');
+      api.abrirPainel();
+      ok(!!alertaSemFrenteAtivo && falaAntesFrenteInferida.includes('frente de colheita não informada') && !!alertaFrenteAtualizada && alertaFrenteAtualizada.fala.includes('na Frente 3') && alertaFrenteAtualizada.texto.includes('frente inferida: Frente 3'),'a frente descoberta após o alerta ativo atualiza texto e fala sem alterar descFrente');
+      ok(api.historico().length===historicoAntesFrenteInferida && api.historico()[0].frente==='' && api.historico()[0].frenteInferida==='Frente 3','a inferência atualiza a linha existente do histórico sem criar outra nem sobrescrever a frente direta');
+      ok(t.falasCapturadas().length===2 && t.falasCapturadas()[1].includes('na Frente 3'),'uma única atualização de localização pode falar a frente sem repetir a notificação a cada recálculo');
+      const chipAtivo=[...document.querySelectorAll('#lista-ativos .a-chip')].some(c=>c.textContent==='Frente inferida: Frente 3');
+      document.querySelector('.aba[data-aba="historico"]').click();
+      const chipHistorico=[...document.querySelectorAll('#lista-historico .a-chip')].some(c=>c.textContent==='Frente inferida: Frente 3');
+      document.querySelector('.aba[data-aba="ativos"]').click();
+      ok(chipAtivo && chipHistorico,'alerta ativo e histórico identificam explicitamente a localização como Frente inferida');
+
       t.reset();
       const grupoSemFrente={...truckSpeech,cdEquipamento:'TRUCK-GROUP-FRONT',descGrupoEquipamento:'Frente 3'};
       delete grupoSemFrente.descFrente;
