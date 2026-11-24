@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.5.1';
+  const VERSAO = '1.6.0';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -89,6 +89,7 @@
     rpmOcioso: 900,
     minutosOcioso: 5,
     refeicaoGrupos: {}, // grupo/frente → minutos de refeição (0 = não controlar)
+    glossarioFala: '', // "AG=Aguardando; HR=" (termo=como falar; vazio omite o termo)
     refeicaoEquipamentos: '', // "6614=30, 8833=60": prevalece sobre o grupo
     escalarUrgenteMin: 10, // minutos após a tolerância: repete como urgente
     escalarLiderMin: 20, // minutos após a tolerância: pede acionar o líder
@@ -1676,7 +1677,7 @@
 
   /* "Veículo 8833, operador Rafael, excedeu a velocidade. Verificar." */
   function montarFala(a) {
-    return policy.montarFala(a);
+    return policy.montarFala(a, cfg);
   }
 
   /* --------------------------- voz (TTS) --------------------------- */
@@ -2169,6 +2170,15 @@
       <label class="campo"><span>Todas as colhedoras paradas há (min)</span><input id="cfg-sem-colh" type="number" min="0" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Transbordos aguardando colhedora (nº)</span><input id="cfg-transb-ag" type="number" min="0" step="1" inputmode="numeric"></label>
     </div>
+    <h3 class="secao-alertas">Pronúncia dos termos (glossário)</h3>
+    <p class="fine">Ensine a voz a falar abreviações do SGPA. Uma regra por linha, no formato <b>termo=como falar</b>. O glossário já transforma <b>AG colhedora parada rápida</b> em <b>Aguardando colhedora parada rápida</b>. Exemplos: <code>AG=Aguardando</code>, <code>COLH=colhedora</code>. Deixar vazio depois do = faz a voz omitir o termo (ex.: <code>HR=</code>). Vale para todos os alertas falados; maiúsculas e acentos não importam. Depois, toque em Salvar preferências.</p>
+    <textarea id="cfg-glossario" aria-label="Glossário de pronúncia" rows="6" spellcheck="false" autocomplete="off placeholder="AG=Aguardando&#10;COLH=colhedora&#10;HR="></textarea>
+    <p class="fine" id="cfg-glossario-padrao"></p>
+    <div class="grade">
+      <label class="campo"><span>Testar frase</span><input id="cfg-glossario-teste" type="text" value="AG colhedora parada rápida" autocomplete="off"></label>
+    </div>
+    <p id="cfg-glossario-previa" class="fine"></p>
+    <button id="cfg-glossario-ouvir" type="button">Ouvir pronúncia</button>
     <h3 class="secao-alertas">Fontes e canais de aviso</h3>
     <div class="switches">
       <label class="chk"><input id="cfg-liga" type="checkbox"><span>Central de alertas ligada</span></label>
@@ -2282,7 +2292,7 @@
       const nativa = ponteNativa();
       if (nativa && typeof nativa.gerenciarVozes === 'function') nativa.gerenciarVozes();
     };
-    $('cfg-teste2').onclick = () => falar(policy.montarFala({ regra: 'velocidade', numero: '8833', valor: 85 }));
+    $('cfg-teste2').onclick = () => falar(policy.montarFala({ regra: 'velocidade', numero: '8833', valor: 85 }, cfg));
     $('cfg-busca-tipo').oninput = () => { limiteTipos = 80; renderTipos(); };
     if ($('cfg-busca-categoria')) $('cfg-busca-categoria').oninput = filtrarCategorias;
     if ($('cfg-busca-regra')) $('cfg-busca-regra').oninput = filtrarRegras;
@@ -2800,6 +2810,32 @@
   }
 
   const OPCOES_REFEICAO = [[0, 'Não controlar'], [30, '30 min'], [45, '45 min'], [60, '1 hora'], [90, '1h30']];
+  function textoGlossarioAtual() {
+    const t = $('cfg-glossario');
+    return t ? t.value : cfg.glossarioFala || '';
+  }
+  function previaGlossario() {
+    const i = $('cfg-glossario-teste');
+    const p = $('cfg-glossario-previa');
+    if (!i || !p) return '';
+    const falado = policy.aplicarGlossario(i.value, { glossarioFala: textoGlossarioAtual() });
+    p.textContent = 'A voz vai falar: “' + falado + '”';
+    return falado;
+  }
+  function iniciarGlossario() {
+    const t = $('cfg-glossario');
+    if (!t) return;
+    t.value = cfg.glossarioFala || '';
+    const pad = $('cfg-glossario-padrao');
+    if (pad) pad.textContent = 'Já incluídos: ' + policy.GLOSSARIO_PADRAO.map((r) => r[0].toUpperCase() + '=' + r[1]).join(', ') + '. Uma regra sua com o mesmo termo substitui a padrão.';
+    t.oninput = previaGlossario;
+    if ($('cfg-glossario-teste')) $('cfg-glossario-teste').oninput = previaGlossario;
+    if ($('cfg-glossario-ouvir')) $('cfg-glossario-ouvir').onclick = () => {
+      const f = previaGlossario();
+      if (f) falar(f);
+    };
+    previaGlossario();
+  }
   function renderParadas() {
     const box = $('cfg-paradas');
     if (!box) return;
@@ -2920,6 +2956,7 @@
 
     renderRefeicoes();
     renderParadas();
+    iniciarGlossario();
     const box = $('cfg-frentes');
     box.innerHTML = '';
     const lista = (estado.frentes || []).slice();
@@ -2988,6 +3025,7 @@
       equipamentos: $('cfg-eq').value,
       ...lerRefeicoes(),
       ...lerParadas(),
+      glossarioFala: $('cfg-glossario') ? $('cfg-glossario').value.trim() : cfg.glossarioFala || '',
       volume: n('cfg-vol', 1),
       taxa: n('cfg-taxa', 1),
       tom: n('cfg-tom', 1),

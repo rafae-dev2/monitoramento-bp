@@ -351,7 +351,71 @@
       .trim();
   }
 
-  function montarFala(alert) {
+  /* Glossário de pronúncia: abreviações do SGPA → como a voz deve falar.
+     Padrões abaixo; o usuário acrescenta/substitui em cfg.glossarioFala
+     (uma regra por linha ou separada por ";": "AG=Aguardando"). Vazio = não falar o termo. */
+  var GLOSSARIO_PADRAO = [
+    ['ag', 'Aguardando'], ['aguard', 'Aguardando'], ['colh', 'colhedora'],
+    ['sequenc', 'sequência'], ['transp', 'transporte'], ['bascul', 'basculamento'],
+    ['transbo', 'transbordo'], ['manut', 'manutenção']
+  ];
+  function fold(texto) {
+    var out = '';
+    for (var i = 0; i < texto.length; i += 1) {
+      var c = texto.charAt(i);
+      var d = c.normalize ? c.normalize('NFD').charAt(0) : c;
+      out += d.toLowerCase();
+    }
+    return out;
+  }
+  function regrasGlossario(cfg) {
+    var mapa = {};
+    GLOSSARIO_PADRAO.forEach(function (r) { mapa[r[0]] = r[1]; });
+    var txt = cfg && cfg.glossarioFala ? String(cfg.glossarioFala) : '';
+    txt.split(/[;\n]+/).forEach(function (linha) {
+      var i = linha.indexOf('=');
+      if (i < 1) return;
+      var termo = fold(linha.slice(0, i).trim()).replace(/\s+/g, ' ');
+      if (termo) mapa[termo] = linha.slice(i + 1).trim();
+    });
+    return Object.keys(mapa).map(function (k) { return [k, mapa[k]]; })
+      .sort(function (a, b) { return b[0].length - a[0].length; });
+  }
+  function alnum(c) { return !!c && /[a-z0-9]/.test(c); }
+  function aplicarGlossario(texto, cfg) {
+    var original = texto == null ? '' : String(texto);
+    var regras = regrasGlossario(cfg);
+    var f = fold(original);
+    var res = '';
+    var i = 0;
+    while (i < original.length) {
+      var achou = null;
+      if (!alnum(f.charAt(i - 1))) {
+        for (var k = 0; k < regras.length; k += 1) {
+          var t = regras[k][0];
+          if (f.substr(i, t.length) === t && !alnum(f.charAt(i + t.length))) {
+            achou = regras[k];
+            break;
+          }
+        }
+      }
+      if (achou) {
+        var fim = i + achou[0].length;
+        // "AG. SEQUENC." → "Aguardando sequência": engole o ponto da abreviação
+        if (achou[0].charAt(achou[0].length - 1) !== '.' && f.charAt(fim) === '.') fim += 1;
+        res += achou[1];
+        i = fim;
+      } else {
+        res += original.charAt(i);
+        i += 1;
+      }
+    }
+    return res.replace(/\s+/g, ' ').replace(/\s+([,.;!?])/g, '$1').replace(/\s+-\s+(?=[,.;!?]|$)/g, '').trim();
+  }
+  function montarFala(alert, cfg) {
+    return aplicarGlossario(montarFalaBase(alert), cfg);
+  }
+  function montarFalaBase(alert) {
     var item = isObject(alert) ? alert : {};
     var event = eventFor(item);
     var selectedCategory = categoryFromAlert(item);
@@ -436,6 +500,8 @@
     paradaImprodutiva: paradaImprodutiva,
     limiteParada: limiteParada,
     liderFrente: liderFrente,
+    aplicarGlossario: aplicarGlossario,
+    GLOSSARIO_PADRAO: GLOSSARIO_PADRAO,
     limiteRefeicao: limiteRefeicao,
     mapaEquipamentos: mapaEquipamentos,
     normalizeCfg: normalizeCfg,

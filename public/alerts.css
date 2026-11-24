@@ -1040,3 +1040,12 @@ button.mudo {
 }
 #voz-bloqueada.hide { display: none; }
 @keyframes vozPulso { 50% { box-shadow: 0 0 0 10px rgba(240,204,12,.25), 0 8px 28px rgba(0,0,0,.5); } }
+
+#cfg-glossario {
+  display: block; width: 100%; box-sizing: border-box; resize: vertical;
+  min-height: 104px; margin: 6px 0 10px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: #0c141c; color: var(--ink); font: 13px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+#cfg-glossario:focus { outline: none; border-color: rgba(240, 204, 12, 0.55); }
+#cfg-glossario-previa { padding: 9px 11px; border-left: 3px solid #f0cc0c; background: rgba(240,204,12,.07); border-radius: 4px 9px 9px 4px; }

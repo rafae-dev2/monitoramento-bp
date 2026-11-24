@@ -431,6 +431,21 @@ with sync_playwright() as pw:
     page.click('#btn-cfg')
     page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 11")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
+    sample = page.locator('#cfg-glossario-previa').text_content()
+    assert 'Aguardando colhedora parada rápida' in sample, sample
+    assert page.evaluate("AlertasPolicy.aplicarGlossario('AG. SEQUENC. DE TRABALHO')") == 'Aguardando sequência DE TRABALHO'
+    assert page.evaluate("AlertasPolicy.aplicarGlossario('MAGRO AGRO')") == 'MAGRO AGRO'
+    page.fill('#cfg-glossario', 'AG=Esperando\nCOLH=colhedora')
+    page.fill('#cfg-glossario-teste', 'AG COLH parada rápida')
+    sample = page.locator('#cfg-glossario-previa').text_content()
+    assert 'Esperando colhedora parada rápida' in sample, sample
+    page.click('#cfg-salvar')
+    assert page.evaluate("MonitoramentoAlertas.config().glossarioFala") == 'AG=Esperando\nCOLH=colhedora'
+    page.click('#btn-cfg')
+    assert page.locator('#cfg-glossario').input_value() == 'AG=Esperando\nCOLH=colhedora', 'glossário persiste após fechar e reabrir'
+    page.click('#cfg-fechar-x')
+    page.click('#btn-cfg')
+    print('OK: expansão de AG/COLH, prévia, substituição personalizada e persistência do glossário')
     page.fill('#cfg-busca-categoria', 'fila')
     vis = page.evaluate("[...document.querySelectorAll('#cfg-categorias > *')].filter(x => !x.classList.contains('hide')).length")
     assert 1 <= vis < 11, f'busca de categorias deve filtrar ({vis})'
