@@ -157,3 +157,8 @@ Nova seção “Controle de refeições” nas configurações da Central. Cada 
 - O apontamento `905 - Aguardando Caminhão` (por código `cdOperacao=905` ou descrição) gera o alarme na primeira leitura, sem esperar as leituras de confirmação.
 - Detecção ampliada para variações que começam com "Aguardando Caminhão".
 - Repetição segue o intervalo de repetição configurado. Cache `bperes-shell-v26`.
+
+
+## Publicação verificada da versão 1.8.4 — 24/11/2026
+
+A versão **1.8.4** do commit `76b0c40` foi publicada no site Netlify existente `https://sgpa-solinftec-bpa.netlify.app/`. O deploy `6b059e8df5f32e6a061c7aa1` foi confirmado como **ready** em contexto **production**. O deploy manteve as sete Functions e o agendamento `push-monitor` (`* * * * *`). `index.html`, `alerts.js`, `alerts-policy.js` e `sw.js` responderam HTTP 200; os hashes SHA-256 dos quatro arquivos servidos coincidiram com os arquivos validados localmente. O motor servido é 1.8.4 e o cache PWA é `bperes-shell-v41`.
