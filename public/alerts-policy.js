@@ -7,7 +7,7 @@
 }(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis), function () {
   'use strict';
 
-  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente'];
+  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'aguardandoBasculamento', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente'];
   var DEFAULTS = {
     velocidade: true,
     rpm: true,
@@ -16,6 +16,7 @@
     motorCondicao: true,
     generico: true,
     aguardandoCaminhao: true,
+    aguardandoBasculamento: true,
     semApontamento: true,
     refeicao: true,
     paradaImprodutiva: true,
@@ -141,7 +142,7 @@
     if (String(e.cdOperacao == null ? '' : e.cdOperacao).trim() === '905' || /^\s*905\s*-/.test(operacao)) return true;
     operacao = operacao.replace(/^\s*\d+\s*-\s*/, '');
     var normalized = norm(operacao);
-    return /^aguardando caminhao\b/.test(normalized);
+    return /^aguardando caminhao(?:\s*-\s*(?:hd|hr))?$/.test(normalized);
   }
 
   function semApontamento(e) {
@@ -273,7 +274,7 @@
       var compact = norm(directText).replace(/[\s_-]+/g, '');
       var aliases = {
         velocidade: 'velocidade', rpm: 'rpm', ocioso: 'ocioso', turno: 'turno',
-        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', semapontamento: 'semApontamento', refeicao: 'refeicao', paradaimprodutiva: 'paradaImprodutiva', gestaofrente: 'gestaoFrente',
+        motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', aguardandobasculamento: 'aguardandoBasculamento', semapontamento: 'semApontamento', refeicao: 'refeicao', paradaimprodutiva: 'paradaImprodutiva', gestaofrente: 'gestaoFrente',
         ociososemapontamento: 'ocioso'
       };
       if (aliases[compact]) return aliases[compact];
@@ -357,7 +358,7 @@
   var GLOSSARIO_PADRAO = [
     ['ag', 'Aguardando'], ['aguard', 'Aguardando'], ['colh', 'colhedora'],
     ['sequenc', 'sequência'], ['transp', 'transporte'], ['bascul', 'basculamento'],
-    ['transbo', 'transbordo'], ['manut', 'manutenção']
+    ['transbo', 'transbordo'], ['manut', 'manutenção'], ['terc', 'Terceiro']
   ];
   function fold(texto) {
     var out = '';
@@ -401,8 +402,9 @@
       }
       if (achou) {
         var fim = i + achou[0].length;
-        // "AG. SEQUENC." → "Aguardando sequência": engole o ponto da abreviação
-        if (achou[0].charAt(achou[0].length - 1) !== '.' && f.charAt(fim) === '.') fim += 1;
+        // "AG. SEQUENC." → "Aguardando sequência": engole o ponto da abreviação.
+        // Terc é uma classe/nome falado por extenso; preserva o ponto de pausa após "Terceiro".
+        if (achou[0] !== 'terc' && achou[0].charAt(achou[0].length - 1) !== '.' && f.charAt(fim) === '.') fim += 1;
         res += achou[1];
         i = fim;
       } else {
@@ -424,6 +426,18 @@
       var front = event.frente;
       if (front == null || String(front).trim() === '') front = 'frente não informada';
       return 'Trator ' + vehicleNumber(item, event) + ' aguardando caminhão. Frente/grupo ' + String(front).trim() + '. Verificar.';
+    }
+
+    if (selectedCategory === 'aguardandoBasculamento') {
+      var truckIds = Array.isArray(item.caminhoes) ? item.caminhoes.map(function (id) { return idFalado(id); }).filter(Boolean) : [];
+      var basculamentoFrente = event.frente == null || String(event.frente).trim() === '' ? 'frente não informada' : String(event.frente).trim();
+      var truckText = truckIds.length > 1
+        ? 'os caminhões ' + truckIds.join(', ') + ' estão aguardando carregamento na mesma frente'
+        : truckIds.length === 1
+          ? 'o caminhão ' + truckIds[0] + ' está aguardando carregamento na mesma frente'
+          : 'há caminhão aguardando carregamento na mesma frente';
+      return 'Trator ' + vehicleNumber(item, event) + ': aguardando basculamento, inferido pelo aplicativo porque ' + truckText +
+        '. Frente/grupo ' + basculamentoFrente + '. No SGPA, o apontamento permanece Aguardando Caminhão. Verificar.';
     }
 
     if (selectedCategory === 'refeicao') {

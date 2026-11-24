@@ -13,14 +13,21 @@ source = (ROOT / 'public/alerts.js').read_text()
 hooks = """
   let falasCapturadas = [];
   const falarReal = falar;
+  const chamarReal = chamar;
+  const avaliarFrotaReal = avaliarFrota;
   window.__test = {
-    aplicarTelemetria, avaliarFrota, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, enviarAudit, ciclo, abrirNoMapa,
+    aplicarTelemetria, avaliarFrota, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, regrasFrente, enviarAudit, ciclo, abrirNoMapa, timestampEquipamento,
+    frota: () => [...frota.values()],
     setCtx: (v) => { ctx = Object.assign(ctx, v); },
+    setChamar: (fn) => { chamar = fn; },
+    setEvaluationLogger: (sink) => { avaliarFrota = sink ? ((ts, mode) => { sink(ts, mode); return avaliarFrotaReal(ts, mode); }) : avaliarFrotaReal; },
     capturarFalas: () => { falasCapturadas = []; falar = (texto) => falasCapturadas.push(String(texto)); },
     restaurarFalas: () => { falar = falarReal; },
     falasCapturadas: () => falasCapturadas.slice(),
     reset: () => {
+      chamar = chamarReal; avaliarFrota = avaliarFrotaReal;
       frota.clear(); estados.clear(); ativos.clear(); hist = []; filaAudit.length = 0;
+      gestaoUltimoDisparo.clear();
       cfg = policy.normalizeCfg(JSON.parse(JSON.stringify(PADRAO)));
       cfg.popup = false; cfg.som = false; cfg.voz = false; cfg.vibrar = false; cfg.usarStream = false; cfg.notificacao = false;
       rajada = {ts: 0, voz: 0};
@@ -42,7 +49,7 @@ missing_requests = []
 errors = []
 with sync_playwright() as pw:
     browser = pw.chromium.launch(executable_path='/usr/bin/chromium', args=['--no-sandbox', '--disable-dev-shm-usage'])
-    context = browser.new_context(viewport={'width': 412, 'height': 915}, locale='pt-BR', service_workers='block')
+    context = browser.new_context(viewport={'width': 412, 'height': 915}, locale='pt-BR', timezone_id='America/Los_Angeles', service_workers='block')
     page = context.new_page()
     page.on('pageerror', lambda e: errors.append(str(e)))
     def route(r):
@@ -145,8 +152,17 @@ with sync_playwright() as pw:
       const checks = [];
       const ok = (v, name) => { if (!v) throw new Error(name); checks.push(name); };
       const api = MonitoramentoAlertas, t = __test;
-      const row = {cdEquipamento:'TESTE-01', descEquipamento:'0083 - Trator fixture', descTpEquipamento:'TRATOR', descGrupoEquipamento:'Frente fixture', descOperacao:'Operação fixture', vlVelocidade:85, vlParametro4:0, vlEd1:'0', vlTempoSemComunicacao:'0 DIA(S) 00:00:00', fgMonitoramentoAtivo:'T'};
+      const row = {cdEquipamento:'TESTE-01', descEquipamento:'0083 - Trator fixture', descTpEquipamento:'TRATOR', descGrupoEquipamento:'Frente fixture', descOperacao:'Operação fixture', vlVelocidade:85, vlParametro4:0, vlEd1:'0', vlTempoSemComunicacao:'0 DIA(S) 00:00:00', fgMonitoramentoAtivo:'T', dtHrLocal:new Date().toISOString()};
+      const instanteTenant=Date.now();
+      const parteTenant=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/Sao_Paulo',calendar:'gregory',numberingSystem:'latn',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(instanteTenant)).filter(p=>p.type!=='literal').map(p=>[p.type,p.value]));
+      const arrayTenant=[parteTenant.year,parteTenant.month,parteTenant.day,parteTenant.hour,parteTenant.minute,parteTenant.second].map(Number);
+      const localBrasileiro=`${parteTenant.day}/${parteTenant.month}/${parteTenant.year} ${parteTenant.hour}:${parteTenant.minute}:${parteTenant.second}`;
+      const isoSemFuso=`${parteTenant.year}-${parteTenant.month}-${parteTenant.day}T${parteTenant.hour}:${parteTenant.minute}:${parteTenant.second}`;
+      ok(Math.abs(t.timestampEquipamento(arrayTenant)-instanteTenant)<120_000,'dtHrLocal em array é interpretado no fuso São Paulo, não no fuso Los Angeles do navegador');
+      ok(Math.abs(t.timestampEquipamento(localBrasileiro)-instanteTenant)<120_000,'dtHrLocal dd/mm/aaaa usa o fuso do tenant');
+      ok(Math.abs(t.timestampEquipamento(isoSemFuso)-instanteTenant)<120_000,'ISO sem offset usa o fuso do tenant, não o do dispositivo');
       const feed = (r) => { t.aplicarTelemetria([r]); t.avaliarFrota(Date.now(),'lotes'); };
+      const aguardarJanela905 = (id) => t.regraAguardandoCaminhao(t.frota().find(e=>e.id===id),Date.now()+3000);
       feed(row);
       ok(!api.ativos().some(a => a.regra==='velocidade'), 'telemetria a 85 não produz velocidade local');
       const a = {cdEquipamento:row.cdEquipamento, cdId:'EPISODIO-1', cdTpAlarme:5, descTpAlarme:'VELOCIDADE', vlAlarme:85, fgOnline:true};
@@ -176,6 +192,7 @@ with sync_playwright() as pw:
       ok(api.historico().length===old, 'central desligada bloqueia REST e stream');
       t.reset(); api.configurar({calcularLocal:false});
       feed({...row,descOperacao:'999 - Aguardando Caminhão - HD'});
+      aguardarJanela905('TESTE-01');
       const wait = api.ativos()[0];
       ok(wait && wait.regra==='aguardandoCaminhao' && wait.texto.includes('Frente fixture'), 'espera gera alerta com frente mesmo com cálculo local desligado');
       const wn = api.historico().length;
@@ -185,12 +202,95 @@ with sync_playwright() as pw:
       feed({...row,descOperacao:'Aguardando Carregamento'});
       ok(api.ativos().length===0, 'duas leituras negativas encerram espera sem equivaler carregamento');
       feed({...row,descOperacao:'Aguardando Caminhão'});
+      aguardarJanela905('TESTE-01');
       ok(api.historico().length===wn+1, 'novo episódio de espera notifica novamente');
       t.reset(); api.configurar({amostras:3});
       feed({...row,descOperacao:'905 - AGUARDANDO CAMINHAO'});
-      ok(api.ativos().length===1 && api.ativos()[0].regra==='aguardandoCaminhao','905 dispara na primeira leitura mesmo exigindo confirmações');
+      ok(api.ativos().length===0,'905 aguarda somente a janela curta para reconciliar quadros do stream');
+      aguardarJanela905('TESTE-01');
+      ok(api.ativos().length===1 && api.ativos()[0].regra==='aguardandoCaminhao','sem caminhão correspondente, 905 dispara após a janela curta, sem esperar a tolerância de parada');
       t.reset(); t.aplicarTelemetria([{...row,cdEquipamento:'COL-905',cdOperacao:905,descOperacao:'Aguardando Caminhão Colheita'}]); t.avaliarFrota(Date.now(),'lotes');
+      t.regraAguardandoCaminhao(t.frota().find(e=>e.id==='COL-905'),Date.now()+3000);
       ok(api.ativos().some(x=>x.e.id==='COL-905' && x.regra==='aguardandoCaminhao'),'código 905 reconhecido pelo código da operação');
+      t.reset();
+      const frenteCana='Caminhões Canavieiro Terc';
+      const caminhaoFila={...row,cdEquipamento:'TRUCK-4451',descEquipamento:'4451 - Caminhão Canavieiro',descTpEquipamento:'CAMINHÕES CANAVIEIRO TERC',descGrupoEquipamento:frenteCana,cdOperacao:908,descOperacao:'908 - Aguardando Carregamento'};
+      const trator905={...row,cdEquipamento:'TRACTOR-8833',descEquipamento:'8833 - Trator fixture',descTpEquipamento:'TRATOR',descGrupoEquipamento:frenteCana,cdOperacao:905,descOperacao:'905 - Aguardando Caminhão'};
+      t.aplicarTelemetria([caminhaoFila,trator905]);
+      const tratorConsolidado=t.frota().find(e=>e.id==='TRACTOR-8833'), inicioCorrelacao=Date.now();
+      t.regraAguardandoCaminhao(tratorConsolidado,inicioCorrelacao);
+      ok(!api.ativos().some(a=>a.regra==='aguardandoCaminhao'),'caminhão em Aguardando Carregamento na mesma frente suprime o falso 905');
+      ok(!api.ativos().some(a=>a.regra==='aguardandoBasculamento'),'basculamento inferido respeita tolerância de 15 minutos');
+      t.regraAguardandoCaminhao(tratorConsolidado,inicioCorrelacao+16*60_000);
+      const basculamento=api.ativos().find(a=>a.regra==='aguardandoBasculamento');
+      ok(!!basculamento && basculamento.notificar && basculamento.texto.includes('inferido pelo app') && basculamento.detalhe.includes('905') && basculamento.detalhe.includes('nenhum apontamento foi alterado'),'correlação gera alerta de basculamento inferido sem alterar o SGPA');
+      ok(basculamento.fala.includes('caminhão quatro quatro cinco um') && basculamento.fala.includes('Frente/grupo Caminhões Canavieiro Terceiro') && basculamento.fala.includes('permanece Aguardando Caminhão'),'fala cita caminhão, frente, pronúncia de Terc e o apontamento original');
+      t.reset();
+      const streamTrator905={...trator905,cdEquipamento:'STREAM-TRACTOR',descFrente:frenteCana};
+      const streamCaminhaoFila={...caminhaoFila,cdEquipamento:'STREAM-TRUCK',descFrente:frenteCana};
+      t.processarQuadros([streamTrator905,streamCaminhaoFila]);
+      ok(!api.ativos().some(a=>a.regra==='aguardandoCaminhao'),'o lote do stream consolida caminhão e trator antes de decidir o 905');
+      t.reset();
+      const streamTratorSeparado={...streamTrator905,cdEquipamento:'STREAM-TRACTOR-SEPARADO'};
+      const streamCaminhaoSeparado={...streamCaminhaoFila,cdEquipamento:'STREAM-TRUCK-SEPARADO'};
+      t.processarQuadros([streamTratorSeparado]);
+      ok(!api.ativos().some(a=>a.regra==='aguardandoCaminhao'),'905 não é emitido durante a janela de reconciliação do primeiro lote');
+      t.processarQuadros([streamCaminhaoSeparado]);
+      ok(!api.ativos().some(a=>a.regra==='aguardandoCaminhao') && !api.ativos().some(a=>a.regra==='aguardandoBasculamento'),'caminhão recebido em lote posterior e na mesma frente suprime o 905 falso');
+      t.reset();
+      const caminhaoOutraFrente={...caminhaoFila,descGrupoEquipamento:'Frente diferente'};
+      t.aplicarTelemetria([caminhaoOutraFrente,trator905]);
+      const tratorOutraFrente=t.frota().find(e=>e.id==='TRACTOR-8833');
+      t.regraAguardandoCaminhao(tratorOutraFrente,Date.now()-10_000);
+      t.regraAguardandoCaminhao(tratorOutraFrente,Date.now());
+      ok(!api.ativos().some(a=>a.regra==='aguardandoCaminhao'),'a consulta REST lenta não consome a janela antes de observar o 905');
+      t.regraAguardandoCaminhao(t.frota().find(e=>e.id==='TRACTOR-8833'),Date.now()+3000);
+      ok(api.ativos().some(a=>a.regra==='aguardandoCaminhao'),'sem caminhão correspondente na mesma frente, 905 continua quase imediato');
+      t.reset();
+      api.configurar({espelharServidor:false,usarStream:false});
+      const inicioCicloLento=Date.now(); let avaliacaoCicloLento=0;
+      t.setEvaluationLogger((ts,mode)=>{if(mode==='lotes')avaliacaoCicloLento=ts;});
+      t.setChamar(async()=>{await new Promise(resolve=>setTimeout(resolve,3200));return [{...trator905,cdEquipamento:'REST-LENTO-905',dtHrLocal:new Date().toISOString()}];});
+      await t.ciclo();
+      ok(avaliacaoCicloLento>=inicioCicloLento+3000,'ciclo REST avalia a frota no horário da resposta, não no início da requisição');
+      ok(!api.ativos().some(a=>a.regra==='aguardandoCaminhao'),'consulta REST lenta não emite 905 antes de completar a janela após sua resposta');
+      t.regraAguardandoCaminhao(t.frota().find(e=>e.id==='REST-LENTO-905'),Date.now()+3000);
+      ok(api.ativos().some(a=>a.regra==='aguardandoCaminhao'),'sem caminhão correspondente, 905 dispara após a janela contada da observação');
+      t.reset();
+      const caminhaoAntigo={...caminhaoFila,cdEquipamento:'TRUCK-ANTIGO',dtHrLocal:new Date(Date.now()-6*60_000).toISOString(),vlTempoSemComunicacao:'0 DIA(S) 00:00:00'};
+      t.aplicarTelemetria([caminhaoAntigo,trator905]);
+      const tratorAtual=t.frota().find(e=>e.id==='TRACTOR-8833');
+      t.processarQuadros([{cdEquipamento:'TRUCK-ANTIGO',descFrente:frenteCana,descTpEquipamento:'CAMINHÕES CANAVAREIRO TERC',cdOperacao:908,descOperacao:'908 - Aguardando Carregamento',fgMonitoramentoAtivo:'T'}]);
+      t.regraAguardandoCaminhao(tratorAtual,Date.now());
+      t.regraAguardandoCaminhao(tratorAtual,Date.now()+3000);
+      ok(api.ativos().some(a=>a.regra==='aguardandoCaminhao') && !api.ativos().some(a=>a.regra==='aguardandoBasculamento'),'quadro recente do stream sem dtHrLocal não renova telemetria antiga do caminhão');
+      t.reset();
+      const caminhaoAtrasado={...caminhaoFila,cdEquipamento:'TRUCK-ATRASADO',dtHrLocal:new Date().toISOString(),vlTempoSemComunicacao:'0 DIA(S) 00:06:00'};
+      t.aplicarTelemetria([caminhaoAtrasado,trator905]);
+      const tratorComCaminhaoAtrasado=t.frota().find(e=>e.id==='TRACTOR-8833');
+      t.regraAguardandoCaminhao(tratorComCaminhaoAtrasado,Date.now());
+      t.regraAguardandoCaminhao(tratorComCaminhaoAtrasado,Date.now()+3000);
+      ok(api.ativos().some(a=>a.regra==='aguardandoCaminhao') && !api.ativos().some(a=>a.regra==='aguardandoBasculamento'),'vlTempoSemComunicacao antigo impede inferir caminhão disponível mesmo com dtHrLocal recente');
+      t.reset();
+      api.configurar({calcularLocal:false,gestaoFrenteAtiva:true,filaMaxFrente:4,minutosFrenteSemColhedora:0,transbordosAguardandoMax:0,cooldownMin:10,popup:true});
+      const filaGestao=Array.from({length:4},(_,i)=>({...caminhaoFila,cdEquipamento:'FILA-'+i,descEquipamento:(4451+i)+' - Caminhão Canavieiro'}));
+      const inicioGestao=Date.now();
+      t.aplicarTelemetria(filaGestao); t.regrasFrente(inicioGestao);
+      const historicoGestao=()=>api.historico().filter(a=>a.regra==='gestaoFrente').length;
+      const toastsGestao=()=>[...document.querySelectorAll('.toast[data-chave]')].filter(c=>c.dataset.chave.includes('|gestao:')).length;
+      ok(historicoGestao()===1 && api.ativos().some(a=>a.regra==='gestaoFrente' && a.fala.includes('Terceiro')) && toastsGestao()===1,'Atenção gestão emite uma vez, abre um pop-up e pronuncia Terc como Terceiro');
+      t.regrasFrente(inicioGestao+15_000);
+      ok(historicoGestao()===1,'cooldown de gestão impede repetição em leituras seguidas');
+      t.aplicarTelemetria([{...filaGestao[0],descOperacao:'Transporte de cana'}]);
+      t.regrasFrente(inicioGestao+16_000); t.regrasFrente(inicioGestao+17_000);
+      t.aplicarTelemetria(filaGestao); t.regrasFrente(inicioGestao+18_000);
+      ok(historicoGestao()===1,'oscilações na contagem não reiniciam o cooldown estável por frente/regra');
+      t.regrasFrente(inicioGestao+11*60_000);
+      const historicoAntesDesligar=api.historico().length;
+      ok(historicoGestao()===2 && api.ativos().some(a=>a.regra==='gestaoFrente'),'a mesma gestão só volta a emitir depois do cooldown');
+      api.configurar({gestaoFrenteAtiva:false});
+      t.regrasFrente(inicioGestao+11*60_000+1);
+      ok(!api.ativos().some(a=>a.regra==='gestaoFrente') && toastsGestao()===0 && api.historico().length===historicoAntesDesligar,'desligar gestão remove ativos/pop-ups e bloqueia novos alertas sem apagar histórico');
       t.reset(); api.configurar({calcularLocal:false});
       const leve = {...row,cdEquipamento:'LEVE-6614',descEquipamento:'6614 - VEICULO LEVE - IVECO',descTpEquipamento:'VEICULO LEVE',descGrupoEquipamento:'VEICULO LEVE',descOperacao:'953 - Sem Apontamento',vlVelocidade:0};
       feed(leve);
@@ -421,7 +521,7 @@ with sync_playwright() as pw:
     page.evaluate('() => __test.ciclo()')
     assert page.evaluate("MonitoramentoAlertas.ativos().some(a=>a.e.id==='TESTE-API')"), 'Falha da telemetria não deve bloquear espelho oficial'
     print('OK: espelho oficial independe da falha da telemetria')
-    page.evaluate("MonitoramentoAlertas.configurar({notificarCategorias:{generico:false},tiposNotificacao:{12480:true}});")
+    page.evaluate("MonitoramentoAlertas.configurar({notificarCategorias:{generico:false},tiposNotificacao:{12480:true},gestaoFrenteAtiva:true});")
     page.evaluate('MonitoramentoAlertas.abrirPainel()')
     page.click('#btn-cfg')
     assert page.locator('#cfg-fechar-x').is_visible(), 'Preferências devem exibir X para fechar'
@@ -429,8 +529,20 @@ with sync_playwright() as pw:
     assert page.locator('#cfg-alertas').evaluate("el => el.classList.contains('hide')"), 'O X deve fechar as preferências'
     assert page.evaluate('document.activeElement.id === "btn-cfg"'), 'Ao fechar, o foco deve voltar ao controle de configurações visível'
     page.click('#btn-cfg')
-    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 11")
+    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 12")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
+    assert page.locator('#cfg-gestao-frente').is_checked(), 'Atenção gestão deve ter opção mestre ligada por padrão'
+    assert page.locator('#cfg-glossario').get_attribute('autocomplete') == 'off', 'textarea do glossário precisa ter atributo autocomplete válido'
+    assert 'AG=Aguardando' in page.locator('#cfg-glossario').get_attribute('placeholder'), 'placeholder do glossário deve permanecer acessível'
+    page.locator('#cfg-gestao-frente').uncheck()
+    page.click('#cfg-salvar')
+    assert page.evaluate('MonitoramentoAlertas.config().gestaoFrenteAtiva === false'), 'toggle de gestão deve salvar desligado'
+    page.click('#btn-cfg')
+    assert not page.locator('#cfg-gestao-frente').is_checked(), 'toggle mestre deve persistir após reabrir preferências'
+    page.locator('#cfg-gestao-frente').check()
+    page.click('#cfg-salvar')
+    assert page.evaluate('MonitoramentoAlertas.config().gestaoFrenteAtiva === true'), 'toggle de gestão deve poder ser religado'
+    page.click('#btn-cfg')
     sample = page.locator('#cfg-glossario-previa').text_content()
     assert 'Aguardando colhedora parada rápida' in sample, sample
     assert page.evaluate("AlertasPolicy.aplicarGlossario('AG. SEQUENC. DE TRABALHO')") == 'Aguardando sequência DE TRABALHO'
@@ -448,7 +560,7 @@ with sync_playwright() as pw:
     print('OK: expansão de AG/COLH, prévia, substituição personalizada e persistência do glossário')
     page.fill('#cfg-busca-categoria', 'fila')
     vis = page.evaluate("[...document.querySelectorAll('#cfg-categorias > *')].filter(x => !x.classList.contains('hide')).length")
-    assert 1 <= vis < 11, f'busca de categorias deve filtrar ({vis})'
+    assert 1 <= vis < 12, f'busca de categorias deve filtrar ({vis})'
     page.fill('#cfg-busca-categoria', 'xyzinexistente')
     assert page.locator('#cfg-categorias-vazio').is_visible(), 'mensagem de nenhum alerta'
     page.fill('#cfg-busca-categoria', '')

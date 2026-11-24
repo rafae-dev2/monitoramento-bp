@@ -31,13 +31,14 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.6.3';
+  const VERSAO = '1.7.0';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
   const KEY_ACK = 'bperes.alertas.ack.v2';
   const KEY_PUSH_DEVICE = 'bperes.push.deviceId.v1';
   const MAX_HIST = 600;
+  const JANELA_CORRELACAO_905_MS = 3000;
   const MONITORAMENTO_API = 'https://api-usa.saas-solinftec.com/monitoramento/v2';
 
   const $ = (id) => document.getElementById(id);
@@ -70,6 +71,7 @@
     ociosoSemApontamento: { id: 'ociosoSemApontamento', nome: 'Motor ocioso sem apontamento', icone: '🔌', cor: '#db9b3b', severidade: 2 },
     motorCondicao: { id: 'motorCondicao', nome: 'Motor ligado — condição combinada', icone: 'M', cor: '#c6a0e8', severidade: 2 },
     aguardandoCaminhao: { id: 'aguardandoCaminhao', nome: 'Aguardando caminhão', icone: 'T', cor: '#e9b457', severidade: 2 },
+    aguardandoBasculamento: { id: 'aguardandoBasculamento', nome: 'Aguardando basculamento (inferido)', icone: '↻', cor: '#d79238', severidade: 2 },
     refeicao: { id: 'refeicao', nome: 'Refeição excedida', icone: '🍽️', cor: '#d9822b', severidade: 2 },
     semApontamento: { id: 'semApontamento', nome: 'Sem apontamento', icone: '📝', cor: '#e07b39', severidade: 2 },
     paradaImprodutiva: { id: 'paradaImprodutiva', nome: 'Parada improdutiva', icone: '⏸️', cor: '#c96b3b', severidade: 2 },
@@ -95,6 +97,7 @@
     escalarLiderMin: 20, // minutos após a tolerância: pede acionar o líder
     lideresFrente: '', // "Frente 1=João; Frente 2=Pedro"
     filaMaxFrente: 4, // caminhões/transbordos em fila/aguardando carregamento na mesma frente (0 = desliga)
+    gestaoFrenteAtiva: true, // chave geral dos alertas “Atenção gestão”
     minutosFrenteSemColhedora: 10, // todas as colhedoras da frente paradas (0 = desliga)
     transbordosAguardandoMax: 3, // transbordos aguardando colhedora na mesma frente (0 = desliga)
     paradasLimites: {}, // id da parada → minutos de tolerância (0 = não alertar)
@@ -144,6 +147,7 @@
   const frota = new Map(); // cdEquipamento => leitura consolidada
   const estados = new Map(); // "equipamento|regra" => máquina de estados
   const ativos = new Map(); // chave => alerta exibido
+  const gestaoUltimoDisparo = new Map(); // cooldown por frente/regra, mesmo se a contagem oscilar
   let el = {};
   let catalogo = { tipos: [], expressoes: [], regras: [] };
   let carregandoCatalogo = null;
@@ -546,19 +550,66 @@
     return d * 86400 + seg;
   }
 
+  let formatadorFusoTenant = null;
+  function horarioTenantParaMs(ano, mes, dia, hora, minuto, segundo, milissegundo = 0) {
+    const valores = [ano, mes, dia, hora, minuto, segundo, milissegundo].map(Number);
+    if (valores.some((v) => !Number.isInteger(v))) return null;
+    const [y, mo, d, h, mi, s, ms] = valores;
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || h < 0 || h > 23 || mi < 0 || mi > 59 || s < 0 || s > 59 || ms < 0 || ms > 999) return null;
+    const nominal = Date.UTC(y, mo - 1, d, h, mi, s);
+    const validacao = new Date(nominal);
+    if (validacao.getUTCFullYear() !== y || validacao.getUTCMonth() !== mo - 1 || validacao.getUTCDate() !== d) return null;
+    try {
+      if (!formatadorFusoTenant) {
+        formatadorFusoTenant = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/Sao_Paulo', calendar: 'gregory', numberingSystem: 'latn',
+          year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit',
+          minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+        });
+      }
+      let utc = nominal;
+      for (let tentativa = 0; tentativa < 2; tentativa++) {
+        const p = Object.fromEntries(formatadorFusoTenant.formatToParts(new Date(utc))
+          .filter((parte) => parte.type !== 'literal').map((parte) => [parte.type, parte.value]));
+        const representado = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second));
+        const proximo = nominal + (utc - representado);
+        if (!Number.isFinite(proximo) || proximo === utc) break;
+        utc = proximo;
+      }
+      return utc + ms;
+    } catch {
+      // Fuso atual do tenant: UTC−03:00. Usado apenas em navegadores sem IANA Intl.
+      return nominal + 3 * 60 * 60_000 + ms;
+    }
+  }
   /* "23/11/2026 06:53:46" (dd/mm/aaaa, horário do tenant) => ms */
   function dataHorario(txt) {
-    const m = String(txt || '').match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/);
+    const m = String(txt || '').match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
     if (!m) return null;
-    const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]), Number(m[4]), Number(m[5]), Number(m[6]));
-    return Number.isNaN(d.getTime()) ? null : d.getTime();
+    const ms = m[7] ? Number((m[7] + '00').slice(0, 3)) : 0;
+    return horarioTenantParaMs(m[3], m[2], m[1], m[4], m[5], m[6], ms);
   }
 
   /* [2026,11,23,6,51,14] (array do /alarmeOnline, fuso do tenant) => ms */
   function dataArray(a) {
     if (!Array.isArray(a) || a.length < 3) return null;
-    const d = new Date(a[0], (a[1] || 1) - 1, a[2], a[3] || 0, a[4] || 0, a[5] || 0);
-    return Number.isNaN(d.getTime()) ? null : d.getTime();
+    return horarioTenantParaMs(a[0], a[1] || 1, a[2], a[3] || 0, a[4] || 0, a[5] || 0, 0);
+  }
+  function timestampEquipamento(valor) {
+    if (Array.isArray(valor)) return dataArray(valor);
+    if (typeof valor === 'number' && Number.isFinite(valor)) return valor;
+    const texto = String(valor || '').trim();
+    if (!texto) return null;
+    const local = dataHorario(texto);
+    if (local) return local;
+    const isoLocal = texto.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?$/);
+    if (isoLocal) {
+      const ms = isoLocal[7] ? Number((isoLocal[7] + '00').slice(0, 3)) : 0;
+      return horarioTenantParaMs(isoLocal[1], isoLocal[2], isoLocal[3], isoLocal[4], isoLocal[5], isoLocal[6], ms);
+    }
+    if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(texto)) return null;
+    const parseado = Date.parse(texto);
+    return Number.isFinite(parseado) ? parseado : null;
   }
 
   /* O que a voz fala antes do número: "Veículo 8833…", "Colhedora 57838…".
@@ -790,17 +841,25 @@
         frota.delete(e.id);
         continue;
       }
-      const ts = dataHorario(q.dtHrLocal);
+      const ts = timestampEquipamento(q.dtHrLocal);
       if (ts) e.tsEquipamento = ts;
       e.vistoEm = agora();
       if (!e.fonte) e.fonte = 'stream';
       if (q.descTpEquipamento) e.tipo = q.descTpEquipamento;
       if (q.descOperacao !== undefined && dentroDoEscopo(e)) {
-        regraAguardandoCaminhao(e, agora());
         regraSemApontamento(e, agora());
         regraParada(e, agora());
         regraRefeicao(e, agora());
       }
+    }
+    // Avalia o 905 após consolidar o lote inteiro para não dispará-lo antes de
+    // processar o caminhão da mesma frente que veio no mesmo quadro do stream.
+    const tsAguardando = agora();
+    for (const e of frota.values()) {
+      if (!dentroDoEscopo(e)) continue;
+      const stCaminhao = estados.get(e.id + '|aguardandoCaminhao');
+      const stBasculamento = estados.get(e.id + '|aguardandoBasculamento');
+      if (policy.aguardandoCaminhao(e) || stCaminhao || stBasculamento) regraAguardandoCaminhao(e, tsAguardando);
     }
     estado.quadros += lista.length;
   }
@@ -923,7 +982,7 @@
         e.operador = nomeOperador(row.descFuncionario);
       }
       e.velocidade = valorMedido(row.vlVelocidade);
-      e.velocidadeTs = e.velocidade === null ? 0 : (dataArray(row.dtHrLocal) || agora());
+      e.velocidadeTs = e.velocidade === null ? 0 : (timestampEquipamento(row.dtHrLocal) || agora());
       e.rpm = num(row.vlParametro4);
       e.motor = String(row.vlEd1 || '0') === '1';
       e.atraso = segundosAtraso(row.vlTempoSemComunicacao);
@@ -932,7 +991,7 @@
         .map((v) => (v && String(v) !== '0' ? String(v) : ''))
         .filter(Boolean)
         .join(' / ');
-      const ts = dataArray(row.dtHrLocal);
+      const ts = timestampEquipamento(row.dtHrLocal);
       if (ts) e.tsEquipamento = ts;
       e.fonte = 'telemetria';
       e.vistoEm = agora();
@@ -1022,7 +1081,7 @@
     }
     correndo = true;
     estado.ligado = true;
-    const ts = agora();
+    const tsInicio = agora();
     let pegou = false;
     try {
       // Telemetria e espelho independentes: falha de uma fonte não bloqueia a outra.
@@ -1048,10 +1107,13 @@
       }
       estado.erros = 0;
       estado.backoff = 0;
-      estado.ultimoCiclo = ts;
+      estado.ultimoCiclo = tsInicio;
       estado.fonte = telemetriaNova ? 'telemetria + SGPA oficial' : 'SGPA oficial';
-      avaliarFrota(ts, telemetriaNova ? 'lotes' : 'tempo');
-      purarResolvidos(ts);
+      // Inicia estados temporizados quando os dados foram efetivamente avaliados,
+      // não no começo da requisição REST que pode demorar vários segundos.
+      const tsAvaliacao = agora();
+      avaliarFrota(tsAvaliacao, telemetriaNova ? 'lotes' : 'tempo');
+      purarResolvidos(tsAvaliacao);
     } catch (e) {
       estado.erros++;
       estado.proximoErro = (e && e.message) || 'falha ao ler o portal';
@@ -1154,8 +1216,8 @@
       cont++;
       if (lotes) {
         regraRpm(e, ts);
-        regraAguardandoCaminhao(e, ts);
       }
+      regraAguardandoCaminhao(e, ts);
       regraSemApontamento(e, ts);
       regraParada(e, ts);
       regraRefeicao(e, ts);
@@ -1166,13 +1228,105 @@
     estado.monitorados = cont;
   }
 
+  function equipamentoCaminhao(e) {
+    const tipo = policy.norm([e.tipo, e.tipoCompleto, e.nome].filter(Boolean).join(' '));
+    return /caminh|\btruck\b/.test(tipo);
+  }
+  function telemetriaRecente(e) {
+    const tsEquipamento = Number(e && e.tsEquipamento);
+    if (!Number.isFinite(tsEquipamento) || tsEquipamento <= 0) return false;
+    const intervaloMs = Math.max(30, Number(cfg.intervaloSeg) || 45) * 1000;
+    const maxIdadeMs = Math.min(5 * 60_000, Math.max(120_000, intervaloMs * 2));
+    // vistoEm marca a chegada de qualquer quadro, não a idade do dado SGPA.
+    // Só dtHrLocal e, quando disponível, vlTempoSemComunicacao comprovam atualidade.
+    const idade = agora() - tsEquipamento;
+    if (idade < -60_000 || idade > maxIdadeMs) return false;
+    if (e.atraso != null && (!Number.isFinite(Number(e.atraso)) || Number(e.atraso) > maxIdadeMs / 1000)) return false;
+    return true;
+  }
+  function caminhoesAguardandoCarregamento(frente) {
+    const alvo = policy.norm(frente);
+    if (!alvo) return [];
+    return [...frota.values()].filter((e) => {
+      if (!dentroDoEscopo(e) || e.operacaoConfirmada !== true || policy.norm(e.frente) !== alvo) return false;
+      if (!telemetriaRecente(e)) return false;
+      if (!equipamentoCaminhao(e)) return false;
+      const parada = policy.paradaImprodutiva(e);
+      return !!parada && parada.id === 'aguardandoCarregamento';
+    }).map((e) => ({ id: e.id, numero: e.numero || e.id }));
+  }
+  function encerrarEstadoLocal(id, regra) {
+    const chave = String(id) + '|' + regra;
+    const st = estados.get(chave);
+    if (st) Object.assign(st, { firing: false, since: 0, consec: 0, negados: 0, emitido: false, ultimo: 0 });
+    const removido = ativos.delete(chave);
+    if (removido && el.toasts) {
+      el.toasts.querySelectorAll('.toast').forEach((flutuante) => {
+        if (flutuante.dataset.chave === chave) flutuante.remove();
+      });
+      atualizarBotaoLimparToasts();
+      renderAtivos();
+      renderCabecalho();
+    }
+  }
+  function regraAguardandoBasculamento(e, ts, caminhoes) {
+    const parada = policy.paradaImprodutiva({ operacao: 'Aguardando basculamento' });
+    const limite = parada ? policy.limiteParada(cfg, parada) : 15;
+    const st = marcar(e.id, 'aguardandoBasculamento', true, ts, null);
+    if (!st.firing || limite <= 0) return;
+    const durou = Math.max(0, (ts - st.since) / 60000);
+    if (durou < limite || !podeDisparar(st, ts)) return;
+    const numeros = caminhoes.map((c) => String(c.numero || c.id));
+    const descricao = numeros.length === 1
+      ? 'caminhão ' + numeros[0] + ' aguardando carregamento na mesma frente'
+      : 'caminhões ' + numeros.join(', ') + ' aguardando carregamento na mesma frente';
+    emitir({
+      chave: st.chave,
+      regra: 'aguardandoBasculamento',
+      e,
+      caminhoes: numeros,
+      paradaId: 'aguardBasculamento',
+      paradaNome: parada ? parada.nome : 'Aguardando basculamento',
+      valor: Math.round(durou),
+      limite: Math.round(limite),
+      texto: 'Aguardando basculamento (inferido pelo app): ' + descricao + ' · frente/grupo: ' + (e.frente || 'não informada'),
+      detalhe: 'Inferência do aplicativo pela presença de caminhão na mesma frente. O SGPA continua registrando ' + (e.operacao || '905 — Aguardando Caminhão') + '; nenhum apontamento foi alterado.',
+      inicio: st.since,
+    });
+  }
   function regraAguardandoCaminhao(e, ts) {
     const liga = policy.aguardandoCaminhao(e);
-    const st = marcar(e.id, 'aguardandoCaminhao', liga, ts, null);
-    if (!liga && !st.firing) ativos.delete(st.chave);
-    if (!liga) return;
-    // Alarme imediato: a primeira leitura com 905 já dispara (ignora “leituras p/ confirmar”).
-    if (!st.emitido) { st.emitido = true; st.ultimo = ts; }
+    if (!liga) {
+      const anterior = estados.get(e.id + '|aguardandoCaminhao');
+      if (anterior) {
+        const stAnterior = marcar(e.id, 'aguardandoCaminhao', false, ts, null);
+        if (!stAnterior.firing) {
+          ativos.delete(stAnterior.chave);
+          encerrarEstadoLocal(e.id, 'aguardandoBasculamento');
+        }
+      } else {
+        encerrarEstadoLocal(e.id, 'aguardandoBasculamento');
+      }
+      return;
+    }
+    // O timestamp recebido pelo ciclo pode anteceder uma consulta REST demorada;
+    // nunca deixe essa espera começar antes de observar a operação 905.
+    ts = Math.max(Number(ts) || 0, agora());
+    const caminhoes = caminhoesAguardandoCarregamento(e.frente);
+    if (caminhoes.length) {
+      encerrarEstadoLocal(e.id, 'aguardandoCaminhao');
+      regraAguardandoBasculamento(e, ts, caminhoes);
+      return;
+    }
+    encerrarEstadoLocal(e.id, 'aguardandoBasculamento');
+    const st = marcar(e.id, 'aguardandoCaminhao', true, ts, null);
+    // Pequena janela para reconciliar eventos em lotes separados; sem caminhão,
+    // o 905 continua sendo emitido quase imediatamente, sem aguardar a tolerância de parada.
+    if (!st.emitido) {
+      if (ts - st.since < JANELA_CORRELACAO_905_MS) return;
+      st.emitido = true;
+      st.ultimo = ts;
+    }
     else {
       const cd = Math.max(0, Number(cfg.cooldownMin) || 0) * 60000;
       if (!cd || ts - st.ultimo < cd) return;
@@ -1250,13 +1404,42 @@
     });
   }
   const paradaAtual = new Map();
+  function limparAlertasGestao() {
+    let mudou = false;
+    for (const [chave, alerta] of ativos) {
+      if (alerta.regra !== 'gestaoFrente') continue;
+      ativos.delete(chave);
+      mudou = true;
+      if (el.toasts) {
+        el.toasts.querySelectorAll('.toast').forEach((flutuante) => {
+          if (flutuante.dataset.chave === chave) flutuante.remove();
+        });
+      }
+    }
+    for (const st of estados.values()) {
+      if (String(st.regra || '').startsWith('gestao:')) {
+        Object.assign(st, { firing: false, since: 0, consec: 0, negados: 0, emitido: false, ultimo: 0 });
+      }
+    }
+    if (mudou) {
+      renderAtivos();
+      renderCabecalho();
+    }
+    if (el.toasts) atualizarBotaoLimparToasts();
+  }
   /* Alertas de gestão por frente: problema da frente, não do operador. */
   function regrasFrente(ts) {
+    if (cfg.gestaoFrenteAtiva === false) {
+      limparAlertasGestao();
+      return;
+    }
     const porFrente = new Map();
     for (const e of frota.values()) {
       if (!dentroDoEscopo(e) || !e.frente) continue;
-      let f = porFrente.get(e.frente);
-      if (!f) { f = { fila: [], colh: 0, colhParadas: 0, transbAg: [] }; porFrente.set(e.frente, f); }
+      const rotuloFrente = String(e.frente).trim();
+      const chaveFrente = policy.norm(rotuloFrente);
+      let f = porFrente.get(chaveFrente);
+      if (!f) { f = { frente: rotuloFrente, fila: [], colh: 0, colhParadas: 0, transbAg: [] }; porFrente.set(chaveFrente, f); }
       const p = e.operacaoConfirmada === true ? policy.paradaImprodutiva(e) : null;
       if (p && (p.id === 'filaUnica' || p.id === 'aguardandoCarregamento')) f.fila.push(e.numero || e.id);
       if (p && (p.id === 'agColhedoraParadaRapida' || p.id === 'aguardandoColhedoraAlocada')) f.transbAg.push(e.numero || e.id);
@@ -1267,27 +1450,32 @@
         if (e.operacaoConfirmada === true && op && !/colheita/.test(op)) f.colhParadas++;
       }
     }
-    const checar = (frente, id, liga, minMin, texto, detalhe, valor) => {
-      const pe = { id: 'frente:' + frente, numero: frente, nome: 'Frente ' + frente, tipo: 'Frente', frente };
+    const checar = (frente, chaveFrente, id, liga, minMin, texto, detalhe, valor) => {
+      const pe = { id: 'frente:' + chaveFrente, numero: frente, nome: 'Frente ' + frente, tipo: 'Frente', frente };
       const st = marcar(pe.id, 'gestao:' + id, liga, ts, null);
       if (!liga && !st.firing) ativos.delete(st.chave);
       if (!st.firing) return;
       if ((ts - st.since) / 60000 < minMin) return;
+      const cooldown = Math.max(0, Number(cfg.cooldownMin) || 0) * 60000;
+      const ultimoDisparo = gestaoUltimoDisparo.get(st.chave) || 0;
+      if (ultimoDisparo && (!cooldown || ts - ultimoDisparo < cooldown)) return;
       if (!podeDisparar(st, ts)) return;
+      gestaoUltimoDisparo.set(st.chave, ts);
       emitir({ chave: st.chave, regra: 'gestaoFrente', e: pe, valor, lider: policy.liderFrente(cfg, frente),
         texto: texto + ' · frente/grupo: ' + frente, detalhe, inicio: st.since });
     };
     const filaMax = Math.max(0, num(cfg.filaMaxFrente) || 0);
     const semColh = Math.max(0, num(cfg.minutosFrenteSemColhedora) || 0);
     const tbMax = Math.max(0, num(cfg.transbordosAguardandoMax) || 0);
-    for (const [frente, f] of porFrente) {
-      checar(frente, 'fila', filaMax > 0 && f.fila.length >= filaMax, 0,
+    for (const [chaveFrente, f] of porFrente) {
+      const frente = f.frente;
+      checar(frente, chaveFrente, 'fila', filaMax > 0 && f.fila.length >= filaMax, 0,
         `${f.fila.length} equipamentos em fila aguardando carregamento, segurar o despacho de caminhões`,
         'Fila/aguardando carregamento: ' + f.fila.join(', '), f.fila.length);
-      checar(frente, 'semColhedora', semColh > 0 && f.colh > 0 && f.colhParadas === f.colh, semColh,
+      checar(frente, chaveFrente, 'semColhedora', semColh > 0 && f.colh > 0 && f.colhParadas === f.colh, semColh,
         `todas as ${f.colh} colhedoras paradas, frente sem colheita`,
         'Nenhuma colhedora em operação de colheita', f.colh);
-      checar(frente, 'desequilibrio', tbMax > 0 && f.transbAg.length >= tbMax, 0,
+      checar(frente, chaveFrente, 'desequilibrio', tbMax > 0 && f.transbAg.length >= tbMax, 0,
         `${f.transbAg.length} transbordos aguardando colhedora, remanejar a frota`,
         'Transbordos aguardando colhedora: ' + f.transbAg.join(', '), f.transbAg.length);
     }
@@ -1594,6 +1782,7 @@
       limite: a.limite == null ? null : a.limite,
       paradaId: a.paradaId || null,
       paradaNome: a.paradaNome || '',
+      caminhoes: Array.isArray(a.caminhoes) ? a.caminhoes.slice() : [],
       nivel: a.nivel || 1,
       lider: a.lider || '',
       texto: a.texto,
@@ -1935,7 +2124,7 @@
   /* Exceção pedida pelo usuário: “Sem apontamento” (cálculo do app) usa todos os
      canais, mas só enquanto o app está aberto — nunca passa pelo Web Push. */
   function localComCanais(a) {
-    return !!a && a.fonte === 'app' && (a.regra === 'semApontamento' || a.regra === 'refeicao' || a.regra === 'paradaImprodutiva' || a.regra === 'gestaoFrente');
+    return !!a && a.fonte === 'app' && (a.regra === 'semApontamento' || a.regra === 'refeicao' || a.regra === 'paradaImprodutiva' || a.regra === 'gestaoFrente' || a.regra === 'aguardandoBasculamento');
   }
   function canalSistema(a) {
     return !!a && (a.fonte === 'portal' || localComCanais(a));
@@ -2165,6 +2354,8 @@
       <input id="cfg-lideres" type="text" placeholder="ex.: Frente 1=João; Frente 2=Pedro" spellcheck="false" autocomplete="off"></label>
     <h3 class="secao-alertas">Gestão por frente</h3>
     <p class="fine">Alertas de equilíbrio da frente (o problema é do despacho, não do operador). Use 0 para desligar.</p>
+    <label class="chk"><input id="cfg-gestao-frente" type="checkbox"><span>Ativar alertas “Atenção gestão” por frente</span></label>
+    <p class="fine">Desligar interrompe novos alertas de gestão e remove os ativos correspondentes; o histórico é preservado. Oscilações momentâneas na contagem não reiniciam o cooldown por frente e regra.</p>
     <div class="grade">
       <label class="campo"><span>Fila: nº de equipamentos aguardando carregamento</span><input id="cfg-fila-frente" type="number" min="0" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Todas as colhedoras paradas há (min)</span><input id="cfg-sem-colh" type="number" min="0" step="1" inputmode="numeric"></label>
@@ -2172,7 +2363,7 @@
     </div>
     <h3 class="secao-alertas">Pronúncia dos termos (glossário)</h3>
     <p class="fine">Ensine a voz a falar abreviações do SGPA. Uma regra por linha, no formato <b>termo=como falar</b>. O glossário já transforma <b>AG colhedora parada rápida</b> em <b>Aguardando colhedora parada rápida</b>. Exemplos: <code>AG=Aguardando</code>, <code>COLH=colhedora</code>. Deixar vazio depois do = faz a voz omitir o termo (ex.: <code>HR=</code>). Vale para todos os alertas falados; maiúsculas e acentos não importam. Depois, toque em Salvar preferências.</p>
-    <textarea id="cfg-glossario" aria-label="Glossário de pronúncia" rows="6" spellcheck="false" autocomplete="off placeholder="AG=Aguardando&#10;COLH=colhedora&#10;HR="></textarea>
+    <textarea id="cfg-glossario" aria-label="Glossário de pronúncia" rows="6" spellcheck="false" autocomplete="off" placeholder="AG=Aguardando&#10;COLH=colhedora&#10;HR="></textarea>
     <p class="fine" id="cfg-glossario-padrao"></p>
     <div class="grade">
       <label class="campo"><span>Testar frase</span><input id="cfg-glossario-teste" type="text" value="AG colhedora parada rápida" autocomplete="off"></label>
@@ -2357,6 +2548,7 @@
   function card(a, comAccoes) {
     const d = document.createElement('div');
     d.className = 'alerta sev' + a.severidade + (a.fonte === 'portal' ? ' oficial' : '');
+    d.dataset.chave = a.chave;
     d.style.setProperty('--cor', a.cor);
     const reconhecido = acks[a.chave] && agora() - acks[a.chave] < 2 * 3600_000;
     d.innerHTML = `
@@ -2610,6 +2802,7 @@
     turno: 'Troca de turno oficial e cálculo complementar, se ativado.',
     motorCondicao: 'Condições combinadas do motor; não são velocidade pura.',
     aguardandoCaminhao: 'Trator/transbordo com a operação Aguardando Caminhão. Informa a frente/grupo.',
+    aguardandoBasculamento: 'Correlação local: se trator/transbordo estiver em 905 e houver caminhão na mesma frente em “Aguardando Carregamento”, classifica a situação como basculamento provável após a tolerância configurada de 15 min. O apontamento SGPA não é alterado.',
     refeicao: 'Refeição acima do tempo configurado por grupo ou equipamento (seção Controle de refeições). Fala e notifica só com o app aberto.',
     semApontamento: 'Equipamento na operação SGPA “Sem Apontamento” por 5 min ou mais (sem alarme do portal). Fala e notifica só com o app aberto.',
     paradaImprodutiva: 'Paradas improdutivas de maior impacto (fila, aguardando carregamento, 983, falta de transbordo etc.) acima da tolerância da seção Paradas improdutivas. Fala e notifica com o app aberto.',
@@ -2973,6 +3166,7 @@
     for (const [id, v] of Object.entries(valores)) $(id).value = v;
     const checks = {
       'cfg-liga': cfg.ativo,
+      'cfg-gestao-frente': cfg.gestaoFrenteAtiva !== false,
       'cfg-local': cfg.calcularLocal,
       'cfg-serv': cfg.espelharServidor,
       'cfg-stream': cfg.usarStream,
@@ -3046,6 +3240,7 @@
       notificacao: $('cfg-notif').checked,
       vibrar: $('cfg-vib').checked,
       repetirVoz: $('cfg-repete').checked,
+      gestaoFrenteAtiva: $('cfg-gestao-frente').checked,
       limiteRpm: n('cfg-rpm', 2000),
       minutosOcioso: n('cfg-ocioso', 5),
       minutosSemApontamento: n('cfg-sem-ponto', 5),
@@ -3195,6 +3390,7 @@
       selecaoMapa,
     }));
     cfg.incluirOutros = cfg.notificarCategorias.generico;
+    if (cfg.gestaoFrenteAtiva === false) limparAlertasGestao();
     if (!Array.isArray(ctx.selecao)) ctx.selecao = new Set(selecaoMapa);
     if (Object.prototype.hasOwnProperty.call(patch, 'selecaoMapa')) ctx.selecao = new Set(selecaoMapa);
     if (escopoAlterado) {

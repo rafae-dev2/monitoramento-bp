@@ -148,4 +148,15 @@ assert.equal(policy.notificar({ notificarCategorias: { aguardandoCaminhao: false
 const speedWhileWaiting = { regra: 'velocidade', tipoAlarme: '5', numero: '8833', valor: 85, e: { tipo: 'Trator', operacao: 'Aguardando Caminhão', frente: 'Frente teste' } };
 assert.equal(policy.notificar({ notificarCategorias: { aguardandoCaminhao: false } }, speedWhileWaiting), true);
 assert.equal(policy.montarFala(speedWhileWaiting), 'Veículo oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.');
+assert.equal(policy.aplicarGlossario('Veículo Caminhões Canavieiro Terc'), 'Veículo Caminhões Canavieiro Terceiro');
+assert.equal(policy.aplicarGlossario('Terc', { glossarioFala: 'Terc=Terceiro' }), 'Terceiro');
+assert.equal(policy.notificar({}, { regra: 'aguardandoBasculamento' }), true);
+assert.equal(policy.notificar({ notificarCategorias: { aguardandoBasculamento: false } }, { regra: 'aguardandoBasculamento' }), false);
+assert.equal(
+  policy.montarFala({
+    regra: 'aguardandoBasculamento', numero: '8833', caminhoes: ['4451'],
+    e: { frente: 'Caminhões Canavieiro Terc' }
+  }),
+  'Trator oito oito três três: aguardando basculamento, inferido pelo aplicativo porque o caminhão quatro quatro cinco um está aguardando carregamento na mesma frente. Frente/grupo Caminhões Canavieiro Terceiro. No SGPA, o apontamento permanece Aguardando Caminhão. Verificar.'
+);
 console.log('test-alerts-policy: contrato integrado passou.');
