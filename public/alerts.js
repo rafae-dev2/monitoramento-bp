@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.5.0';
+  const VERSAO = '1.5.1';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -1591,6 +1591,10 @@
       valor: a.valor,
       fonteVelocidade: a.fonteVelocidade || '',
       limite: a.limite == null ? null : a.limite,
+      paradaId: a.paradaId || null,
+      paradaNome: a.paradaNome || '',
+      nivel: a.nivel || 1,
+      lider: a.lider || '',
       texto: a.texto,
       detalhe: a.detalhe || '',
       fonte: a.servidor ? 'portal' : a.simulado ? 'teste' : 'app',
@@ -1655,6 +1659,7 @@
       if ((oficial || localAberto || a.simulado) && cfg.som) tocar(regra.severidade);
       if (cfg.voz && (oficial || localAberto || a.simulado || vozLocalSemPontoConfirmado) && (!alerta.repeticao || cfg.repetirVoz)) {
         falar(alerta.fala, { oficial });
+        faladoEm.set(chave, ts);
       }
       if ((oficial || localAberto || a.simulado) && cfg.vibrar) vibrar(regra.severidade);
       if (oficial || localAberto) notificar(alerta);
@@ -1677,6 +1682,59 @@
   /* --------------------------- voz (TTS) --------------------------- */
 
   let rajada = { ts: 0, voz: 0, aviso: false };
+  const faladoEm = new Map();
+  let vozBloqueada = false;
+  /* Chrome/Safari bloqueiam a voz antes do primeiro toque: guarda a fila e pede um toque. */
+  function bloquearVoz(item) {
+    vozBloqueada = true;
+    falando = false;
+    if (item) fila.unshift(item);
+    let b = document.getElementById('voz-bloqueada');
+    if (!b) {
+      b = document.createElement('button');
+      b.id = 'voz-bloqueada';
+      b.type = 'button';
+      b.textContent = '🔊 Toque aqui para ouvir os alertas';
+      b.onclick = liberarVoz;
+      document.body.appendChild(b);
+    }
+    b.classList.remove('hide');
+  }
+  function liberarVoz() {
+    const b = document.getElementById('voz-bloqueada');
+    if (b) b.classList.add('hide');
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) { ac = ac || new AC(); if (ac.state === 'suspended') ac.resume(); }
+    } catch { /* sem áudio */ }
+    if (!vozBloqueada) return;
+    vozBloqueada = false;
+    falando = false;
+    const s = sintetizador();
+    if (s) { try { s.cancel(); s.resume(); } catch { /* nada */ } }
+    descargarFila();
+  }
+  /* Ao entrar no app: abre a central e fala os alertas ativos que importam. */
+  let resumoTimer = null;
+  function agendarResumoAbertura(atrasoMs) {
+    clearTimeout(resumoTimer);
+    resumoTimer = setTimeout(falarResumoAbertura, atrasoMs);
+  }
+  function falarResumoAbertura() {
+    if (!cfg.ativo) return;
+    const ts = agora();
+    const lista = Array.from(ativos.values()).filter((a) =>
+      a.notificar && !a.simulado && !(acks[a.chave] && ts - acks[a.chave] < 2 * 3600_000));
+    if (!lista.length) return;
+    abrirPainel();
+    if (!cfg.voz || ts < (Number(cfg.silencioAte) || 0)) return;
+    lista.sort((x, y) => (y.severidade || 0) - (x.severidade || 0) || (y.ts || 0) - (x.ts || 0));
+    const max = Math.max(1, Number(cfg.maxPorCiclo) || 4);
+    const pendentes = lista.filter((a) => !(faladoEm.get(a.chave) > ts - 60000));
+    falar(lista.length === 1 ? 'Atenção: um alerta ativo.' : `Atenção: ${lista.length} alertas ativos.`, { oficial: true });
+    pendentes.slice(0, max).forEach((a) => { falar(a.fala, { oficial: a.fonte === 'portal' }); faladoEm.set(a.chave, ts); });
+    if (pendentes.length > max) falar(`E mais ${pendentes.length - max} alertas na central.`);
+  }
   let fila = [];
   let falando = false;
   let vozEscolhida = null;
@@ -1743,7 +1801,7 @@
   }
 
   function descargarFila() {
-    if (falando || !fila.length) return;
+    if (falando || vozBloqueada || !fila.length) return;
     const item = fila.shift();
     const texto = item.texto;
     const nativa = ponteNativa();
@@ -1778,7 +1836,18 @@
     u.volume = Math.max(0, Math.min(1, Number(cfg.volume)));
     u.rate = Math.max(0.5, Math.min(2, Number(cfg.taxa)));
     u.pitch = Math.max(0.5, Math.min(2, Number(cfg.tom)));
-    u.onend = u.onerror = () => {
+    let comecou = false;
+    u.onstart = () => { comecou = true; };
+    u.onend = () => {
+      falando = false;
+      setTimeout(descargarFila, 200);
+    };
+    u.onerror = (ev) => {
+      const erro = ev && ev.error;
+      if (erro === 'not-allowed' || (!comecou && erro !== 'interrupted' && erro !== 'canceled' && !toquei)) {
+        bloquearVoz(item);
+        return;
+      }
       falando = false;
       setTimeout(descargarFila, 200);
     };
@@ -1787,6 +1856,8 @@
       s.speak(u);
       setTimeout(() => {
         if (falando && !s.speaking && !s.pending) {
+          const semGesto = !toquei && navigator.userActivation && !navigator.userActivation.hasBeenActive;
+          if (!comecou && semGesto) { bloquearVoz(item); return; }
           falando = false;
           descargarFila();
         }
@@ -1841,8 +1912,9 @@
   }
 
   let toquei = false;
+  let escondidoEm = 0;
   if (typeof window !== 'undefined') {
-    const marcarToque = () => { toquei = true; };
+    const marcarToque = () => { toquei = true; if (vozBloqueada) setTimeout(liberarVoz, 0); };
     addEventListener('pointerdown', marcarToque, { passive: true, capture: true });
     addEventListener('touchstart', marcarToque, { passive: true, capture: true });
     addEventListener('keydown', marcarToque, { capture: true });
@@ -3111,9 +3183,11 @@
         if (cfg.usarStream && cfg.ativo && worker && ultimoQuadro && agora() - ultimoQuadro > 180000) abrirStream();
       }, 20000);
       document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') { escondidoEm = agora(); return; }
         if (document.visibilityState === 'visible' && cfg.ativo) {
           escolherVoz();
           if (agora() - (estado.ultimoCiclo || 0) > cfg.intervaloSeg * 1000 + 5000) cicloImediato();
+          if (escondidoEm && agora() - escondidoEm > 20000) agendarResumoAbertura(4000);
         }
       });
     }
@@ -3122,6 +3196,8 @@
     carregarCatalogo().catch(() => {});
     abrirStream();
     cicloImediato();
+    // ao entrar: espera a primeira leitura (stream + ciclo) e fala os alertas ativos
+    agendarResumoAbertura(7000);
     return { versao: VERSAO, config: cfg };
   }
 
