@@ -136,6 +136,11 @@ assert.equal(
 assert.equal(policy.montarFala({ tipoAlarme: '3484', numero: '8833', texto: 'SEM APONTAMENTO' }), 'Veículo oito oito três três: SEM APONTAMENTO. Verificar.');
 
 // Caminhão aguardado não inclui operador e usa frente ou fallback.
+assert.equal(policy.caminhaoCanavieiroTerceiro({ tipo: 'CAMINHÕES CANAVIEIRO TERC' }), true);
+assert.equal(policy.caminhaoCanavieiroTerceiro({ tipo: 'CAMINHÕES CANAVAREIRO TERC' }), true);
+for (const tipo of ['CAMINHÕES CAÇAMBAS', 'CAMINHÕES MUNCK', 'CAMINHÕES BOMBEIROS', 'CAMINHÃO CANAVIEIRO']) {
+  assert.equal(policy.caminhaoCanavieiroTerceiro({ tipo }), false, tipo + ' não entra no esquema da frente de colheita');
+}
 assert.equal(
   policy.montarFala({ numero: '0083', e: { tipoCompleto: 'Trator', operacao: '123 - Aguardando Caminhão - HD', frente: 'Norte' }, operador: 'Ana' }),
   'Trator zero zero oito três aguardando caminhão. Frente/grupo Norte. Verificar.'
@@ -159,6 +164,15 @@ const semFrenteColheita = policy.montarFala({
 });
 assert.match(semFrenteColheita, /frente de colheita não informada/);
 assert.doesNotMatch(semFrenteColheita, /Frente 3/);
+for (const tipo of ['CAMINHÕES CAÇAMBAS', 'CAMINHÕES MUNCK', 'CAMINHÕES BOMBEIROS']) {
+  const fala = policy.montarFala({
+    regra: 'paradaImprodutiva', paradaId: 'aguardandoCarregamento', paradaNome: 'Aguardando carregamento (caminhão)',
+    numero: '4426', classe: 'Caminhão', valor: 31,
+    e: { tipo, frente: 'Frente 1', grupoEquipamento: tipo }
+  });
+  assert.equal(fala, 'Caminhão quatro quatro dois seis em Aguardando carregamento há 31 minutos. Verificar.');
+  assert.doesNotMatch(fala, /Frente 1|frente de colheita|Frente\/grupo/);
+}
 
 // Demais mensagens limpam o prefixo de alarme e expandem unidades sem reformular valores.
 assert.equal(

@@ -170,6 +170,16 @@
     return /^(?:sem apontamento(?: (?:tpl|cct))?|digitar op vl)$/.test(normalized);
   }
 
+  function caminhaoCanavieiroTerceiro(e) {
+    if (!e || typeof e !== 'object') return false;
+    var tipo = norm([e.tipo, e.tipoCompleto].filter(Boolean).join(' ')).replace(/[^a-z0-9]+/g, ' ');
+    var palavras = tipo.split(/\s+/);
+    var caminhao = palavras.indexOf('caminhao') >= 0 || palavras.indexOf('caminhoes') >= 0;
+    var canavieiro = palavras.some(function (palavra) { return /^canav/.test(palavra); });
+    var terceiro = palavras.some(function (palavra) { return palavra === 'terc' || /^terceir[oa]s?$/.test(palavra); });
+    return caminhao && canavieiro && terceiro;
+  }
+
   /* Paradas improdutivas de maior impacto (ranking SGPA 23/10–22/11/2026). */
   var PARADAS = [
     { id: 'agColhedoraParadaRapida', nome: 'AG colhedora parada rápida (983)', min: 10, codigo: '983', re: /^ag(?:uardando|uard)? colhedora parada rapida/ },
@@ -485,8 +495,7 @@
       var mp = numericAlertValue(item.valor);
       var prefixo = item.nivel >= 3 ? 'Escalonamento. ' : item.nivel === 2 ? 'Urgente, parada continua. ' : '';
       var sufixo = item.nivel >= 3 ? ' Acionar ' + (item.lider ? 'líder ' + item.lider : 'líder da frente') + '.' : '';
-      var tipoParada = norm([item.classe, event.tipo, event.tipoCompleto, event.nome].filter(Boolean).join(' '));
-      if (item.paradaId === 'aguardandoCarregamento' && /caminh(?:ao|oes)/.test(tipoParada)) {
+      if (item.paradaId === 'aguardandoCarregamento' && caminhaoCanavieiroTerceiro(event)) {
         var frenteColheita = event.frente == null ? '' : String(event.frente).trim();
         var localColheita = frenteColheita
           ? (/^frente\b/i.test(frenteColheita) ? 'na ' + frenteColheita : 'na frente de colheita ' + frenteColheita)
@@ -494,6 +503,14 @@
         return prefixo + 'Caminhão ' + vehicleNumber(item, event) + ' aguardando carregamento' +
           (mp ? ' há ' + String(mp) + (mp === 1 ? ' minuto' : ' minutos') : '') +
           ', se encontra ' + localColheita + '.' + (sufixo || ' Verificar.');
+      }
+      if (item.paradaId === 'aguardandoCarregamento') {
+        var carregamentoSemFrente = String(item.paradaNome || 'Aguardando carregamento')
+          .replace(/\s*\(\s*caminh(?:ão|ões|ao|oes)\s*\)/i, '')
+          .replace(/\s*\(\d+\)/, '');
+        return prefixo + cp + ' ' + vehicleNumber(item, event) + ' em ' + carregamentoSemFrente +
+          (mp ? ' há ' + String(mp) + (mp === 1 ? ' minuto' : ' minutos') : '') +
+          '.' + (sufixo || ' Verificar.');
       }
       return prefixo + cp + ' ' + vehicleNumber(item, event) + ' em ' + String(item.paradaNome || 'parada improdutiva').replace(/\s*\(\d+\)/, '') +
         (mp ? ' há ' + String(mp) + (mp === 1 ? ' minuto' : ' minutos') : '') +
@@ -544,6 +561,7 @@
     categoria: categoria,
     idFalado: idFalado,
     aguardandoCaminhao: aguardandoCaminhao,
+    caminhaoCanavieiroTerceiro: caminhaoCanavieiroTerceiro,
     frenteDividida: frenteDividida,
     semApontamento: semApontamento,
     emRefeicao: emRefeicao,

@@ -274,6 +274,21 @@ with sync_playwright() as pw:
       ok(!!basculamento && basculamento.notificar && basculamento.texto.includes('inferido pelo app') && basculamento.detalhe.includes('905') && basculamento.detalhe.includes('nenhum apontamento foi alterado'),'correlação gera alerta de basculamento inferido sem alterar o SGPA');
       ok(basculamento.fala.includes('caminhão quatro quatro cinco um') && basculamento.fala.includes('Frente/grupo Frente 2') && basculamento.fala.includes('permanece Aguardando Caminhão'),'fala cita caminhão, Frente 2 e o apontamento original');
       t.reset();
+      api.configurar({gestaoFrenteAtiva:true,filaMaxFrente:3,minutosFrenteSemColhedora:0,transbordosAguardandoMax:0});
+      const caminhoesForaColheita=['CAMINHÕES CAÇAMBAS','CAMINHÕES MUNCK','CAMINHÕES BOMBEIROS'].map((tipo,i)=>({
+        ...row,cdEquipamento:'NON-CANE-'+i,descEquipamento:(7100+i)+' - '+tipo,descTpEquipamento:tipo,descFullTpEquipamento:tipo,
+        descFrente:frenteCana,descGrupoEquipamento:tipo,cdOperacao:i===0?920:908,descOperacao:i===0?'920 - Fila única':'908 - Aguardando Carregamento',
+        dtHrLocal:new Date().toISOString(),vlTempoSemComunicacao:'0 DIA(S) 00:00:00'
+      }));
+      const tratorSemCaminhaoCanavieiro={...trator905,cdEquipamento:'TRACTOR-NON-CANE-905'};
+      t.aplicarTelemetria([...caminhoesForaColheita,tratorSemCaminhaoCanavieiro]);
+      t.regrasFrente(Date.now());
+      ok(!api.ativos().some(a=>a.regra==='gestaoFrente'),'caçamba, Munck e bombeiro não contam na fila de gestão da frente de colheita');
+      const tratorSemCanavieiro=t.frota().find(e=>e.id==='TRACTOR-NON-CANE-905');
+      t.regraAguardandoCaminhao(tratorSemCanavieiro,Date.now());
+      t.regraAguardandoCaminhao(tratorSemCanavieiro,Date.now()+3000);
+      ok(api.ativos().some(a=>a.e.id==='TRACTOR-NON-CANE-905' && a.regra==='aguardandoCaminhao') && !api.ativos().some(a=>a.regra==='aguardandoBasculamento'),'caçamba, Munck e bombeiro não suprimem o alerta 905 nem geram basculamento inferido');
+      t.reset();
       const streamTrator905={...trator905,cdEquipamento:'STREAM-TRACTOR',descFrente:frenteCana};
       const streamCaminhaoFila={...caminhaoFila,cdEquipamento:'STREAM-TRUCK',descFrente:frenteCana};
       t.processarQuadros([streamTrator905,streamCaminhaoFila]);

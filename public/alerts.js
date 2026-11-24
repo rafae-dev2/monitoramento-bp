@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.8.1';
+  const VERSAO = '1.8.2';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -1269,7 +1269,7 @@
 
   function equipamentoCaminhao(e) {
     const tipo = policy.norm([e.tipo, e.tipoCompleto, e.nome].filter(Boolean).join(' '));
-    return /caminh|\btruck\b/.test(tipo);
+    return /caminh|\btruck\b|munck|cacamb|bombeir/.test(tipo);
   }
   function telemetriaRecente(e) {
     const tsEquipamento = Number(e && e.tsEquipamento);
@@ -1289,7 +1289,7 @@
     return [...frota.values()].filter((e) => {
       if (!dentroDoEscopo(e) || e.operacaoConfirmada !== true || policy.norm(e.frente) !== alvo) return false;
       if (!telemetriaRecente(e)) return false;
-      if (!equipamentoCaminhao(e)) return false;
+      if (!policy.caminhaoCanavieiroTerceiro(e)) return false;
       const parada = policy.paradaImprodutiva(e);
       return !!parada && parada.id === 'aguardandoCarregamento';
     }).map((e) => ({ id: e.id, numero: e.numero || e.id }));
@@ -1508,7 +1508,11 @@
       let f = porFrente.get(chaveFrente);
       if (!f) { f = { frente: rotuloFrente, fila: [], colh: 0, colhParadas: 0, transbAg: [] }; porFrente.set(chaveFrente, f); }
       const p = e.operacaoConfirmada === true ? policy.paradaImprodutiva(e) : null;
-      if (p && (p.id === 'filaUnica' || p.id === 'aguardandoCarregamento')) f.fila.push(e.numero || e.id);
+      const elegivelFilaFrente = p && (
+        (p.id === 'filaUnica' && (!equipamentoCaminhao(e) || policy.caminhaoCanavieiroTerceiro(e))) ||
+        (p.id === 'aguardandoCarregamento' && policy.caminhaoCanavieiroTerceiro(e))
+      );
+      if (elegivelFilaFrente) f.fila.push(e.numero || e.id);
       if (p && (p.id === 'agColhedoraParadaRapida' || p.id === 'aguardandoColhedoraAlocada')) f.transbAg.push(e.numero || e.id);
       const tipo = policy.norm([e.tipo, e.tipoCompleto, e.nome].filter(Boolean).join(' '));
       if (/colhed/.test(tipo)) {
