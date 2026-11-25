@@ -909,3 +909,280 @@ code {
     animation: none;
   }
 }
+
+/* =====================================================================
+   ACABAMENTO LIQUID GLASS (padrão) — vidro óptico estilo iOS
+   ---------------------------------------------------------------------
+   Camada puramente visual: não altera tamanhos, paddings nem layout.
+   Usa :where() para não aumentar especificidade — estados semânticos
+   (AO VIVO, crítico, voz muda, PiP ativo…) continuam vencendo e viram
+   "vidro tingido" automaticamente.
+   Modo "Sólido alto contraste": html[data-acabamento='solido'].
+   ===================================================================== */
+
+:root {
+  --lg-blur: blur(22px) saturate(185%) brightness(1.04);
+  --lg-blur-leve: blur(14px) saturate(170%);
+  --lg-tinta: rgba(14, 24, 34, 0.56);
+  --lg-tinta-forte: rgba(11, 19, 28, 0.74);
+  /* Reflexo curvo superior (a "lente" do vidro) */
+  --lg-reflexo: radial-gradient(120% 70% at 50% -18%, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.04) 46%, transparent 64%);
+  /* Borda especular: luz entrando pelo topo e rebatendo na base */
+  --lg-aro:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.34),
+    inset 0 -1px 0.5px rgba(255, 255, 255, 0.07),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --lg-sombra: 0 10px 30px rgba(0, 0, 0, 0.42), 0 2px 6px rgba(0, 0, 0, 0.28);
+  --lg-borda: rgba(255, 255, 255, 0.14);
+  --lg-borda-forte: rgba(255, 255, 255, 0.24);
+  --lg-mola: cubic-bezier(0.22, 1.2, 0.36, 1);
+}
+
+/* --------------------------- Cabeçalho --------------------------- */
+
+:where(html:not([data-acabamento='solido'])) #bar {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 52%),
+    radial-gradient(60% 240% at 0% 0%, rgba(0, 108, 48, 0.34) 0%, transparent 58%),
+    radial-gradient(42% 200% at 52% -60%, rgba(250, 204, 21, 0.10) 0%, transparent 64%),
+    linear-gradient(180deg, rgba(22, 36, 50, 0.96) 0%, rgba(10, 18, 26, 0.98) 100%);
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+}
+
+/* Medalhão de vidro lapidado para o brasão Branco Peres */
+:where(html:not([data-acabamento='solido'])) .brand-emblem {
+  overflow: hidden;
+  isolation: isolate;
+  border-radius: 14px;
+  background:
+    var(--lg-reflexo),
+    radial-gradient(85% 85% at 50% 58%, rgba(0, 108, 48, 0.30) 0%, transparent 70%),
+    linear-gradient(155deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 50%, rgba(250, 204, 21, 0.08) 100%),
+    rgba(12, 22, 32, 0.62);
+  border-color: rgba(250, 204, 21, 0.34);
+  box-shadow:
+    var(--lg-aro),
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 6px 16px rgba(0, 0, 0, 0.5),
+    0 0 18px rgba(250, 204, 21, 0.10);
+  -webkit-backdrop-filter: var(--lg-blur-leve);
+  backdrop-filter: var(--lg-blur-leve);
+}
+
+/* Faixa de brilho diagonal que atravessa o vidro (fica sobre o brasão) */
+:where(html:not([data-acabamento='solido'])) .brand-emblem::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    linear-gradient(118deg, transparent 0%, transparent 34%, rgba(255, 255, 255, 0.20) 44%, rgba(255, 255, 255, 0.04) 52%, transparent 60%),
+    radial-gradient(70% 40% at 50% 0%, rgba(255, 255, 255, 0.22) 0%, transparent 70%);
+  mix-blend-mode: screen;
+}
+
+:where(html:not([data-acabamento='solido'])) .brand-emblem #brand-logo {
+  position: relative;
+  z-index: 1;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 6px rgba(250, 204, 21, 0.12));
+}
+
+/* Cápsulas ópticas do HUD (AO VIVO, severidade, operador, relógio) */
+:where(html:not([data-acabamento='solido'])) .coa-pill,
+:where(html:not([data-acabamento='solido'])) .coa-sev,
+:where(html:not([data-acabamento='solido'])) #who,
+:where(html:not([data-acabamento='solido'])) .coa-clock {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 55%, transparent 100%);
+  border-color: var(--lg-borda);
+  box-shadow: var(--lg-aro), 0 2px 8px rgba(0, 0, 0, 0.3);
+  -webkit-backdrop-filter: var(--lg-blur-leve);
+  backdrop-filter: var(--lg-blur-leve);
+}
+
+/* ------------------------------ Botões ------------------------------ */
+
+:where(html:not([data-acabamento='solido'])) button,
+:where(html:not([data-acabamento='solido'])) .btn {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.11) 0%, rgba(255, 255, 255, 0.03) 52%, rgba(255, 255, 255, 0.05) 100%),
+    var(--lg-tinta);
+  border-color: var(--lg-borda);
+  box-shadow: var(--lg-aro), 0 4px 12px rgba(0, 0, 0, 0.3);
+  -webkit-backdrop-filter: var(--lg-blur-leve);
+  backdrop-filter: var(--lg-blur-leve);
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    color 0.18s ease,
+    transform 0.32s var(--lg-mola);
+}
+
+:where(html:not([data-acabamento='solido'])) button:hover:not(:disabled),
+:where(html:not([data-acabamento='solido'])) .btn:hover:not(:disabled) {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.17) 0%, rgba(255, 255, 255, 0.05) 52%, rgba(255, 255, 255, 0.08) 100%),
+    rgba(20, 34, 48, 0.62);
+  border-color: var(--lg-borda-forte);
+  box-shadow: var(--lg-aro), 0 6px 18px rgba(0, 0, 0, 0.36);
+}
+
+:where(html:not([data-acabamento='solido'])) button:active:not(:disabled),
+:where(html:not([data-acabamento='solido'])) .btn:active:not(:disabled) {
+  transform: scale(0.965);
+  transition-duration: 0.08s;
+}
+
+/* Primário em vidro esmeralda (ação principal / confirmar) */
+:where(html:not([data-acabamento='solido'])) .primary,
+:where(html:not([data-acabamento='solido'])) #btn-install {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.06) 50%, rgba(255, 255, 255, 0.12) 100%),
+    linear-gradient(180deg, rgba(16, 185, 129, 0.92) 0%, rgba(5, 150, 105, 0.94) 100%);
+  border-color: rgba(167, 243, 208, 0.55);
+  color: #022014;
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.55),
+    inset 0 -1px 0.5px rgba(0, 0, 0, 0.12),
+    0 6px 18px rgba(16, 185, 129, 0.28);
+}
+
+:where(html:not([data-acabamento='solido'])) .primary:hover:not(:disabled),
+:where(html:not([data-acabamento='solido'])) #btn-install:hover:not(:disabled) {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.42) 0%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.16) 100%),
+    linear-gradient(180deg, #34d399 0%, #10b981 100%);
+  border-color: rgba(209, 250, 229, 0.75);
+}
+
+/* Botões de ícone da barra: lentes quadradas com reflexo curvo */
+:where(html:not([data-acabamento='solido'])) #actions .icon-btn {
+  background:
+    var(--lg-reflexo),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.02) 100%),
+    rgba(18, 30, 42, 0.5);
+  border-color: var(--lg-borda);
+  box-shadow: var(--lg-aro), 0 4px 12px rgba(0, 0, 0, 0.34);
+}
+
+:where(html:not([data-acabamento='solido'])) #actions .icon-btn:hover {
+  background:
+    var(--lg-reflexo),
+    linear-gradient(180deg, rgba(250, 204, 21, 0.20) 0%, rgba(250, 204, 21, 0.06) 100%),
+    rgba(18, 30, 42, 0.5);
+  border-color: rgba(253, 224, 71, 0.5);
+}
+
+:where(html:not([data-acabamento='solido'])) #actions .icon-btn:active {
+  transform: scale(0.92);
+}
+
+/* -------------------- Overlays, cartões e folha de menu -------------------- */
+
+:where(html:not([data-acabamento='solido'])) #boot,
+:where(html:not([data-acabamento='solido'])) #error,
+:where(html:not([data-acabamento='solido'])) #login,
+:where(html:not([data-acabamento='solido'])) #about {
+  background:
+    radial-gradient(80% 60% at 50% 0%, rgba(0, 108, 48, 0.22) 0%, transparent 65%),
+    radial-gradient(110% 110% at 50% 50%, rgba(12, 21, 30, 0.66) 0%, rgba(6, 11, 17, 0.84) 78%);
+  /* Sem blur no véu: quem refrata é o próprio cartão de vidro (um véu com
+     backdrop-filter viraria "backdrop root" e apagaria a refração do cartão). */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+:where(html:not([data-acabamento='solido'])) #menu {
+  background: rgba(4, 8, 13, 0.46);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+:where(html:not([data-acabamento='solido'])) .card,
+:where(html:not([data-acabamento='solido'])) .sheet {
+  background:
+    var(--lg-reflexo),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.015) 45%, rgba(255, 255, 255, 0.04) 100%),
+    var(--lg-tinta-forte);
+  border-color: var(--lg-borda);
+  box-shadow: var(--lg-aro), 0 28px 70px rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: var(--lg-blur);
+  backdrop-filter: var(--lg-blur);
+}
+
+:where(html:not([data-acabamento='solido'])) .sheet button {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
+  border-color: rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+:where(html:not([data-acabamento='solido'])) .sheet button:hover {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.13) 0%, rgba(255, 255, 255, 0.05) 100%);
+  border-color: var(--lg-borda-forte);
+}
+
+:where(html:not([data-acabamento='solido'])) .m-ico,
+:where(html:not([data-acabamento='solido'])) .about-pill {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.03) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+:where(html:not([data-acabamento='solido'])) .sheet-handle {
+  background: rgba(255, 255, 255, 0.34);
+}
+
+:where(html:not([data-acabamento='solido'])) .marca-halo {
+  background:
+    radial-gradient(70% 45% at 50% 0%, rgba(255, 255, 255, 0.16) 0%, transparent 70%),
+    radial-gradient(circle, rgba(16, 185, 129, 0.26), transparent 72%);
+  box-shadow: var(--lg-aro);
+  border-radius: 22px;
+}
+
+:where(html:not([data-acabamento='solido'])) #session-status {
+  -webkit-backdrop-filter: var(--lg-blur);
+  backdrop-filter: var(--lg-blur);
+  box-shadow: var(--lg-aro), 0 12px 32px rgba(0, 0, 0, 0.48);
+}
+
+/* Celulares: blur mais leve para preservar fluidez do mapa */
+@media (max-width: 560px) {
+  :root {
+    --lg-blur: blur(16px) saturate(175%);
+    --lg-blur-leve: blur(10px) saturate(160%);
+  }
+}
+
+/* Navegadores sem backdrop-filter: vidro mais denso para manter leitura */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --lg-tinta: rgba(16, 27, 38, 0.92);
+    --lg-tinta-forte: rgba(13, 22, 32, 0.97);
+  }
+}
+
+/* ---------------- Modo Sólido alto contraste (monitores claros) ---------------- */
+
+html[data-acabamento='solido'] {
+  --muted: #b4c0cf;
+  --ink-soft: #e2e8f0;
+  --line: rgba(148, 163, 184, 0.26);
+  --line-strong: rgba(148, 163, 184, 0.4);
+}
+
+html[data-acabamento='solido'] :is(#boot, #error, #login, #about, #menu, #session-status) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-acabamento='solido'] :is(#boot, #error, #login, #about) {
+  background: #080e14;
+}

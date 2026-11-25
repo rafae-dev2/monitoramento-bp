@@ -1329,3 +1329,282 @@ button.mudo {
     transition: none;
   }
 }
+
+/* =====================================================================
+   ACABAMENTO LIQUID GLASS — Central, toasts e Preferências
+   (variáveis --lg-* definidas em styles.css; somente aparência)
+   ===================================================================== */
+
+/* ------------------------------ Gaveta da Central ------------------------------ */
+
+:where(html:not([data-acabamento='solido'])) #alertas .veu {
+  background: rgba(4, 8, 13, 0.32);
+  -webkit-backdrop-filter: blur(3px) saturate(130%);
+  backdrop-filter: blur(3px) saturate(130%);
+}
+
+:where(html:not([data-acabamento='solido'])) #alertas-painel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.01) 30%, transparent 100%),
+    rgba(11, 19, 28, 0.72);
+  border-right-color: var(--lg-borda);
+  box-shadow:
+    inset -1px 0 0 rgba(255, 255, 255, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    24px 0 60px rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: var(--lg-blur);
+  backdrop-filter: var(--lg-blur);
+}
+
+:where(html:not([data-acabamento='solido'])) #alertas-painel header {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.02) 100%),
+    radial-gradient(90% 180% at 0% 0%, rgba(0, 108, 48, 0.26) 0%, transparent 60%);
+  border-bottom-color: var(--lg-borda);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+:where(html:not([data-acabamento='solido'])) .ferramentas,
+:where(html:not([data-acabamento='solido'])) .busca-central,
+:where(html:not([data-acabamento='solido'])) .linha-status {
+  background: rgba(255, 255, 255, 0.025);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+:where(html:not([data-acabamento='solido'])) #alertas-painel footer {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.015) 100%), rgba(8, 14, 21, 0.5);
+  border-top-color: var(--lg-borda);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Trilho de abas em vidro com "gota" ativa esmeralda */
+:where(html:not([data-acabamento='solido'])) .abas {
+  background: rgba(0, 0, 0, 0.28);
+  border-color: rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+}
+
+:where(html:not([data-acabamento='solido'])) .aba {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+:where(html:not([data-acabamento='solido'])) .aba.ativa {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.04) 55%, rgba(255, 255, 255, 0.08) 100%),
+    rgba(16, 185, 129, 0.30);
+  border-color: rgba(167, 243, 208, 0.45);
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.45), 0 3px 10px rgba(0, 0, 0, 0.32);
+}
+
+:where(html:not([data-acabamento='solido'])) .busca-central input {
+  background-color: rgba(0, 0, 0, 0.28);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* ------------------------------ Cartões de alerta ------------------------------ */
+
+:where(html:not([data-acabamento='solido'])) .alerta {
+  background:
+    radial-gradient(110% 60% at 50% -10%, rgba(255, 255, 255, 0.10) 0%, transparent 60%),
+    linear-gradient(165deg, rgba(148, 163, 184, 0.10) 0%, rgba(148, 163, 184, 0.03) 100%),
+    rgba(15, 25, 36, 0.62);
+  background:
+    radial-gradient(110% 60% at 50% -10%, rgba(255, 255, 255, 0.10) 0%, transparent 60%),
+    linear-gradient(165deg, color-mix(in srgb, var(--cor, #94a3b8) 13%, transparent) 0%, rgba(148, 163, 184, 0.025) 62%),
+    rgba(15, 25, 36, 0.62);
+  border-color: rgba(255, 255, 255, 0.12);
+  border-left-color: var(--cor, #94a3b8);
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.24),
+    inset 0 -1px 0.5px rgba(255, 255, 255, 0.05),
+    0 8px 22px rgba(0, 0, 0, 0.32);
+}
+
+:where(html:not([data-acabamento='solido'])) .alerta:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  border-left-color: var(--cor, #94a3b8);
+}
+
+/* Críticos: vidro rubi */
+:where(html:not([data-acabamento='solido'])) .alerta.sev3 {
+  background:
+    radial-gradient(110% 60% at 50% -10%, rgba(255, 255, 255, 0.11) 0%, transparent 60%),
+    linear-gradient(165deg, rgba(239, 68, 68, 0.20) 0%, rgba(127, 29, 29, 0.10) 60%),
+    rgba(22, 17, 24, 0.66);
+  border-color: rgba(252, 165, 165, 0.22);
+  border-left-color: var(--cor, #ef4444);
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.26),
+    inset 0 -1px 0.5px rgba(255, 255, 255, 0.05),
+    0 10px 28px rgba(239, 68, 68, 0.18);
+}
+
+:where(html:not([data-acabamento='solido'])) .a-chip {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.03) 100%), rgba(8, 14, 21, 0.4);
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+:where(html:not([data-acabamento='solido'])) .a-chip.oficial,
+:where(html:not([data-acabamento='solido'])) .a-chip.verde {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 100%), rgba(16, 185, 129, 0.16);
+  border-color: rgba(110, 231, 183, 0.36);
+}
+
+:where(html:not([data-acabamento='solido'])) .alerta .a-fala {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, transparent 100%), rgba(16, 185, 129, 0.08);
+  border-color: rgba(110, 231, 183, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+/* Botões dentro do cartão: vidro interno leve (sem blur extra — o cartão já refrata) */
+:where(html:not([data-acabamento='solido'])) .alerta .a-acoes button {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.025) 100%), rgba(6, 11, 17, 0.42);
+  border-color: rgba(255, 255, 255, 0.13);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+:where(html:not([data-acabamento='solido'])) .alerta .a-acoes button:hover {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.17) 0%, rgba(255, 255, 255, 0.05) 100%), rgba(20, 34, 48, 0.5);
+  border-color: rgba(255, 255, 255, 0.26);
+}
+
+:where(html:not([data-acabamento='solido'])) .vazio {
+  background: rgba(255, 255, 255, 0.025);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* ------------------- Toasts sobre o mapa: notificação iOS ------------------- */
+
+:where(html:not([data-acabamento='solido'])) #toasts .alerta {
+  background:
+    radial-gradient(120% 70% at 50% -16%, rgba(255, 255, 255, 0.16) 0%, transparent 62%),
+    linear-gradient(165deg, rgba(148, 163, 184, 0.12) 0%, rgba(148, 163, 184, 0.03) 100%),
+    rgba(12, 21, 31, 0.6);
+  background:
+    radial-gradient(120% 70% at 50% -16%, rgba(255, 255, 255, 0.16) 0%, transparent 62%),
+    linear-gradient(165deg, color-mix(in srgb, var(--cor, #94a3b8) 18%, transparent) 0%, rgba(148, 163, 184, 0.03) 64%),
+    rgba(12, 21, 31, 0.6);
+  border-color: rgba(255, 255, 255, 0.16);
+  border-left-color: var(--cor, #94a3b8);
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.38),
+    inset 0 -1px 0.5px rgba(255, 255, 255, 0.08),
+    0 20px 50px rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(26px) saturate(190%) brightness(1.04);
+  backdrop-filter: blur(26px) saturate(190%) brightness(1.04);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+:where(html:not([data-acabamento='solido'])) #toasts .alerta.sev3 {
+  background:
+    radial-gradient(120% 70% at 50% -16%, rgba(255, 255, 255, 0.16) 0%, transparent 62%),
+    linear-gradient(165deg, rgba(239, 68, 68, 0.28) 0%, rgba(127, 29, 29, 0.12) 64%),
+    rgba(26, 14, 20, 0.64);
+  border-color: rgba(252, 165, 165, 0.3);
+  border-left-color: var(--cor, #ef4444);
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.38),
+    inset 0 -1px 0.5px rgba(255, 255, 255, 0.08),
+    0 20px 50px rgba(0, 0, 0, 0.5),
+    0 0 26px rgba(239, 68, 68, 0.16);
+}
+
+:where(html:not([data-acabamento='solido'])) .aviso {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 100%),
+    rgba(14, 24, 35, 0.62);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: var(--lg-aro), 0 14px 34px rgba(0, 0, 0, 0.45);
+  -webkit-backdrop-filter: var(--lg-blur);
+  backdrop-filter: var(--lg-blur);
+}
+
+:where(html:not([data-acabamento='solido'])) #btn-limpar-toasts {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.03) 100%),
+    rgba(12, 21, 31, 0.58);
+  border-color: rgba(253, 224, 71, 0.48);
+  box-shadow: var(--lg-aro), 0 8px 20px rgba(0, 0, 0, 0.4);
+  -webkit-backdrop-filter: var(--lg-blur);
+  backdrop-filter: var(--lg-blur);
+}
+
+:where(html:not([data-acabamento='solido'])) #btn-limpar-toasts:hover {
+  background:
+    linear-gradient(180deg, rgba(253, 224, 71, 0.24) 0%, rgba(253, 224, 71, 0.06) 100%),
+    rgba(12, 21, 31, 0.58);
+  border-color: var(--bp-ouro);
+}
+
+/* ------------------------------ Preferências ------------------------------ */
+
+:where(html:not([data-acabamento='solido'])) #cfg-alertas {
+  background: rgba(4, 8, 13, 0.44);
+  /* o cartão .cfg é quem refrata o mapa */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+:where(html:not([data-acabamento='solido'])) .cfg-topo {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 100%),
+    rgba(12, 21, 31, 0.6);
+  border-bottom-color: var(--lg-borda);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+}
+
+:where(html:not([data-acabamento='solido'])) .push-optin {
+  background:
+    radial-gradient(110% 60% at 50% -10%, rgba(255, 255, 255, 0.10) 0%, transparent 60%),
+    linear-gradient(150deg, rgba(16, 185, 129, 0.16), rgba(6, 78, 59, 0.12) 75%),
+    rgba(8, 20, 16, 0.5);
+  border-color: rgba(110, 231, 183, 0.3);
+  border-left-color: var(--ok);
+  box-shadow: var(--lg-aro), 0 10px 26px rgba(0, 0, 0, 0.26);
+}
+
+:where(html:not([data-acabamento='solido'])) .alert-switch,
+:where(html:not([data-acabamento='solido'])) .catalogo-detalhes,
+:where(html:not([data-acabamento='solido'])) .fonte-oficial {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+
+:where(html:not([data-acabamento='solido'])) .alert-switch-track {
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+}
+
+:where(html:not([data-acabamento='solido'])) .alert-switch-track::after {
+  background: linear-gradient(180deg, #ffffff 0%, #e2e8f0 100%);
+  box-shadow: inset 0 1px 0 #fff, 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+:where(html:not([data-acabamento='solido'])) #voz-bloqueada {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0.06) 52%, rgba(255, 255, 255, 0.14) 100%),
+    rgba(250, 204, 21, 0.9);
+  border-color: rgba(254, 249, 195, 0.8);
+  -webkit-backdrop-filter: var(--lg-blur-leve);
+  backdrop-filter: var(--lg-blur-leve);
+}
+
+/* ----------------------- Modo Sólido alto contraste ----------------------- */
+
+html[data-acabamento='solido'] :is(#cfg-alertas, #alertas .veu, #toasts .alerta, .aviso, #btn-limpar-toasts, .cfg-topo) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-acabamento='solido'] #toasts .alerta {
+  background: linear-gradient(165deg, #172533 0%, #0f1a25 100%);
+  border-width: 1.5px;
+  border-left-width: 4px;
+}
+
+html[data-acabamento='solido'] .cfg-topo {
+  background: #0f1924;
+}

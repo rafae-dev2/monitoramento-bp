@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '2.0.0';
+  const VERSAO = '2.1.0';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -51,6 +51,37 @@
 
   const $ = (id) => document.getElementById(id);
   const agora = () => Date.now();
+
+  /* Acabamento visual por aparelho: 'vidro' (Liquid Glass) ou 'solido' (alto contraste).
+     Fica fora do cfg de alertas para valer antes do login e não ser sincronizado. */
+  const KEY_ACABAMENTO = 'bperes.visual.acabamento.v1';
+  function acabamentoSalvo() {
+    try {
+      const v = localStorage.getItem(KEY_ACABAMENTO);
+      if (v === 'vidro' || v === 'solido') return v;
+    } catch {
+      /* sem storage */
+    }
+    try {
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-transparency: reduce)').matches) return 'solido';
+    } catch {
+      /* matchMedia indisponível */
+    }
+    return 'vidro';
+  }
+  function aplicarAcabamento(valor, persistir) {
+    const v = valor === 'solido' ? 'solido' : 'vidro';
+    document.documentElement.dataset.acabamento = v;
+    if (persistir) {
+      try {
+        localStorage.setItem(KEY_ACABAMENTO, v);
+      } catch {
+        /* sem storage */
+      }
+    }
+    return v;
+  }
+  aplicarAcabamento(acabamentoSalvo(), false);
   let prazoRequisicaoMs = 15_000;
 
   /* tipos de alarme oficiais => nossas regras (catálogo /tipo-alarme do tenant) */
@@ -3426,6 +3457,16 @@
       <p id="push-status" class="push-status" role="status" aria-live="polite">Verificando disponibilidade…</p>
       <div class="push-acoes"><button id="push-ativar" class="primary" type="button">Ativar notificações Push neste aparelho</button><button id="push-desligar" class="push-desligar hide" type="button">Desligar notificações Push neste aparelho</button></div>
     </section>
+    <h3 class="secao-alertas">Acabamento visual</h3>
+    <div class="grade">
+      <label class="campo"><span>Estilo da interface neste aparelho</span>
+        <select id="cfg-acabamento">
+          <option value="vidro">Liquid Glass (vidro translúcido estilo iPhone)</option>
+          <option value="solido">Sólido alto contraste (monitor claro / celular básico)</option>
+        </select>
+      </label>
+    </div>
+    <p class="fine">Aplica na hora, só neste aparelho. O modo sólido remove transparências e reforça o contraste dos textos — indicado para telões do COA com muita luz ambiente ou aparelhos mais lentos.</p>
     <h3 class="secao-alertas">Modo Sentinela COA (2º plano e anti-perda)</h3>
     <p class="fine">Garante que o computador (aba minimizada ou atrás de outros sistemas) e o APK Android continuem monitorando e falando os alertas, além de avisar imediatamente caso o sinal do SGPA caia.</p>
     <div class="switches">
@@ -3632,6 +3673,9 @@
     $('cfg-fechar').onclick = fecharConfig;
     $('cfg-fechar-x').onclick = fecharConfig;
     $('cfg-salvar').onclick = lerConfig;
+    if ($('cfg-acabamento')) {
+      $('cfg-acabamento').onchange = () => aplicarAcabamento($('cfg-acabamento').value, true);
+    }
     $('push-ativar').onclick = ativarPush;
     $('push-desligar').onclick = desligarPush;
     $('cfg-vozel').onchange = () => {
@@ -4478,6 +4522,7 @@
     }
     if ($('cfg-perfil-voz')) $('cfg-perfil-voz').value = PERFIS_VOZ[cfg.perfilVoz] ? cfg.perfilVoz : 'padrao';
     if ($('cfg-estilo-toque')) $('cfg-estilo-toque').value = cfg.estiloToque || 'gongo-coa';
+    if ($('cfg-acabamento')) $('cfg-acabamento').value = document.documentElement.dataset.acabamento === 'solido' ? 'solido' : 'vidro';
     const checks = {
       'cfg-liga': cfg.ativo,
       'cfg-gestao-frente': cfg.gestaoFrenteAtiva !== false,
