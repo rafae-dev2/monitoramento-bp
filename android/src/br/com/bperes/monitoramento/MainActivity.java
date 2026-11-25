@@ -13,6 +13,7 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.speech.tts.Voice;
 import android.webkit.JavascriptInterface;
 import java.util.Locale;
@@ -73,11 +74,12 @@ public class MainActivity extends Activity {
             "api-usa.saas-solinftec.com",
             "data-analytics.saas-solinftec.com",
             "sgpa-solinftec-bpa.netlify.app",
-            "storied-heliotrope-bed0e7.netlify.app",
             "api.mapbox.com",
             "events.mapbox.com",
             "tiles.mapbox.com"
     };
+
+    private static final String TRUSTED_PWA_HOST = "sgpa-solinftec-bpa.netlify.app";
 
     /**
      * User agent de desktop: o portal e uma aplicacao de cabine/escritorio e nao
@@ -95,6 +97,7 @@ public class MainActivity extends Activity {
     private WebView web;
     private volatile TextToSpeech tts;
     private volatile boolean vozPronta = false;
+    private volatile boolean origemAppConfiavel = true;
     private final Object travaVoz = new Object();
     private final ArrayDeque<FalaPendente> filaVozPendente = new ArrayDeque<>();
     private boolean inicializandoVoz;
@@ -192,6 +195,13 @@ public class MainActivity extends Activity {
 
         web.setWebViewClient(new WebViewClient() {
             @Override
+            public void onPageStarted(WebView view, String urlAtual, android.graphics.Bitmap favicon) {
+                super.onPageStarted(view, urlAtual, favicon);
+                Uri u = urlAtual == null ? null : Uri.parse(urlAtual);
+                origemAppConfiavel = u != null && TRUSTED_PWA_HOST.equalsIgnoreCase(u.getHost());
+            }
+
+            @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
                 Uri u = req.getUrl();
                 if (u.getHost() != null && ehDoPortal(u.getHost())) {
@@ -235,11 +245,24 @@ public class MainActivity extends Activity {
         if (i != null && i.getData() != null && ehDoPortalHost(i.getData().getHost())) {
             url = i.getData().toString();
         }
+        Uri destinoInicial = Uri.parse(url);
+        origemAppConfiavel = destinoInicial != null && TRUSTED_PWA_HOST.equalsIgnoreCase(destinoInicial.getHost());
         // Ponte de voz: o WebView não implementa speechSynthesis, então a Central de
         // Alertas chama window.AndroidTTS.falar(...) / .parar() / .vibrar(ms).
         web.addJavascriptInterface(new PonteVoz(), "AndroidTTS");
         iniciarVoz();
         web.loadUrl(url);
+    }
+
+    private void notificarFimFala() {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (web != null && origemAppConfiavel) {
+                    web.evaluateJavascript("window.dispatchEvent(new Event('bperes-tts-fim'))", null);
+                }
+            }
+        });
     }
 
     /** Prepara o motor de voz do aparelho (Google TTS / Samsung, etc.) em pt-BR. */
@@ -267,6 +290,21 @@ public class MainActivity extends Activity {
                         if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
                             tts.setLanguage(Locale.getDefault());
                         }
+                        tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                            @Override
+                            public void onStart(String utteranceId) {
+                            }
+
+                            @Override
+                            public void onDone(String utteranceId) {
+                                notificarFimFala();
+                            }
+
+                            @Override
+                            public void onError(String utteranceId) {
+                                notificarFimFala();
+                            }
+                        });
                     } catch (Exception ignored) {
                     }
                     drenarFalasPendentes();
@@ -370,23 +408,25 @@ public class MainActivity extends Activity {
     public class PonteVoz {
         @JavascriptInterface
         public boolean temVoz() {
-            return vozPronta && tts != null;
+            return origemAppConfiavel && vozPronta && tts != null;
         }
 
         @JavascriptInterface
         public void falar(String texto, double volume, double taxa) {
+            if (!origemAppConfiavel) return;
             MainActivity.this.falar(texto, volume, taxa);
         }
 
         @JavascriptInterface
         public void falarComVoz(String texto, double volume, double taxa, String nomeVoz) {
+            if (!origemAppConfiavel) return;
             MainActivity.this.falar(texto, volume, taxa, nomeVoz);
         }
 
         @JavascriptInterface
         public String vozes() {
             JSONArray lista = new JSONArray();
-            if (Build.VERSION.SDK_INT < 21 || !vozPronta || tts == null) return lista.toString();
+            if (!origemAppConfiavel || Build.VERSION.SDK_INT < 21 || !vozPronta || tts == null) return lista.toString();
             try {
                 Set<Voice> disponiveis = tts.getVoices();
                 if (disponiveis != null) for (Voice voz : disponiveis) {
@@ -403,6 +443,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void gerenciarVozes() {
+            if (!origemAppConfiavel) return;
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
@@ -417,6 +458,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void parar() {
+            if (!origemAppConfiavel) return;
             synchronized (travaVoz) {
                 filaVozPendente.clear();
             }
@@ -431,6 +473,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void vibrar(int ms) {
+            if (!origemAppConfiavel) return;
             final int dur = Math.max(20, Math.min(1200, ms));
             runOnUiThread(new Runnable() {
                 @Override
@@ -458,7 +501,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String versao() {
-            return "AndroidTTS 1.2";
+            return "AndroidTTS 1.3";
         }
     }
 

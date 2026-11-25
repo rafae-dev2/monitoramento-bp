@@ -168,12 +168,16 @@ order by total desc;
 -- );
 
 -- ---------------------------------------------------------------------------
--- 6. Web Push (implantado por migração separada)
+-- 6. Web Push + Proteção de Cota do Plano Supabase Free (migrações separadas)
 -- ---------------------------------------------------------------------------
 -- Não copie as tabelas de inscrição para `public` nem aplique políticas de leitura
 -- anônima: endpoint, p256dh e auth são segredos de entrega por dispositivo. Aplique
--- a migração versionada `supabase/migrations/20261123162425_pwa_push_infrastructure.sql`.
--- Ela cria o schema privado pwa_private, RLS sem políticas diretas, uma baseline
--- silenciosa, deduplicação por ocorrência/dispositivo e a RPC `public.pwa_push_rpc`.
+-- em sequência no SQL Editor:
+--   1) `supabase/migrations/20261123162425_pwa_push_infrastructure.sql`
+--   2) `supabase/migrations/20261125030000_supabase_free_budget_and_retention.sql`
+-- A segunda migração adiciona cache compartilhado do token SGPA no monitor (evitando
+-- 1.440 logins/dia em cold starts), elimina egress desnecessário de `synchronize_alarms`
+-- (>95% de economia) e executa retenção horária automática em lotes (14d ocorrências Push,
+-- 90d alertas, 60d acessos) sem exigir `pg_cron` no plano Free.
 -- Antes da ativação, armazene `pwa_push_rpc_auth` no Vault e cadastre a mesma chave
 -- como `PUSH_DB_SECRET` no Netlify. A chave VAPID privada permanece só no Netlify.

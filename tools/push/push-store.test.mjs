@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPushStore } from '../../netlify/functions/push-store.mjs';
+import { createPushStore } from '../../netlify/lib/push-store.mjs';
 
 test('RPC usa chave anon e segredo apenas no corpo server-side, sem service_role', async () => {
   let request;

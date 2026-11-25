@@ -1,6 +1,7 @@
 import AlertasPolicy from '../../public/alerts-policy.js';
 
 const MAX_PREFERENCES_TEXT = 4000;
+const MAX_GLOSSARY_TEXT = 2000;
 const MAX_GROUPS = 200;
 const MAX_MAP_SELECTION = 30;
 
@@ -48,6 +49,8 @@ export function normalizeOfficialAlarm(row) {
   const front = firstNonEmpty(row.descGrupoEquipamento, row.descFrente, row.descGrupo, row.frente) || '';
   const operation = firstNonEmpty(row.descOperacao, row.operacao) || '';
   const operator = firstNonEmpty(row.nomeOperador, row.descOperador, row.descFuncionario) || '';
+  const equipmentType = nonEmpty(row.descTpEquipamento) || '';
+  const fullEquipmentType = nonEmpty(row.descFullTpEquipamento) || '';
   const keyParts = [equipmentId, typeId, externalId || 'active'];
   const alert = {
     regra: category,
@@ -56,14 +59,15 @@ export function normalizeOfficialAlarm(row) {
     descricao: typeDescription,
     texto: typeDescription,
     numero: parts.number,
-    classe: 'Veículo',
+    tipo: equipmentType,
+    tipoCompleto: fullEquipmentType,
     valor: value,
     e: {
       id: equipmentId,
       numero: parts.number,
       nome: parts.name,
-      classe: 'Veículo',
-      tipo: nonEmpty(row.descTpEquipamento) || '',
+      tipo: equipmentType,
+      tipoCompleto: fullEquipmentType,
       frente: String(front),
       operacao: String(operation),
       operador: String(operator),
@@ -128,12 +132,14 @@ export function normalizePushPreferences(value) {
     ? source.selecaoMapa.filter((v) => typeof v === 'string' || typeof v === 'number').map((v) => String(v).trim().slice(0, 64)).filter(Boolean).slice(0, MAX_MAP_SELECTION)
     : [];
   const equipmentList = typeof source.equipamentos === 'string' ? source.equipamentos.slice(0, MAX_PREFERENCES_TEXT) : '';
+  const glossary = typeof source.glossarioFala === 'string' ? source.glossarioFala.slice(0, MAX_GLOSSARY_TEXT) : '';
 
   return {
     notificarCategorias: categories,
     tiposNotificacao: types,
     frentes: fronts,
     equipamentos: equipmentList,
+    glossarioFala: glossary,
     seguirSelecaoMapa: source.seguirSelecaoMapa === true,
     selecaoMapa: [...new Set(mapSelection)],
   };
@@ -180,9 +186,15 @@ export function acceptsDeviceAlarm(preferences, payload) {
   return true;
 }
 
-export function buildPushPayload(payload, occurrenceId) {
-  const equipmentId = String(payload && payload.equipmentId || '').slice(0, 64);
-  const body = String(payload && payload.body || 'Alarme oficial SGPA. Verificar.').slice(0, 320);
+export function buildPushPayload(payload, occurrenceId, preferences) {
+  const equipmentId = String((payload && payload.equipmentId) || '').slice(0, 64);
+  const typeId = String((payload && payload.typeId) || '').slice(0, 48);
+  const rawBody = String((payload && payload.body) || 'Alarme oficial SGPA. Verificar.');
+  const prefs = preferences && typeof preferences === 'object' ? preferences : null;
+  const customizedBody = prefs && prefs.glossarioFala
+    ? AlertasPolicy.aplicarGlossario(rawBody, { glossarioFala: String(prefs.glossarioFala).slice(0, MAX_GLOSSARY_TEXT) })
+    : rawBody;
+  const body = customizedBody.slice(0, 320);
   const id = String(occurrenceId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
   return {
     title: 'Alarme oficial SGPA',
@@ -192,7 +204,8 @@ export function buildPushPayload(payload, occurrenceId) {
     data: {
       equipmentId,
       occurrenceId: id,
-      typeId: String(payload && payload.typeId || '').slice(0, 48),
+      typeId,
+      alertKey: equipmentId && typeId ? `${equipmentId}|sgpa:${typeId}` : '',
     },
   };
 }

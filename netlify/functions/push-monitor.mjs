@@ -1,8 +1,8 @@
 import { sendNotification, setVapidDetails } from 'web-push';
-import { acceptsDeviceAlarm, buildPushPayload, normalizeAlertResponse, toDatabaseAlarm } from './push-core.mjs';
-import { createPushStore } from './push-store.mjs';
-import { fetchOfficialAlarms } from './push-sgpa.mjs';
-import { readRuntimeEnv } from './push-runtime.mjs';
+import { acceptsDeviceAlarm, buildPushPayload, normalizeAlertResponse, toDatabaseAlarm } from '../lib/push-core.mjs';
+import { createPushStore } from '../lib/push-store.mjs';
+import { fetchOfficialAlarms } from '../lib/push-sgpa.mjs';
+import { readRuntimeEnv } from '../lib/push-runtime.mjs';
 
 const ENV_NAMES = [
   'SOLINF_USER', 'SOLINF_PASS', 'CLIENT_OWNER', 'CLIENT_NAME', 'AUTH_API', 'SGPA_API',
@@ -36,7 +36,28 @@ export async function runPushMonitor(dependencies = {}) {
     return { ok: true, configured: true, idle: true, reason: 'no-subscriptions', active: 0, pending: 0, sent: 0 };
   }
 
-  const rawAlarms = await (dependencies.fetchOfficialAlarms || fetchOfficialAlarms)({ env, fetchImpl });
+  const persistedSession = registrationState.cachedToken
+    ? {
+        token: String(registrationState.cachedToken),
+        unitId: registrationState.cachedUnitId ? String(registrationState.cachedUnitId) : '',
+        expiresAt: registrationState.tokenExpiresAt ? Date.parse(String(registrationState.tokenExpiresAt)) || 0 : 0,
+      }
+    : null;
+
+  const rawAlarms = await (dependencies.fetchOfficialAlarms || fetchOfficialAlarms)({
+    env,
+    fetchImpl,
+    persistedSession,
+    onSessionRefreshed: dependencies.fetchOfficialAlarms
+      ? null
+      : async (session) => {
+          try {
+            await store.call('save_monitor_session', session);
+          } catch {
+            /* compatível com projetos que ainda não aplicaram a migration opcional de sessão */
+          }
+        },
+  });
   const alarms = normalizeAlarmSource(rawAlarms);
   const pushClient = dependencies.webPush || { sendNotification, setVapidDetails };
   if (!dependencies.skipVapidSetup) pushClient.setVapidDetails(VAPID_SUBJECT, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
@@ -59,43 +80,43 @@ export async function runPushMonitor(dependencies = {}) {
     while (cursor < queue.length) {
       const current = queue[cursor++];
       try {
-      const deviceId = String(current.deviceId || '');
-      const occurrenceId = String(current.occurrenceId || '');
-      const payload = current.payload && typeof current.payload === 'object' ? current.payload : {};
-      if (!deviceId || !occurrenceId) {
-        failed++;
-        continue;
-      }
-
-      // complete_delivery só transiciona linhas em estado sending. Reivindicar
-      // antes de filtrar impede que itens filtered reapareçam no início da fila.
-      const claim = await store.call('claim_delivery', { occurrenceId, deviceId });
-      if (!claim || claim.claimed !== true) continue;
-
-      if (!current.endpoint || !current.p256dh || !current.auth) {
-        failed++;
-        await finishQuietly(store, occurrenceId, deviceId, 'failed', 'invalid-subscription');
-        continue;
-      }
-
-      if (!acceptsDeviceAlarm(current.preferences, payload)) {
-        try {
-          const result = await store.call('complete_delivery', {
-            occurrenceId,
-            deviceId,
-            status: 'filtered',
-            error: null,
-          });
-          if (!result || result.ok !== true || result.updated === false) throw new Error('filtered state was not persisted');
-          filtered++;
-        } catch {
+        const deviceId = String(current.deviceId || '');
+        const occurrenceId = String(current.occurrenceId || '');
+        const payload = current.payload && typeof current.payload === 'object' ? current.payload : {};
+        if (!deviceId || !occurrenceId) {
           failed++;
-          await finishQuietly(store, occurrenceId, deviceId, 'failed', 'filter-state-not-updated');
+          continue;
         }
-        continue;
-      }
 
-      const notification = buildPushPayload(payload, occurrenceId);
+        // complete_delivery só transiciona linhas em estado sending. Reivindicar
+        // antes de filtrar impede que itens filtered reapareçam no início da fila.
+        const claim = await store.call('claim_delivery', { occurrenceId, deviceId });
+        if (!claim || claim.claimed !== true) continue;
+
+        if (!current.endpoint || !current.p256dh || !current.auth) {
+          failed++;
+          await finishQuietly(store, occurrenceId, deviceId, 'failed', 'invalid-subscription');
+          continue;
+        }
+
+        if (!acceptsDeviceAlarm(current.preferences, payload)) {
+          try {
+            const result = await store.call('complete_delivery', {
+              occurrenceId,
+              deviceId,
+              status: 'filtered',
+              error: null,
+            });
+            if (!result || result.ok !== true || result.updated === false) throw new Error('filtered state was not persisted');
+            filtered++;
+          } catch {
+            failed++;
+            await finishQuietly(store, occurrenceId, deviceId, 'failed', 'filter-state-not-updated');
+          }
+          continue;
+        }
+
+        const notification = buildPushPayload(payload, occurrenceId, current.preferences);
         try {
           await pushClient.sendNotification(
             { endpoint: current.endpoint, keys: { p256dh: current.p256dh, auth: current.auth } },
@@ -110,7 +131,7 @@ export async function runPushMonitor(dependencies = {}) {
           await store.call('complete_delivery', { occurrenceId, deviceId, status: 'sent', error: null });
           sent++;
         } catch (error) {
-          const status = Number(error && (error.statusCode || error.status) || 0);
+          const status = Number((error && (error.statusCode || error.status)) || 0);
           if (status === 404 || status === 410) {
             await store.call('remove_subscription', { deviceId });
             expired++;

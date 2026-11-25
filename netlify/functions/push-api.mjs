@@ -1,6 +1,6 @@
-import { normalizePushPreferences } from './push-core.mjs';
-import { createPushStore } from './push-store.mjs';
-import { readRuntimeEnv } from './push-runtime.mjs';
+import { normalizePushPreferences } from '../lib/push-core.mjs';
+import { createPushStore } from '../lib/push-store.mjs';
+import { readRuntimeEnv } from '../lib/push-runtime.mjs';
 
 const API_ENV = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'PUSH_DB_SECRET', 'VAPID_PUBLIC_KEY'];
 const JSON_HEADERS = {

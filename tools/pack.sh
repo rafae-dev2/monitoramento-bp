@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Empacota o projeto para envio ao Netlify (drag & drop) e grava o zip ao lado do projeto.
+# Empacota o projeto para envio ao Netlify (drag & drop) e roda a auditoria completa.
 # Uso: ./tools/pack.sh [caminho-do-zip]
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="${1:-/home/ubuntu/netlify/MonitoramentoBP-PWA-Netlify.zip}"
+OUT="${1:-${HERE}/../MonitoramentoBP-PWA-Netlify.zip}"
+mkdir -p "$(dirname "$OUT")"
 rm -f "$OUT"
 ( cd "$(dirname "$HERE")" && zip -qr "$OUT" "$(basename "$HERE")" \
     -x '*/node_modules/*' -x '*/.netlify/*' -x '*/.git/*' \

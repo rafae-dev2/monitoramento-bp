@@ -1,13 +1,18 @@
 {
   "name": "monitoramento-bp",
-  "version": "1.8.6",
+  "version": "1.9.0",
   "private": true,
-  "description": "Monitoramento BP PWA \u2014 fun\u00e7\u00f5es serverless e testes fixture-only",
+  "description": "Monitoramento BP PWA — funções serverless, Web Push otimizado para Supabase Free e testes fixture-only",
   "scripts": {
+    "test:syntax": "node --check public/alerts-policy.js && node --check public/alerts.js && node --check public/alerts-stream.js && node --check public/app.js && node --check public/local.js && node --check public/sw.js && node --check netlify/functions/session.mjs && node --check netlify/functions/push-api.mjs && node --check netlify/functions/push-monitor.mjs",
     "test:push": "node --test tools/push/*.test.mjs",
     "test:stream": "node --test tools/alerts-stream.test.mjs",
     "test:audit": "node --test tools/test-audit-endpoint.mjs",
-    "test": "npm run test:push && npm run test:stream && npm run test:audit"
+    "test:policy": "node tools/test-alerts-policy.cjs",
+    "test:local": "node tools/test-local-credentials.mjs",
+    "test:session": "node tools/test-session-function.mjs",
+    "test:ui": "python3 tools/test-session-ui.py && python3 tools/test-voz-abertura.py && python3 tools/test-alerts-integrated.py",
+    "test": "npm run test:syntax && npm run test:push && npm run test:stream && npm run test:audit && npm run test:policy && npm run test:local && npm run test:session"
   },
   "dependencies": {
     "web-push": "4.0.0"

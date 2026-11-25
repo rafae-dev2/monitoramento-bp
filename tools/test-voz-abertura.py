@@ -16,9 +16,17 @@ hooks = """
   };
 """
 source = source.replace('  window.MonitoramentoAlertas = {', hooks + '\n  window.MonitoramentoAlertas = {')
+def launch_chromium(pw):
+    import os, shutil
+    for cand in (os.environ.get('CHROMIUM_BIN'), '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'):
+        if cand and shutil.which(cand):
+            return pw.chromium.launch(executable_path=cand, args=['--no-sandbox', '--disable-dev-shm-usage'])
+    return pw.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
+
+
 errors = []
 with sync_playwright() as pw:
-    b = pw.chromium.launch(executable_path='/usr/bin/chromium', args=['--no-sandbox', '--disable-dev-shm-usage'])
+    b = launch_chromium(pw)
     ctx = b.new_context(viewport={'width': 412, 'height': 915}, service_workers='block')
     page = ctx.new_page()
     page.on('pageerror', lambda e: errors.append(str(e)))

@@ -103,9 +103,11 @@
 
   /* --------------------------- sessão/mapa -------------------------- */
   async function fetchSession(force) {
+    const headers = { accept: 'application/json' };
+    if (typeof window !== 'undefined' && window.__APP_KEY) headers['x-app-key'] = String(window.__APP_KEY);
     const res = await fetch(ENDPOINT + (force ? '?fresh=1' : ''), {
       method: 'GET',
-      headers: { accept: 'application/json' },
+      headers,
       cache: 'no-store',
     });
     const data = await res.json().catch(() => ({}));
@@ -269,7 +271,14 @@
 
   if (navigator.serviceWorker) {
     navigator.serviceWorker.addEventListener('message', (ev) => {
-      if (!ev.data || ev.data.type !== 'alerta-notificacao') return;
+      if (!ev.data) return;
+      if (ev.data.type === 'alerta-push-visivel') {
+        if (ALERTAS_ON && alertasLigados && window.MonitoramentoAlertas && typeof window.MonitoramentoAlertas.ciclo === 'function') {
+          window.MonitoramentoAlertas.ciclo();
+        }
+        return;
+      }
+      if (ev.data.type !== 'alerta-notificacao') return;
       focarEquipamentoNotificado(ev.data.equipamento);
     });
   }
@@ -429,7 +438,12 @@
   $('btn-portal').addEventListener('click', () => {});
 
   el.menu.addEventListener('click', (ev) => {
-    const act = ev.target && ev.target.dataset && ev.target.dataset.act;
+    if (ev.target === el.menu) {
+      hide(el.menu);
+      return;
+    }
+    const alvo = ev.target && typeof ev.target.closest === 'function' ? ev.target.closest('[data-act]') : ev.target;
+    const act = alvo && alvo.dataset && alvo.dataset.act;
     if (!act) return;
     hide(el.menu);
     if (act === 'reload') openEmbeddedMap(false);
@@ -463,7 +477,12 @@
   });
 
   el.about.addEventListener('click', (ev) => {
-    if (ev.target && ev.target.dataset && ev.target.dataset.act === 'close-about') hide(el.about);
+    if (ev.target === el.about) {
+      hide(el.about);
+      return;
+    }
+    const alvo = ev.target && typeof ev.target.closest === 'function' ? ev.target.closest('[data-act]') : ev.target;
+    if (alvo && alvo.dataset && alvo.dataset.act === 'close-about') hide(el.about);
   });
 
   function toggleFullscreen() {

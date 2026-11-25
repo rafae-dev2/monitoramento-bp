@@ -13,9 +13,15 @@
   command = "npx http-server public -p 8888"
   targetPort = 8888
 
-# Sessão nunca é cacheada pelo navegador.
+# Sessão e APIs nunca são cacheadas pelo navegador ou CDN.
 [[headers]]
   for = "/.netlify/functions/*"
+  [headers.values]
+    Cache-Control = "no-store"
+    X-Content-Type-Options = "nosniff"
+
+[[headers]]
+  for = "/api/*"
   [headers.values]
     Cache-Control = "no-store"
     X-Content-Type-Options = "nosniff"
@@ -24,6 +30,23 @@
   for = "/sw.js"
   [headers.values]
     Cache-Control = "no-cache, no-store, must-revalidate"
+
+# Revalidação leve de JS/CSS/JSON para impedir que o Service Worker novo copie
+# arquivos antigos do cache HTTP do navegador ao trocar a versão do shell.
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/*.css"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/sgpa-alert-catalog.json"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
 
 [[headers]]
   for = "/*"

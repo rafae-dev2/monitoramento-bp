@@ -1,0 +1,46 @@
+name: CI — Monitoramento BP
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Testes Unitários, Contrato, UI & Auditoria
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependências Node
+        run: npm ci
+
+      - name: Rodar suíte Node (sintaxe, Push, stream, auditoria, política e sessão)
+        run: npm test
+
+      - name: Instalar Playwright Python para testes isolados de UI
+        run: |
+          python3 -m pip install --upgrade pip playwright
+          python3 -m playwright install chromium
+
+      - name: Rodar suíte integrada de UI e responsividade (zero rede externa)
+        run: npm run test:ui
+
+      - name: Empacotar e auditar pacote de deploy (referências, versões e funções)
+        run: ./tools/pack.sh /tmp/MonitoramentoBP-CI.zip

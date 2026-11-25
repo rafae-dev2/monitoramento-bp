@@ -48,9 +48,17 @@ def session_route(route):
     }))
 
 
+def launch_chromium(pw):
+    import os, shutil
+    for cand in (os.environ.get('CHROMIUM_BIN'), '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'):
+        if cand and shutil.which(cand):
+            return pw.chromium.launch(executable_path=cand, args=['--no-sandbox', '--disable-dev-shm-usage'])
+    return pw.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
+
+
 try:
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(executable_path='/usr/bin/chromium', args=['--no-sandbox', '--disable-dev-shm-usage'])
+        browser = launch_chromium(pw)
         context = browser.new_context(viewport={'width': 412, 'height': 915}, locale='pt-BR', service_workers='block')
         context.add_init_script("""(() => {
           window.__swUpdateCalls = 0;

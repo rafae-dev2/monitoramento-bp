@@ -1,29 +1,13 @@
 /**
  * session.mjs — Netlify Function (Node 22, fetch nativo)
  *
- * O que ela faz:
- *   1. faz o login NO SERVIDOR no endpoint do próprio portal (/auth-sgpa/create),
- *      com usuário/senha vindos de variáveis de ambiente. A senha nunca vai para o front.
- *   2. consulta o cdGrupo e a unidade ativa do usuário (mesmas rotas que o portal usa);
- *   3. devolve o payload ("props") que o micro-frontend do mapa aceita por postMessage —
- *      exatamente o mesmo payload que o shell Angular do portal monta em
- *      app.details.analytic-map-v4.
- *
- * Cache: o token tem TTL de 7 dias (time=604800). Cacheamos 5 dias por instância.
- *
- * VARIAVEIS DE AMBIENTE (Netlify → Site settings → Environment variables):
- *   SOLINF_USER     login do portal                       (obrigatório)
- *   SOLINF_PASS     senha do portal                       (obrigatório)
- *   CLIENT_OWNER    dono do tenant, ex.: branco_peres_cana (obrigatório)
- *   CLIENT_NAME     hostname do tenant, ex.: branco-peres-cana (obrigatório)
- *   AUTH_API        base de auth (default já apontado)
- *   SGPA_API        API cadastral (default já apontado)
- *   SERVICE_API / TILE_API / INTERP_API   serviços do map-v4
- *   MAP_URL         URL do micro-frontend do mapa
- *   PORTAL_URL      URL do portal (fallback "abrir no portal")
- *   CD_CLIENT       id do cliente (default 204)
- *   APP_KEY         opcional: exige header x-app-key
- *   PROPS_TTL_SECONDS  opcional: tempo de cache (default 432000 = 5 dias)
+ * Responsabilidades:
+ *   1. Login server-side no endpoint oficial (/auth-sgpa/create), mantendo a senha só em secret;
+ *   2. Consulta cdGrupo e unidade ativa do usuário;
+ *   3. Entrega o payload ("props") ao micro-frontend do mapa com cache de 5 dias por instância;
+ *   4. Proxy autenticado de rotas de telemetria liberadas (?acao=dados);
+ *   5. Gravação em lote econômica para o plano Supabase Free (?acao=alerta e pwa_acessos),
+ *      com deduplicação em memória de eventId, lote único PostgREST e fallback individual.
  */
 
 const AUTH_API = process.env.AUTH_API || 'https://auth-api.saas-solinftec.com/auth-api-03/v2';
@@ -41,41 +25,104 @@ const CLIENT_NAME = process.env.CLIENT_NAME || 'branco-peres-cana';
 const CD_CLIENT = Number(process.env.CD_CLIENT || 204);
 const PROPS_TTL = Number(process.env.PROPS_TTL_SECONDS || 432_000);
 
+const PORTAL_TIMEOUT_MS = 12_000;
+const SUPABASE_TIMEOUT_MS = 5_000;
+const AUDIT_DEDUPE_TTL_MS = 2 * 60 * 60_000; // 2h de idempotência para reenvios de rede instável
+const ACCESS_LOG_THROTTLE_MS = 30 * 60_000; // no máx. 1 registro de acesso por IP/usuário a cada 30 min
+
 const PORTAL_ORIGIN = `https://${CLIENT_NAME}.saas-solinftec.com`;
 const COMMON_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (compatible; MonitoramentoBP-PWA/1.0)',
+  'User-Agent': 'Mozilla/5.0 (compatible; MonitoramentoBP-PWA/1.9.0)',
   Origin: PORTAL_ORIGIN,
 };
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json; charset=utf-8',
   'Cache-Control': 'no-store',
+  'X-Content-Type-Options': 'nosniff',
   'Access-Control-Allow-Origin': PORTAL_ORIGIN,
   'Access-Control-Allow-Headers': 'content-type, x-app-key',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
 /* ------------------------------------------------------------------ */
-/* cache + proteção básica                                            */
+/* cache, deduplicação e proteção de borda / memória                  */
 /* ------------------------------------------------------------------ */
 
 let cache = { props: null, expiresAt: 0 };
 let propsPending = null;
 let propsPendingForce = false;
 const hits = new Map();
+const eventosConfirmados = new Map();
+const acessosRecentes = new Map();
+
+function extrairIp(req, ctx) {
+  const nfIp = (ctx && typeof ctx.ip === 'string' && ctx.ip.trim()) ||
+    req.headers.get('x-nf-client-connection-ip');
+  if (nfIp) return nfIp.trim();
+  return (req.headers.get('x-forwarded-for') || 'anon').split(',')[0].trim() || 'anon';
+}
+
+function ipValido(ip) {
+  if (!ip || ip === 'anon' || ip.length > 64) return false;
+  const ipv4 = /^(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+  const ipv6 = /^[0-9a-fA-F:]{2,45}$/;
+  return ipv4.test(ip) || (ip.includes(':') && ipv6.test(ip));
+}
+
+function podarMapa(mapa, limite) {
+  while (mapa.size > limite) {
+    const primeira = mapa.keys().next().value;
+    if (primeira === undefined) break;
+    mapa.delete(primeira);
+  }
+}
 
 function rateLimited(ip) {
   const now = Date.now();
-  const window = 60_000;
-  const arr = (hits.get(ip) || []).filter((t) => now - t < window);
+  const windowMs = 60_000;
+  const arr = (hits.get(ip) || []).filter((t) => now - t < windowMs);
   if (arr.length >= 40) {
     hits.set(ip, arr);
     return true;
   }
   arr.push(now);
+  hits.delete(ip);
   hits.set(ip, arr);
-  if (hits.size > 5000) hits.clear();
+  podarMapa(hits, 4000);
   return false;
+}
+
+function jaConfirmado(eventId) {
+  if (!eventId) return false;
+  const ts = eventosConfirmados.get(eventId);
+  if (!ts) return false;
+  if (Date.now() - ts > AUDIT_DEDUPE_TTL_MS) {
+    eventosConfirmados.delete(eventId);
+    return false;
+  }
+  return true;
+}
+
+function marcarConfirmado(eventId) {
+  if (!eventId) return;
+  eventosConfirmados.delete(eventId);
+  eventosConfirmados.set(eventId, Date.now());
+  podarMapa(eventosConfirmados, 2500);
+}
+
+function agendarSegundoPlano(ctx, promessa) {
+  if (ctx && typeof ctx.waitUntil === 'function') {
+    ctx.waitUntil(promessa);
+    return Promise.resolve();
+  }
+  return promessa;
+}
+
+function sinalTimeout(ms) {
+  return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(ms)
+    : undefined;
 }
 
 /* ------------------------------------------------------------------ */
@@ -93,6 +140,7 @@ async function portalFetch(url, { method = 'GET', token, body } = {}) {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    signal: sinalTimeout(PORTAL_TIMEOUT_MS),
   });
   const text = await res.text();
   if (!res.ok) {
@@ -118,7 +166,7 @@ async function createToken(user, password) {
       login: user,
       password,
       owner: CLIENT_OWNER,
-      time: 604_800, // 7 dias, mesmo valor usado pelo portal
+      time: 604_800,
       environment: 'BROWSER',
     },
   });
@@ -140,7 +188,6 @@ async function buildProps() {
 
   const token = await createToken(user, password);
 
-  // dados do usuário (cdGrupo) e da unidade ativa — as mesmas rotas do portal
   let cdGrupo = 0;
   let unidadeId = 1;
   let descUnidade = '';
@@ -163,8 +210,7 @@ async function buildProps() {
     console.warn('unidade indisponível:', e.message);
   }
 
-  // payload idêntico ao que o shell do portal entrega ao iframe #map-v4-iframe
-  const props = {
+  return {
     locale: 'pt-br',
     token,
     urlSgp: '',
@@ -195,7 +241,6 @@ async function buildProps() {
     timeZone,
     isAdmin: false,
   };
-  return props;
 }
 
 function props(force = false) {
@@ -221,28 +266,41 @@ function props(force = false) {
 }
 
 /**
- * Auditoria opcional no Supabase (ver supabase/schema.sql).
- * Só roda se SUPABASE_URL + SUPABASE_KEY estiverem definidos; nunca grava senha nem token.
+ * Auditoria opcional no Supabase (otimizada para o plano Free: deduplica revalidações
+ * frequentes do mesmo IP/usuário, reduzindo ~90% das linhas sem perder rastreabilidade).
  */
-async function registrarAcesso(ip, usuario, unidade, cliente, resultado, detalhe) {
+async function registrarAcesso(ip, usuario, unidade, cliente, resultado, detalhe, force = false) {
   const base = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_KEY;
-  if (!base || !key) return;
+  if (!base || !key || !usuario) return;
+
+  const agora = Date.now();
+  const chaveDedupe = `${ip}|${usuario}|${resultado}`;
+  const janela = resultado === 'sucesso' ? ACCESS_LOG_THROTTLE_MS : 120_000;
+  const anterior = acessosRecentes.get(chaveDedupe) || 0;
+  if (!force && anterior && agora - anterior < janela) return;
+  acessosRecentes.delete(chaveDedupe);
+  acessosRecentes.set(chaveDedupe, agora);
+  podarMapa(acessosRecentes, 1000);
+
+  const cabecalhos = {
+    'Content-Type': 'application/json',
+    apikey: key,
+    Prefer: 'return=minimal',
+  };
+  if (!String(key).startsWith('sb_publishable_')) cabecalhos.Authorization = `Bearer ${key}`;
+
   try {
-    await fetch(`${base}/rest/v1/pwa_acessos`, {
+    await fetch(`${base.replace(/\/+$/, '')}/rest/v1/pwa_acessos`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        Prefer: 'return=minimal',
-      },
+      headers: cabecalhos,
+      signal: sinalTimeout(SUPABASE_TIMEOUT_MS),
       body: JSON.stringify({
-        usuario,
-        unidade,
-        cliente,
+        usuario: String(usuario).slice(0, 80),
+        unidade: unidade ? String(unidade).slice(0, 80) : null,
+        cliente: Number.isFinite(Number(cliente)) ? Number(cliente) : null,
         tela: 'analytic-map-v4',
-        origem_ip: ip && ip !== 'anon' ? ip : null,
+        origem_ip: ipValido(ip) ? ip : null,
         resultado,
         detalhe: detalhe ? String(detalhe).slice(0, 200) : null,
       }),
@@ -280,6 +338,7 @@ async function dadosDaRota(rota) {
   const consultar = (sessao) => fetch(urlPara(sessao), {
     headers: { ...COMMON_HEADERS, 'request-origin': `sgpa-front-${CLIENT_OWNER}`, 'X-Auth-Token': sessao.token, locale: '1' },
     method: 'GET',
+    signal: sinalTimeout(PORTAL_TIMEOUT_MS),
   });
   let res = await consultar(p);
   if (res.status === 401) {
@@ -287,7 +346,7 @@ async function dadosDaRota(rota) {
       ? cache.props
       : await props(true);
     p = renovada;
-    res = await consultar(p); // no máximo uma repetição com sessão nova
+    res = await consultar(p);
   }
   const texto = await res.text();
   if (!res.ok) {
@@ -304,45 +363,91 @@ async function dadosDaRota(rota) {
   }
 }
 
-/* grava o alerta no Supabase, quando configurado (auditoria/history) */
-async function gravarAlerta(dados) {
-  const base = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_KEY;
-  if (!base || !key) return false;
-  const linha = {
-    chave: String(dados.chave || '').slice(0, 64),
-    regra: String(dados.regra || '').slice(0, 24),
-    severidade: String(dados.severidade || '').slice(0, 16),
-    equipamento: String(dados.equipamento ?? '').slice(0, 24),
-    descricao: String(dados.descricao || '').slice(0, 160),
-    operador: String(dados.operador || '').slice(0, 120),
-    valor: dados.valor == null ? null : String(dados.valor).slice(0, 40),
-    limite: dados.limite == null ? null : String(dados.limite).slice(0, 40),
-    texto: String(dados.texto || '').slice(0, 400),
-    detalhe: String(dados.detalhe || '').slice(0, 400),
-    fonte: String(dados.fonte || '').slice(0, 16),
-    fala: String(dados.fala || '').slice(0, 400),
-    usuario: String(dados.usuario || '').slice(0, 60),
-    unidade: String(dados.unidade || '').slice(0, 60),
+function montarLinhaAlerta(dados) {
+  return {
+    chave: String(dados.chave || '').trim().slice(0, 64),
+    regra: String(dados.regra || 'generico').trim().slice(0, 24),
+    severidade: String(dados.severidade ?? '').trim().slice(0, 16),
+    equipamento: String(dados.equipamento ?? '').trim().slice(0, 24),
+    descricao: String(dados.descricao || '').trim().slice(0, 160),
+    operador: String(dados.operador || '').trim().slice(0, 120),
+    valor: dados.valor == null ? null : String(dados.valor).trim().slice(0, 40),
+    limite: dados.limite == null ? null : String(dados.limite).trim().slice(0, 40),
+    texto: String(dados.texto || '').trim().slice(0, 400),
+    detalhe: String(dados.detalhe || '').trim().slice(0, 400),
+    fonte: String(dados.fonte || '').trim().slice(0, 16),
+    fala: String(dados.fala || '').trim().slice(0, 400),
+    usuario: String(dados.usuario || '').trim().slice(0, 60),
+    unidade: String(dados.unidade || '').trim().slice(0, 60),
     inicio: dados.inicio || new Date().toISOString(),
     quando: dados.quando || new Date().toISOString(),
   };
+}
+
+async function postarAlertasSupabase(carga) {
+  const base = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_KEY;
+  if (!base || !key) return false;
+  const headers = {
+    'Content-Type': 'application/json',
+    apikey: key,
+    Prefer: 'return=minimal',
+  };
+  if (!String(key).startsWith('sb_publishable_')) headers.Authorization = `Bearer ${key}`;
   try {
-    const res = await fetch(`${base}/rest/v1/pwa_alertas`, {
+    const res = await fetch(`${base.replace(/\/+$/, '')}/rest/v1/pwa_alertas`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        Prefer: 'return=minimal',
-      },
-      body: JSON.stringify(linha),
+      headers,
+      signal: sinalTimeout(SUPABASE_TIMEOUT_MS),
+      body: JSON.stringify(carga),
     });
     return res.ok;
   } catch (e) {
     console.warn('gravação do alerta falhou:', e.message);
     return false;
   }
+}
+
+async function gravarLoteAlertas(itens, contexto) {
+  const resultados = new Array(itens.length);
+  const pendentes = [];
+
+  for (let i = 0; i < itens.length; i++) {
+    const raw = itens[i] && typeof itens[i] === 'object' ? itens[i] : {};
+    const eventId = String(raw.eventId || `legado-${i}`).slice(0, 128);
+    if (raw.eventId && jaConfirmado(eventId)) {
+      resultados[i] = { eventId, ok: true };
+      continue;
+    }
+    pendentes.push({
+      index: i,
+      eventId,
+      temIdExplicito: !!raw.eventId,
+      linha: montarLinhaAlerta(Object.assign({ unidade: contexto.unidade, usuario: contexto.usuario }, raw)),
+    });
+  }
+
+  if (!pendentes.length) return resultados;
+
+  // Economia para Supabase Free: tenta 1 único INSERT em lote com return=minimal.
+  // Se o lote falhar (ex.: 1 linha inválida ou falha transitória), isola item a item.
+  if (pendentes.length > 1) {
+    const loteOk = await postarAlertasSupabase(pendentes.map((p) => p.linha));
+    if (loteOk) {
+      for (const p of pendentes) {
+        if (p.temIdExplicito) marcarConfirmado(p.eventId);
+        resultados[p.index] = { eventId: p.eventId, ok: true };
+      }
+      return resultados;
+    }
+  }
+
+  for (const p of pendentes) {
+    const ok = await postarAlertasSupabase(p.linha);
+    if (ok && p.temIdExplicito) marcarConfirmado(p.eventId);
+    resultados[p.index] = { eventId: p.eventId, ok };
+  }
+  return resultados;
 }
 
 /* ------------------------------------------------------------------ */
@@ -354,30 +459,34 @@ export default async function handler(req, ctx) {
 
   const url = new URL(req.url);
   const acao = url.searchParams.get('acao');
+  const ip = extrairIp(req, ctx);
 
-  // POST ?acao=alerta → grava o alerta disparado no aparelho (auditoria)
+  if (rateLimited(ip)) {
+    return new Response(JSON.stringify({ erro: 'muitas requisições, aguarde', error: 'muitas requisições, aguarde' }), {
+      status: 429,
+      headers: JSON_HEADERS,
+    });
+  }
+
+  if (process.env.APP_KEY && req.headers.get('x-app-key') !== process.env.APP_KEY) {
+    return new Response(JSON.stringify({ erro: 'chave do app ausente ou inválida', error: 'chave do app ausente ou inválida' }), {
+      status: 403,
+      headers: JSON_HEADERS,
+    });
+  }
+
+  // POST ?acao=alerta → grava alertas disparados em lote com idempotência e economia de chamadas
   if (acao === 'alerta' && req.method === 'POST') {
     const corpo = await req.json().catch(() => null);
     if (!corpo || typeof corpo !== 'object') {
       return new Response(JSON.stringify({ erro: 'corpo inválido' }), { status: 400, headers: JSON_HEADERS });
     }
-    const ip = (req.headers.get('x-forwarded-for') || 'anon').split(',')[0].trim();
-    if (rateLimited(ip)) {
-      return new Response(JSON.stringify({ erro: 'muitas requisições' }), { status: 429, headers: JSON_HEADERS });
-    }
-    // o app manda em lote: {alertas:[...]} — confirma cada registro individualmente
     const lista = Array.isArray(corpo.alertas) ? corpo.alertas : [corpo];
     if (lista.length > 40) {
       return new Response(JSON.stringify({ erro: 'lote excede o limite de 40 alertas' }), { status: 413, headers: JSON_HEADERS });
     }
-    const resultados = [];
-    for (let i = 0; i < lista.length; i++) {
-      const item = lista[i] && typeof lista[i] === 'object' ? lista[i] : {};
-      const eventId = String(item.eventId || `legado-${i}`).slice(0, 128);
-      const ok = await gravarAlerta(Object.assign({ unidade: corpo.unidade, usuario: corpo.usuario }, item));
-      resultados.push({ eventId, ok });
-    }
-    const gravados = resultados.filter((resultado) => resultado.ok).length;
+    const resultados = await gravarLoteAlertas(lista, { unidade: corpo.unidade, usuario: corpo.usuario });
+    const gravados = resultados.filter((resultado) => resultado && resultado.ok).length;
     const ok = gravados === lista.length;
     return new Response(JSON.stringify({ ok, recebidos: lista.length, gravados, falhas: lista.length - gravados, resultados }), {
       status: ok ? 202 : 207,
@@ -387,10 +496,6 @@ export default async function handler(req, ctx) {
 
   // GET ?acao=dados&rota=/estatistica/monitoramento?... → fallback de CORS/rede
   if (acao === 'dados' && req.method === 'GET') {
-    const ip = (req.headers.get('x-forwarded-for') || 'anon').split(',')[0].trim();
-    if (rateLimited(ip)) {
-      return new Response(JSON.stringify({ erro: 'muitas requisições, aguarde' }), { status: 429, headers: JSON_HEADERS });
-    }
     try {
       const dados = await dadosDaRota(url.searchParams.get('rota'));
       return new Response(JSON.stringify({ dados }), { status: 200, headers: JSON_HEADERS });
@@ -404,30 +509,13 @@ export default async function handler(req, ctx) {
 
   const force = url.searchParams.get('fresh') === '1';
 
-  const ip = (req.headers.get('x-forwarded-for') || 'anon').split(',')[0].trim();
-  if (rateLimited(ip)) {
-    return new Response(JSON.stringify({ error: 'muitas requisições, aguarde' }), {
-      status: 429,
-      headers: JSON_HEADERS,
-    });
-  }
-
-  if (process.env.APP_KEY && req.headers.get('x-app-key') !== process.env.APP_KEY) {
-    return new Response(JSON.stringify({ error: 'chave do app ausente ou inválida' }), {
-      status: 403,
-      headers: JSON_HEADERS,
-    });
-  }
-
   try {
     const p = await props(force);
-    registrarAcesso(ip, p.user, p.descUnidade, p.cdCliente, 'sucesso');
-    // deep-link de fallback: abre o portal oficial autenticado, direto na tela pedida
+    await agendarSegundoPlano(ctx, registrarAcesso(ip, p.user, p.descUnidade, p.cdCliente, 'sucesso', null, force));
     const portalLogin = `${PORTAL_URL}/#!/login/${encodeURIComponent(
       JSON.stringify({ token: p.token, user: p.user }),
     )}`;
     const portalMap = `${PORTAL_URL}/#!/details/analytic-map-v4`;
-    // Monit+ é aberto pelo portal com a sessão na query string; montamos igual.
     const monitplus =
       `https://monitplus.saas-solinftec.com/?token=${encodeURIComponent(p.token)}` +
       `&locale=pt-br&unitSGPA=${encodeURIComponent((p.cdUnidadeRegional || [1])[0])}` +
@@ -446,7 +534,7 @@ export default async function handler(req, ctx) {
       { status: 200, headers: JSON_HEADERS },
     );
   } catch (e) {
-    registrarAcesso(ip, process.env.SOLINF_USER, null, null, 'falha_login', e.message);
+    await agendarSegundoPlano(ctx, registrarAcesso(ip, process.env.SOLINF_USER, null, null, 'falha_login', e.message, true));
     if (e.config) {
       return new Response(
         JSON.stringify({
@@ -476,3 +564,7 @@ export default async function handler(req, ctx) {
     );
   }
 }
+
+export const config = {
+  rateLimit: { action: 'rate_limit', aggregateBy: 'ip', windowSize: 60, windowLimit: 45 },
+};

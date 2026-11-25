@@ -25,8 +25,8 @@ OUT="${HERE}/out"
 PKG="br.com.bperes.monitoramento"
 MIN_API=21
 TARGET_API=34
-VCODE=4
-VNAME=1.3
+VCODE=5
+VNAME=1.4
 MODO="${1:-debug}"
 
 KEYSTORE="${KEYSTORE:-${HERE}/keystore/monitoramento-release.jks}"
@@ -35,13 +35,14 @@ KS_PASS="${KS_PASS:-}"
 KS_ALIAS="${KS_ALIAS:-monitoramento}"
 
 echo "== 0. preparacao =="
-for f in "$AAPT2" "$ANDROID_JAR" "$D8_JAR" "$APKSIGNER_JAR"; do
-  [ -e "$f" ] || { echo "faltando: $f"; exit 1; }
-done
 if [ ! -e "$D8_JAR" ]; then
+  mkdir -p "$(dirname "$D8_JAR")"
   echo "baixando R8 8.13.25 -> $D8_JAR"
   curl -fsSL -o "$D8_JAR" https://dl.google.com/dl/android/maven2/com/android/tools/r8/8.13.25/r8-8.13.25.jar
 fi
+for f in "$AAPT2" "$ANDROID_JAR" "$D8_JAR" "$APKSIGNER_JAR"; do
+  [ -e "$f" ] || { echo "faltando: $f"; exit 1; }
+done
 rm -rf "$BUILD"; mkdir -p "$BUILD/classes" "$BUILD/gen" "$BUILD/dex" "$OUT"
 
 echo "== 1. compilar recursos =="
@@ -103,11 +104,11 @@ if [ ! -e "$KEYSTORE" ]; then
   echo "   keystore criado em $KEYSTORE"
 fi
 
-echo "== 8. assinar (v1+v2) =="
+echo "== 8. assinar (v1+v2+v3) =="
 java -jar "$APKSIGNER_JAR" sign \
   --ks "$KEYSTORE" --ks-key-alias "$KS_ALIAS" --ks-pass "pass:$KS_PASS" \
   --key-pass "pass:$KS_PASS" \
-  --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled false \
+  --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
   --out "${OUT}/MonitoramentoBP.apk" "${BUILD}/aligned.apk"
 
 echo "== 9. verificar =="

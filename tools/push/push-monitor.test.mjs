@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runPushMonitor } from '../../netlify/functions/push-monitor.mjs';
-import { normalizeAlertResponse, toDatabaseAlarm } from '../../netlify/functions/push-core.mjs';
+import { normalizeAlertResponse, toDatabaseAlarm } from '../../netlify/lib/push-core.mjs';
 
 const env = {
   SOLINF_USER: 'fixture-user',

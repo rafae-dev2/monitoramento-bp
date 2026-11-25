@@ -5,10 +5,11 @@ import vm from 'node:vm';
 
 const source = readFileSync(new URL('../../public/sw.js', import.meta.url), 'utf8');
 
-function loadWorker({ windows = [], openWindow } = {}) {
+function loadWorker({ windows = [], openWindow, fetchImpl, withRequest = false } = {}) {
   const handlers = new Map();
   const notifications = [];
   const opened = [];
+  let skippedWaiting = false;
   const self = {
     location: { origin: 'https://monitor.fixture.invalid' },
     registration: {
@@ -24,20 +25,25 @@ function loadWorker({ windows = [], openWindow } = {}) {
       },
     },
     addEventListener(name, handler) { handlers.set(name, handler); },
-    async skipWaiting() {},
+    async skipWaiting() { skippedWaiting = true; },
   };
-  vm.runInNewContext(source, {
+  const sandbox = {
     self,
     URL,
     URLSearchParams,
     Promise,
     setTimeout,
     clearTimeout,
-    caches: { async keys() { return []; }, async open() { return { async addAll() {}, async put() {} }; } },
-    fetch: async () => new Response('', { status: 200 }),
+    caches: {
+      async keys() { return []; },
+      async open() { return { async addAll() {}, async put() {} }; },
+    },
+    fetch: fetchImpl || (async () => new Response('', { status: 200 })),
     Response,
-  }, { filename: 'public/sw.js' });
-  return { handlers, notifications, opened };
+  };
+  if (withRequest) sandbox.Request = Request;
+  vm.runInNewContext(source, sandbox, { filename: 'public/sw.js' });
+  return { handlers, notifications, opened, wasSkippedWaiting: () => skippedWaiting };
 }
 
 function runEvent(handler, event) {
@@ -50,7 +56,7 @@ test('push exibe alarme oficial e mantém os identificadores no notification.dat
   const worker = loadWorker();
   const payload = {
     title: 'Alarme oficial SGPA',
-    body: 'Veículo oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.',
+    body: 'Caminhão oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.',
     tag: 'sgpa-occurrence-1',
     data: { equipmentId: '8833', occurrenceId: 'occurrence-1', typeId: '2203' },
   };
@@ -60,6 +66,41 @@ test('push exibe alarme oficial e mantém os identificadores no notification.dat
   assert.equal(worker.notifications[0].options.data.equipmentId, '8833');
   assert.equal(worker.notifications[0].options.data.occurrenceId, 'occurrence-1');
   assert.equal(worker.notifications[0].options.actions[0].action, 'ver-no-mapa');
+});
+
+test('push suprime notificação duplicada do sistema quando o painel já está visível e avisa a janela', async () => {
+  const messages = [];
+  const visibleWindow = {
+    url: 'https://monitor.fixture.invalid/',
+    visibilityState: 'visible',
+    focused: true,
+    postMessage(msg) { messages.push(msg); },
+  };
+  const worker = loadWorker({ windows: [visibleWindow] });
+  const payload = {
+    title: 'Alarme oficial SGPA',
+    body: 'Trator zero zero oito três excedeu a velocidade.',
+    tag: 'sgpa-occ-2',
+    data: { equipmentId: '0083', occurrenceId: 'occ-2', typeId: '5' },
+  };
+  await runEvent(worker.handlers.get('push'), { data: { json: () => payload } });
+  assert.equal(worker.notifications.length, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(messages)), [
+    { type: 'alerta-push-visivel', equipmentId: '0083', occurrenceId: 'occ-2' },
+  ]);
+});
+
+test('install rejeita e não chama skipWaiting quando um ativo falha no 3G, preservando o cache anterior', async () => {
+  const worker = loadWorker({
+    withRequest: true,
+    fetchImpl: async (req) => {
+      const url = typeof req === 'string' ? req : req.url;
+      if (url.includes('/alerts.js')) return new Response('', { status: 503 });
+      return new Response('ok', { status: 200 });
+    },
+  });
+  await assert.rejects(runEvent(worker.handlers.get('install'), {}), /Falha ao atualizar/);
+  assert.equal(worker.wasSkippedWaiting(), false);
 });
 
 test('clique com app aberto foca a janela existente e envia o equipamento para navegação interna', async () => {

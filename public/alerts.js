@@ -31,13 +31,14 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.8.6';
+  const VERSAO = '1.9.0';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
   const KEY_ACK = 'bperes.alertas.ack.v2';
   const KEY_AUDIT_QUEUE = 'bperes.alertas.audit-queue.v1';
   const KEY_PUSH_DEVICE = 'bperes.push.deviceId.v1';
+  const KEY_PUSH_SYNC_HASH = 'bperes.push.syncHash.v1';
   const MAX_HIST = 600;
   const JANELA_CORRELACAO_905_MS = 3000;
   const MAX_IDADE_POSICAO_FRENTE_MS = 5 * 60_000;
@@ -72,20 +73,20 @@
   };
 
   const REGRAS = {
-    velocidade: { id: 'velocidade', nome: 'Velocidade excedida', icone: '🚨', cor: '#e05252', severidade: 3 },
-    rpm: { id: 'rpm', nome: 'RPM máxima do motor', icone: '⚙️', cor: '#ff8f3f', severidade: 3 },
-    turno: { id: 'turno', nome: 'Preso em troca de turno', icone: '⏱️', cor: '#f0cc0c', severidade: 2 },
-    ocioso: { id: 'ocioso', nome: 'Motor ocioso', icone: '🔌', cor: '#4aa3ff', severidade: 2 },
-    ociosoSemApontamento: { id: 'ociosoSemApontamento', nome: 'Motor ocioso sem apontamento', icone: '🔌', cor: '#db9b3b', severidade: 2 },
-    motorCondicao: { id: 'motorCondicao', nome: 'Motor ligado — condição combinada', icone: 'M', cor: '#c6a0e8', severidade: 2 },
-    aguardandoCaminhao: { id: 'aguardandoCaminhao', nome: 'Aguardando caminhão', icone: 'T', cor: '#e9b457', severidade: 2 },
-    aguardandoBasculamento: { id: 'aguardandoBasculamento', nome: 'Aguardando basculamento (inferido)', icone: '↻', cor: '#d79238', severidade: 2 },
-    frenteDividida: { id: 'frenteDividida', nome: 'Frente dividida (validar FUT)', icone: '⇄', cor: '#e05252', severidade: 3 },
-    refeicao: { id: 'refeicao', nome: 'Refeição excedida', icone: '🍽️', cor: '#d9822b', severidade: 2 },
-    semApontamento: { id: 'semApontamento', nome: 'Sem apontamento', icone: '📝', cor: '#e07b39', severidade: 2 },
-    paradaImprodutiva: { id: 'paradaImprodutiva', nome: 'Parada improdutiva', icone: '⏸️', cor: '#c96b3b', severidade: 2 },
-    gestaoFrente: { id: 'gestaoFrente', nome: 'Gestão da frente', icone: '🚩', cor: '#b5179e', severidade: 3 },
-    generico: { id: 'generico', nome: 'Alarme do portal', icone: '⚠️', cor: '#93a4b3', severidade: 1 },
+    velocidade: { id: 'velocidade', nome: 'Velocidade excedida', icone: '🚨', cor: '#ef4444', severidade: 3 },
+    rpm: { id: 'rpm', nome: 'RPM máxima do motor', icone: '⚙️', cor: '#f97316', severidade: 3 },
+    turno: { id: 'turno', nome: 'Preso em troca de turno', icone: '⏱️', cor: '#eab308', severidade: 2 },
+    ocioso: { id: 'ocioso', nome: 'Motor ocioso', icone: '🔌', cor: '#38bdf8', severidade: 2 },
+    ociosoSemApontamento: { id: 'ociosoSemApontamento', nome: 'Motor ocioso sem apontamento', icone: '🔌', cor: '#d97706', severidade: 2 },
+    motorCondicao: { id: 'motorCondicao', nome: 'Motor ligado — condição combinada', icone: 'M', cor: '#06b6d4', severidade: 2 },
+    aguardandoCaminhao: { id: 'aguardandoCaminhao', nome: 'Aguardando caminhão', icone: 'T', cor: '#eab308', severidade: 2 },
+    aguardandoBasculamento: { id: 'aguardandoBasculamento', nome: 'Aguardando basculamento (inferido)', icone: '↻', cor: '#d97706', severidade: 2 },
+    frenteDividida: { id: 'frenteDividida', nome: 'Frente dividida (validar FUT)', icone: '⇄', cor: '#ef4444', severidade: 3 },
+    refeicao: { id: 'refeicao', nome: 'Refeição excedida', icone: '🍽️', cor: '#ea580c', severidade: 2 },
+    semApontamento: { id: 'semApontamento', nome: 'Sem apontamento', icone: '📝', cor: '#f97316', severidade: 2 },
+    paradaImprodutiva: { id: 'paradaImprodutiva', nome: 'Parada improdutiva', icone: '⏸️', cor: '#d97706', severidade: 2 },
+    gestaoFrente: { id: 'gestaoFrente', nome: 'Gestão da frente', icone: '🚩', cor: '#f59e0b', severidade: 3 },
+    generico: { id: 'generico', nome: 'Alarme do portal', icone: '⚠️', cor: '#94a3b8', severidade: 1 },
   };
 
   const PADRAO = {
@@ -212,6 +213,21 @@
     }
   }
 
+  function podarAcks(mapa) {
+    const limite = agora() - 2 * 3600_000;
+    let removeu = false;
+    if (!mapa || typeof mapa !== 'object') return {};
+    for (const k of Object.keys(mapa)) {
+      if (!(Number(mapa[k]) > limite)) {
+        delete mapa[k];
+        removeu = true;
+      }
+    }
+    if (removeu) salvar(KEY_ACK, mapa);
+    return mapa;
+  }
+  acks = podarAcks(acks);
+
   function pushSuportado() {
     return typeof window !== 'undefined' && window.isSecureContext !== false &&
       typeof Notification !== 'undefined' && !!navigator.serviceWorker &&
@@ -269,9 +285,30 @@
       tiposNotificacao: tipos,
       frentes,
       equipamentos: String(cfg.equipamentos || ''),
+      glossarioFala: String(cfg.glossarioFala || '').slice(0, 2000),
       seguirSelecaoMapa: !!cfg.seguirSelecaoMapa,
       selecaoMapa,
     };
+  }
+
+  function assinaturaSyncPush(endpoint) {
+    return String(endpoint || '') + '|' + JSON.stringify(preferenciasPush());
+  }
+
+  function gravarAssinaturaSyncPush(endpoint) {
+    try {
+      localStorage.setItem(KEY_PUSH_SYNC_HASH, assinaturaSyncPush(endpoint));
+    } catch {
+      /* segue sem cache local do hash */
+    }
+  }
+
+  function limparAssinaturaSyncPush() {
+    try {
+      localStorage.removeItem(KEY_PUSH_SYNC_HASH);
+    } catch {
+      /* nada a limpar */
+    }
   }
 
   function vapidBytes(chave) {
@@ -337,6 +374,7 @@
       if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
         pushSubscribed = false;
         pushRegistered = false;
+        limparAssinaturaSyncPush();
         pushStatusText = typeof Notification !== 'undefined' && Notification.permission === 'denied'
           ? 'A permissão foi bloqueada nas configurações do navegador. O Push não está ativo neste aparelho.'
           : 'O Push não está ativo neste aparelho.';
@@ -347,12 +385,14 @@
       if (!subscription) {
         pushSubscribed = false;
         pushRegistered = false;
+        limparAssinaturaSyncPush();
         pushStatusText = 'Não há uma assinatura Push ativa neste aparelho.';
         return;
       }
       pushStatusText = 'Sincronizando as preferências deste aparelho…';
       renderPushStatus();
       await enviarPreferenciaPush({ action: 'sync', deviceId: idDispositivoPush(), preferences: preferenciasPush() });
+      gravarAssinaturaSyncPush(subscription.endpoint);
       pushRegistered = true;
       pushStatusText = 'Push ativo neste aparelho. As preferências foram sincronizadas.';
     } catch {
@@ -389,9 +429,16 @@
       pushRegistered = false;
       if (pushSubscribed) {
         if (Notification.permission === 'granted') {
-          pushStatusText = 'Assinatura Push encontrada. Sincronizando as preferências deste aparelho…';
-          renderPushStatus();
-          await syncPushAgora();
+          let ultimoHash = '';
+          try { ultimoHash = localStorage.getItem(KEY_PUSH_SYNC_HASH) || ''; } catch { /* sem storage */ }
+          if (ultimoHash && ultimoHash === assinaturaSyncPush(subscription.endpoint)) {
+            pushRegistered = true;
+            pushStatusText = 'Push ativo neste aparelho. As preferências estão sincronizadas.';
+          } else {
+            pushStatusText = 'Assinatura Push encontrada. Sincronizando as preferências deste aparelho…';
+            renderPushStatus();
+            await syncPushAgora();
+          }
         } else {
           pushStatusText = 'Há uma assinatura local, mas a permissão está bloqueada ou não concedida. Desligue o Push aqui ou ajuste a permissão no navegador.';
         }
@@ -457,6 +504,7 @@
         subscription: dadosSubscription,
         preferences: preferenciasPush(),
       });
+      gravarAssinaturaSyncPush(subscription.endpoint);
       pushSubscribed = true;
       pushRegistered = true;
       pushStatusText = 'Notificações Push ativadas neste aparelho. Preferências sincronizadas.';
@@ -486,6 +534,7 @@
       if (subscription) {
         try { await subscription.unsubscribe(); } catch { /* o servidor já desativou este aparelho */ }
       }
+      limparAssinaturaSyncPush();
       pushSubscribed = false;
       pushRegistered = false;
       pushStatusText = 'Notificações Push desligadas neste aparelho.';
@@ -734,8 +783,10 @@
   }
 
   async function chamarProxy(caminho, tentarRenovar = true) {
+    const headers = { accept: 'application/json' };
+    if (typeof window !== 'undefined' && window.__APP_KEY) headers['x-app-key'] = String(window.__APP_KEY);
     const resposta = await requisitarJson('/.netlify/functions/session?acao=dados&rota=' + encodeURIComponent(caminho), {
-      headers: { accept: 'application/json' },
+      headers,
       cache: 'no-store',
     }, 'proxy SGPA');
     const { res, json } = resposta;
@@ -2433,6 +2484,17 @@
     descargarFila();
   }
 
+  let timerVozNativa = null;
+  function concluirVozNativa() {
+    if (timerVozNativa) {
+      clearTimeout(timerVozNativa);
+      timerVozNativa = null;
+    }
+    if (!falando) return;
+    falando = false;
+    setTimeout(descargarFila, 80);
+  }
+
   function descargarFila() {
     if (falando || vozBloqueada || !fila.length) return;
     const item = fila.shift();
@@ -2451,10 +2513,8 @@
       } catch {
         /* segue sem voz */
       }
-      setTimeout(() => {
-        falando = false;
-        descargarFila();
-      }, Math.min(20000, 900 + texto.length * 65));
+      clearTimeout(timerVozNativa);
+      timerVozNativa = setTimeout(concluirVozNativa, Math.min(20000, 900 + texto.length * 65));
       return;
     }
     if (!s) {
@@ -2503,6 +2563,10 @@
   function pararVoz() {
     fila = [];
     falando = false;
+    if (timerVozNativa) {
+      clearTimeout(timerVozNativa);
+      timerVozNativa = null;
+    }
     const s = sintetizador();
     if (s) s.cancel();
     const nativa = ponteNativa();
@@ -2694,9 +2758,11 @@
     auditEnviando = true;
     const lote = filaAudit.slice(0, 25);
     try {
+      const auditHeaders = { 'content-type': 'application/json' };
+      if (typeof window !== 'undefined' && window.__APP_KEY) auditHeaders['x-app-key'] = String(window.__APP_KEY);
       const { res, json } = await requisitarJson('/.netlify/functions/session?acao=alerta', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: auditHeaders,
         body: JSON.stringify({ alertas: lote, unidade: ctx.unidade || '', usuario: ctx.usuario || '' }),
       }, 'gravação da auditoria');
       if (res.status === 429) {
@@ -3113,6 +3179,7 @@
     const ack = d.querySelector('[data-q="ack"]');
     if (ack)
       ack.onclick = () => {
+        podarAcks(acks);
         acks[a.chave] = agora();
         salvar(KEY_ACK, acks);
         renderAtivos();
@@ -3863,9 +3930,26 @@
     }, 45_000);
   }
 
+  function origemMapaConfiavel(origemEvento) {
+    if (!origemEvento) return false;
+    const origens = new Set();
+    const iframe = $('map');
+    const iframeSrc = iframe && (iframe.getAttribute('src') || iframe.src);
+    for (const candidato of [ctx.mapUrl, iframeSrc]) {
+      if (!candidato) continue;
+      try {
+        origens.add(new URL(candidato, window.location.href).origin);
+      } catch {
+        /* ignora URL malformada */
+      }
+    }
+    return origens.has(origemEvento);
+  }
+
   /* seleção feita no mapa: o micro-frontend emite strings JSON em 4 eventos */
   function escutarMapa() {
     window.addEventListener('message', (ev) => {
+      if (!origemMapaConfiavel(ev && ev.origin)) return;
       let dado = ev.data;
       if (typeof dado === 'string') {
         if (dado.length > 20000) return;
@@ -3956,6 +4040,7 @@
     if (!iniciar.escutou) {
       iniciar.escutou = true;
       escutarMapa();
+      window.addEventListener('bperes-tts-fim', concluirVozNativa);
       window.addEventListener('bperes-vozes-atualizadas', () => {
         escolherVoz();
         preencherVozes();
