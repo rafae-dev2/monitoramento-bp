@@ -528,7 +528,23 @@
     if (act === 'about') showAbout();
     if (act === 'alertas' && ALERTAS_ON) {
       if (!alertasLigados && session) ligarAlertas();
-      MonitoramentoAlertas.abrirPainel();
+      MonitoramentoAlertas.abrirPainel('ativos');
+    }
+    if (act === 'frentes' && ALERTAS_ON) {
+      if (!alertasLigados && session) ligarAlertas();
+      MonitoramentoAlertas.abrirPainel('frentes');
+    }
+    if (act === 'passagem' && ALERTAS_ON) {
+      if (!alertasLigados && session) ligarAlertas();
+      if (typeof MonitoramentoAlertas.abrirPassagemTurno === 'function') MonitoramentoAlertas.abrirPassagemTurno();
+    }
+    if (act === 'telao') {
+      if (window.MonitoramentoAlertas && typeof window.MonitoramentoAlertas.alternarTelao === 'function') {
+        window.MonitoramentoAlertas.alternarTelao();
+      } else {
+        const ativo = document.documentElement.dataset.telao === '1';
+        document.documentElement.dataset.telao = ativo ? '0' : '1';
+      }
     }
     if (act === 'regras' && ALERTAS_ON) {
       if (!alertasLigados && session) ligarAlertas();
@@ -574,6 +590,9 @@
     if (ev.key === 'Escape') {
       hide(el.menu);
       hide(el.about);
+      if (document.documentElement.dataset.telao === '1' && window.MonitoramentoAlertas && typeof window.MonitoramentoAlertas.alternarTelao === 'function') {
+        window.MonitoramentoAlertas.alternarTelao(false);
+      }
     }
   });
 

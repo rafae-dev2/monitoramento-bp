@@ -227,4 +227,50 @@ assert.equal(
   }),
   'Atenção COA: Transbordo oito oito três três apontou Frente dividida. Frente/grupo Frente Norte. Verificar a sequência de chamada da colhedora no sistema FUT.'
 );
-console.log('test-alerts-policy: contrato integrado passou.');
+
+// Inteligência COA v3.0.0: emergência, qualidade de colheita, Raio-X CTT + balanceamento, WhatsApp e Passagem de Turno.
+assert.equal(policy.categoria('desconhecido', 'Combate a Incêndio'), 'emergencia');
+assert.equal(policy.ehAlertaSeguranca('emergencia'), true);
+assert.equal(policy.ehAlertaSeguranca('velocidade'), true);
+assert.equal(policy.ehAlertaSeguranca('paradaImprodutiva'), false);
+assert.ok(policy.emergenciaOperacional({ operacaoConfirmada: true, operacao: '999 - Combate a Incêndio' }));
+assert.ok(policy.emergenciaOperacional({ tipo: 'CAMINHÃO BOMBEIRO', velocidade: 48 }));
+assert.equal(policy.emergenciaOperacional({ tipo: 'CAMINHÃO BOMBEIRO', velocidade: 0, operacaoConfirmada: true, operacao: 'Aguardando Carregamento' }), null);
+assert.equal(policy.colheitaAcimaDaFaixa({ tipo: 'COLHEDORA', operacaoConfirmada: true, operacao: '101 - Colheita Mecanizada', velocidade: 8.4 }, 7.5), true);
+assert.equal(policy.colheitaAcimaDaFaixa({ tipo: 'COLHEDORA', operacaoConfirmada: true, operacao: '101 - Colheita Mecanizada', velocidade: 6.2 }, 7.5), false);
+assert.equal(policy.colheitaAcimaDaFaixa({ tipo: 'COLHEDORA', operacaoConfirmada: true, operacao: '200 - Deslocamento', velocidade: 15 }, 7.5), false);
+assert.equal(policy.paradaImprodutiva({ operacao: '410 - Manutenção Mecânica' }).id, 'emManutencao');
+
+const ctt = policy.analisarFrentesCtt([
+  { id: 'C1', numero: '57838', tipo: 'COLHEDORA', frente: 'Frente 1', operacaoConfirmada: true, operacao: 'Colheita', velocidade: 5.5, atraso: 10 },
+  { id: 'T1', numero: '7001', tipo: 'TRANSBORDO', frente: 'Frente 1', operacaoConfirmada: true, operacao: 'Transbordo', atraso: 10 },
+  { id: 'K1', numero: '4401', tipo: 'CAMINHÕES CANAVIEIRO TERC', frente: 'Frente 1', operacaoConfirmada: true, operacao: 'Aguardando Carregamento', atraso: 10 },
+  { id: 'K2', numero: '4402', tipo: 'CAMINHÕES CANAVIEIRO TERC', frente: 'Frente 1', operacaoConfirmada: true, operacao: 'Aguardando Carregamento', atraso: 10 },
+  { id: 'K3', numero: '4403', tipo: 'CAMINHÕES CANAVIEIRO TERC', frente: 'Frente 1', operacaoConfirmada: true, operacao: 'Aguardando Carregamento', atraso: 10 },
+  { id: 'C2', numero: '57839', tipo: 'COLHEDORA', frente: 'Frente 3', operacaoConfirmada: true, operacao: 'Colheita', velocidade: 5.2, atraso: 10 },
+  { id: 'T2', numero: '7002', tipo: 'TRANSBORDO', frente: 'Frente 3', operacaoConfirmada: true, operacao: '905 - Aguardando Caminhão', atraso: 10 },
+  { id: 'M1', numero: '9010', tipo: 'TRATOR', frente: 'Frente 3', operacaoConfirmada: true, operacao: 'Sem Apontamento', atraso: 2100 },
+], { minutosFrotaMuda: 25, filaMaxFrente: 4 });
+assert.equal(ctt.frentes.length, 2);
+assert.equal(ctt.frotasMudas.length, 1);
+assert.equal(ctt.frotasMudas[0].numero, '9010');
+assert.equal(ctt.sugestoesBalanceamento.length, 1);
+assert.match(ctt.sugestoesBalanceamento[0].texto, /Frente 1.*Frente 3/);
+
+const whats = policy.textoCobrancaWhatsApp({
+  regra: 'semApontamento', nome: 'Sem apontamento', classe: 'Trator', numero: '4576',
+  operador: 'Marcelo Vian', texto: 'sem apontamento há 5 minutos', e: { frente: 'Frente 2', operacao: '953 - Sem Apontamento' }
+}, 'Usina Branco Peres', { tag: 'Cobrado no rádio', nota: 'operador corrigindo' });
+assert.match(whats, /COA Usina Branco Peres.*Frente 2.*Trator 4576.*Cobrado no rádio/s);
+
+const boletim = policy.gerarBoletimPassagemTurno({
+  unidade: 'Usina Branco Peres', usuario: 'coa.operador', resumoCtt: ctt,
+  ativos: [{ chave: '57838|sgpa:5', severidade: 3, classe: 'Colhedora', numero: '57838', nome: 'Velocidade', regra: 'velocidade', ts: Date.now() - 600000, e: { frente: 'Frente 1' } }],
+  hist: [{ ts: Date.now() - 60000, equipamento: '57838', frente: 'Frente 1', regra: 'velocidade', nomeAlarme: 'Velocidade' }],
+  tratativas: { '57838|sgpa:5': { tag: 'Cobrado no rádio', nota: 'reduziu' } },
+  ociosidadeTurno: [{ numero: '4576', classe: 'Trator', frente: 'Frente 2', segAcumulados: 900 }],
+});
+assert.match(boletim.texto, /PASSAGEM DE TURNO COA/);
+assert.match(boletim.texto, /Colhedora 57838/);
+assert.match(boletim.texto, /DESPERDÍCIO DE DIESEL/);
+console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 passaram.');

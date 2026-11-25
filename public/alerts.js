@@ -31,11 +31,15 @@
 (() => {
   'use strict';
 
-  const VERSAO = '2.2.0';
+  const VERSAO = '3.0.0';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
   const KEY_ACK = 'bperes.alertas.ack.v2';
+  const KEY_TRATATIVAS = 'bperes.coa.tratativas.v1';
+  const KEY_CHUVAS = 'bperes.coa.chuvas.v1';
+  const KEY_OCIOSIDADE = 'bperes.coa.ocioso-turno.v1';
+  const KEY_TELAO = 'bperes.visual.telao.v1';
   const KEY_AUDIT_QUEUE = 'bperes.alertas.audit-queue.v1';
   const KEY_PUSH_DEVICE = 'bperes.push.deviceId.v1';
   const KEY_PUSH_SYNC_HASH = 'bperes.push.syncHash.v1';
@@ -122,6 +126,7 @@
   };
 
   const REGRAS = {
+    emergencia: { id: 'emergencia', nome: 'Emergência / Incêndio / Bombeiro', icone: '🔥', cor: '#dc2626', severidade: 4 },
     velocidade: { id: 'velocidade', nome: 'Velocidade excedida', icone: '🚨', cor: '#ef4444', severidade: 3 },
     rpm: { id: 'rpm', nome: 'RPM máxima do motor', icone: '⚙️', cor: '#f97316', severidade: 3 },
     turno: { id: 'turno', nome: 'Preso em troca de turno', icone: '⏱️', cor: '#eab308', severidade: 2 },
@@ -135,6 +140,8 @@
     semApontamento: { id: 'semApontamento', nome: 'Sem apontamento', icone: '📝', cor: '#f97316', severidade: 2 },
     paradaImprodutiva: { id: 'paradaImprodutiva', nome: 'Parada improdutiva', icone: '⏸️', cor: '#d97706', severidade: 2 },
     gestaoFrente: { id: 'gestaoFrente', nome: 'Gestão da frente', icone: '🚩', cor: '#f59e0b', severidade: 3 },
+    telemetriaMuda: { id: 'telemetriaMuda', nome: 'Frota muda (sem telemetria)', icone: '📡', cor: '#f59e0b', severidade: 3 },
+    qualidadeColheita: { id: 'qualidadeColheita', nome: 'Qualidade de colheita (velocidade)', icone: '🌾', cor: '#eab308', severidade: 2 },
     generico: { id: 'generico', nome: 'Alarme do portal', icone: '⚠️', cor: '#94a3b8', severidade: 1 },
   };
 
@@ -159,6 +166,9 @@
     gestaoFrenteAtiva: true, // chave geral dos alertas “Atenção gestão”
     minutosFrenteSemColhedora: 10, // todas as colhedoras da frente paradas (0 = desliga)
     transbordosAguardandoMax: 3, // transbordos aguardando colhedora na mesma frente (0 = desliga)
+    minutosFrotaMuda: 25, // minutos sem comunicação de telemetria para alertar frota muda (0 = desliga)
+    velMaxColheita: 7.5, // km/h máximo técnico em colheita (0 = desliga)
+    slaAlertaMin: 10, // meta de SLA do COA em minutos para destaque no cartão
     paradasLimites: {}, // id da parada → minutos de tolerância (0 = não alertar)
     minutosSemApontamento: 5, // tolerância antes de alertar operação “Sem Apontamento”
     minutosTurno: 4, // pedido do usuário (o portal usa 3)
@@ -201,6 +211,14 @@
   let cfg = policy.normalizeCfg(Object.assign({}, PADRAO, carregar(KEY_CFG, PADRAO)));
   let hist = carregar(KEY_HIST, []);
   let acks = carregar(KEY_ACK, {});
+  let tratativas = carregar(KEY_TRATATIVAS, {});
+  let chuvas = carregar(KEY_CHUVAS, {});
+  let ociosidadeTurno = carregar(KEY_OCIOSIDADE, { turnoChave: '', itens: {} });
+  let telaoAtivo = false;
+  let emergenciaAtiva = null;
+  let ultimoAcumuloOciosoTs = 0;
+  let ultimoResumoCtt = { frentes: [], sugestoesBalanceamento: [], frotasMudas: [], totais: {} };
+  const TAGS_TRATATIVA_COA = ['Cobrado no rádio', 'Mecânica acionada', 'Comboio acionado', 'Líder ciente', 'Chuva/Clima', 'Falso alarme'];
   let ctx = { selecao: new Set(Array.isArray(cfg.selecaoMapa) ? cfg.selecaoMapa.map(String) : []), props: null };
   let timer = null;
   let correndo = false;
@@ -1584,7 +1602,7 @@
 
   function dentroDoEscopo(e, opcoes = {}) {
     if (!opcoes.alarmesOficiais && String(e.ativo || 'T') === 'F') return false;
-    if (!opcoes.alarmesOficiais && e.atraso !== null && e.atraso !== undefined && e.atraso > cfg.maxAtrasoMin * 60) return false;
+    if (!opcoes.alarmesOficiais && !opcoes.ignorarAtraso && e.atraso !== null && e.atraso !== undefined && e.atraso > cfg.maxAtrasoMin * 60) return false;
     if (cfg.seguirSelecaoMapa && ctx.selecao && ctx.selecao.size) {
       if (!ctx.selecao.has(String(e.id)) && !ctx.selecao.has(String(e.numero))) return false;
     }
@@ -1752,6 +1770,8 @@
       if (frota.size) avaliarFrota(ts, 'tempo');
       verificarReescalonamentoCriticos(ts);
       verificarSaudeComunicacaoSgpa(ts);
+      revisarChuvas(ts);
+      atualizarCronometrosSla(ts);
       renderCabecalho();
     } catch {
       /* o tique nunca derruba a interface */
@@ -1835,6 +1855,191 @@
 
   /* Regras locais opcionais e rastreio operacional; velocidade é só SGPA. */
 
+  /* ------------- Inteligência COA: Chuva, Ociosidade, Frota Muda, Emergência e Qualidade ------------- */
+
+  function frenteEmChuva(frente) {
+    const chave = policy.norm(frente);
+    if (!chave) return null;
+    const item = chuvas && chuvas[chave];
+    return item && typeof item === 'object' ? item : null;
+  }
+
+  function alternarChuvaFrente(frente, motivo) {
+    const rotulo = String(frente || '').trim();
+    const chave = policy.norm(rotulo);
+    if (!chave) return null;
+    if (chuvas[chave]) {
+      delete chuvas[chave];
+      salvar(KEY_CHUVAS, chuvas);
+      mostrarAviso(`Pausa de chuva encerrada em ${rotulo}. Alertas improdutivos reativados.`, 'info');
+      renderFrentes();
+      renderAtivos();
+      renderCabecalho();
+      return null;
+    }
+    const ts = agora();
+    chuvas[chave] = {
+      chave,
+      frente: rotulo,
+      motivo: String(motivo || 'Chuva / Parada programada').trim(),
+      desde: ts,
+      revisarEm: ts + 30 * 60_000,
+    };
+    salvar(KEY_CHUVAS, chuvas);
+    mostrarAviso(`Modo Chuva ativo em ${rotulo} (lembrete em 30 min). Segurança permanece 100% ligada.`, 'info');
+    renderFrentes();
+    renderAtivos();
+    renderCabecalho();
+    return chuvas[chave];
+  }
+
+  function revisarChuvas(ts = agora()) {
+    let mudou = false;
+    for (const [chave, item] of Object.entries(chuvas || {})) {
+      if (!item || !item.revisarEm || ts < item.revisarEm) continue;
+      const mins = Math.max(1, Math.round((ts - (item.desde || ts)) / 60_000));
+      item.revisarEm = ts + 30 * 60_000;
+      mudou = true;
+      mostrarAviso(`🌧️ Revisar pausa de chuva em ${item.frente} (ativa há ${mins} min).`, 'info');
+      if (cfg.som) tocar(2);
+      if (cfg.voz) falar(`Atenção C O A: revisar pausa de chuva na ${item.frente}, ativa há ${mins} minutos.`);
+    }
+    if (mudou) salvar(KEY_CHUVAS, chuvas);
+  }
+
+  function registrarTratativa(chave, dados) {
+    if (!chave) return null;
+    const atual = tratativas[chave] || {};
+    const novo = {
+      tag: dados && dados.tag !== undefined ? String(dados.tag || '').trim() : (atual.tag || ''),
+      nota: dados && dados.nota !== undefined ? String(dados.nota || '').trim().slice(0, 180) : (atual.nota || ''),
+      ts: agora(),
+      usuario: ctx.usuario || '',
+    };
+    tratativas[chave] = novo;
+    const corte = agora() - 24 * 3600_000;
+    for (const [k, v] of Object.entries(tratativas)) {
+      if (!v || (v.ts && v.ts < corte)) delete tratativas[k];
+    }
+    salvar(KEY_TRATATIVAS, tratativas);
+    for (const h of hist) {
+      if (h.chave === chave) {
+        h.tratativa = [novo.tag, novo.nota].filter(Boolean).join(' — ');
+        break;
+      }
+    }
+    salvar(KEY_HIST, hist);
+    return novo;
+  }
+
+  function acumularOciosidadeTurno(ts = agora()) {
+    const turno = policy.turnoAtualCoa(ts);
+    if (!ociosidadeTurno || ociosidadeTurno.turnoChave !== turno.chave) {
+      ociosidadeTurno = { turnoChave: turno.chave, itens: {} };
+    }
+    const deltaSeg = ultimoAcumuloOciosoTs > 0 ? Math.min(90, Math.max(0, Math.round((ts - ultimoAcumuloOciosoTs) / 1000))) : 0;
+    ultimoAcumuloOciosoTs = ts;
+    if (deltaSeg <= 0) return;
+    let mudou = false;
+    const rpmMax = num(cfg.rpmOcioso);
+    for (const e of frota.values()) {
+      if (!dentroDoEscopo(e)) continue;
+      const parado = (e.velocidade === null ? 0 : e.velocidade) <= 1;
+      const ligado = e.rpm > 0 && (e.motor === null ? true : e.motor);
+      if (!(ligado && parado && (rpmMax === 0 || e.rpm <= rpmMax))) continue;
+      const id = String(e.id);
+      const atual = ociosidadeTurno.itens[id] || {
+        id,
+        numero: e.numero || id,
+        classe: classeFala(e.nome, e.tipo, e.frente),
+        frente: e.frente || e.grupoEquipamento || '',
+        operador: e.operador || '',
+        segAcumulados: 0,
+      };
+      atual.segAcumulados += deltaSeg;
+      atual.frente = e.frente || atual.frente;
+      atual.operador = e.operador || atual.operador;
+      ociosidadeTurno.itens[id] = atual;
+      mudou = true;
+    }
+    if (mudou) salvar(KEY_OCIOSIDADE, ociosidadeTurno);
+  }
+
+  function resumoFrentes() {
+    const lista = [...frota.values()].filter((e) => dentroDoEscopo(e, { ignorarAtraso: true }));
+    ultimoResumoCtt = policy.analisarFrentesCtt(lista, {
+      minutosFrotaMuda: Math.max(0, num(cfg.minutosFrotaMuda) || 0),
+      filaMaxFrente: Math.max(1, num(cfg.filaMaxFrente) || 4),
+      chuvas,
+    });
+    return ultimoResumoCtt;
+  }
+
+  function regraFrotaMuda(e, ts) {
+    const min = Math.max(0, num(cfg.minutosFrotaMuda) || 0);
+    if (!min) return;
+    const atrasoSeg = e.atraso != null && Number.isFinite(Number(e.atraso)) ? Number(e.atraso) : null;
+    const liga = atrasoSeg !== null && atrasoSeg >= min * 60 && atrasoSeg <= 12 * 3600;
+    const st = marcar(e.id, 'telemetriaMuda', liga, ts, atrasoSeg ? Math.round(atrasoSeg / 60) : null);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!st.firing) return;
+    if (!podeDisparar(st, ts)) return;
+    const mins = Math.max(min, Math.round((atrasoSeg || 0) / 60));
+    emitir({
+      chave: st.chave,
+      regra: 'telemetriaMuda',
+      e,
+      valor: mins,
+      limite: min,
+      texto: `sem comunicação de telemetria há ${minutosTxt(mins)} (frota muda) · frente/grupo: ${e.frente || 'não informada'}`,
+      detalhe: `Última operação: ${e.operacao || '—'}${e.local ? ' · Último local: ' + e.local : ''} · limiar ${minutosTxt(min)}`,
+      inicio: ts - mins * 60_000,
+    });
+  }
+
+  function regraEmergencia(e, ts) {
+    const det = policy.emergenciaOperacional(e);
+    const liga = !!det;
+    const st = marcar(e.id, 'emergencia', liga, ts, e.velocidade);
+    if (!liga && !st.firing) {
+      ativos.delete(st.chave);
+      if (emergenciaAtiva && emergenciaAtiva.chave === st.chave) fecharBannerEmergencia();
+    }
+    if (!liga || !st.firing) return;
+    st.consec = Math.max(st.consec, Math.max(1, cfg.amostras)); // emergência nunca espera 2º ciclo
+    if (!podeDisparar(st, ts)) return;
+    emitir({
+      chave: st.chave,
+      regra: 'emergencia',
+      e,
+      valor: e.velocidade,
+      texto: `${det.motivo} · frente/grupo: ${e.frente || 'não informada'}`,
+      detalhe: `Canal de Emergência COA · ${e.nome}${e.local ? ' · Local: ' + e.local : ''} · prioridade máxima`,
+      inicio: st.since,
+    });
+  }
+
+  function regraQualidadeColheita(e, ts) {
+    const lim = Math.max(0, num(cfg.velMaxColheita) || 0);
+    if (!lim) return;
+    const liga = policy.colheitaAcimaDaFaixa(e, lim);
+    const st = marcar(e.id, 'qualidadeColheita', liga, ts, e.velocidade);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!st.firing) return;
+    if (!podeDisparar(st, ts)) return;
+    const vel = Math.round((Number(e.velocidade) || 0) * 10) / 10;
+    emitir({
+      chave: st.chave,
+      regra: 'qualidadeColheita',
+      e,
+      valor: vel,
+      limite: lim,
+      texto: `colhendo acima da faixa técnica: ${vel} km/h (limite ${lim} km/h) · frente/grupo: ${e.frente || 'não informada'}`,
+      detalhe: `Qualidade da colheita · operação ${e.operacao || 'Colheita'} · risco de perda de cana e impureza`,
+      inicio: st.since,
+    });
+  }
+
   function avaliarFrota(ts, modo) {
     const lotes = modo !== 'tempo';
     const modoAnterior = avaliacaoSoTempo;
@@ -1845,6 +2050,13 @@
     try {
       atualizarFrentesInferidas(ts);
       for (const e of frota.values()) {
+        if (dentroDoEscopo(e, { ignorarAtraso: true })) {
+          const tsEquipMuda = Number(e.tsEquipamento);
+          observacaoEmAvaliacao = lotes
+            ? tsEquipMuda > 0 ? `sgpa:${tsEquipMuda}` : `rodada:${rodada}:${e.id}`
+            : null;
+          regraFrotaMuda(e, ts);
+        }
         if (!dentroDoEscopo(e)) continue;
         cont++;
         const tsEquipamento = Number(e.tsEquipamento);
@@ -1854,6 +2066,8 @@
         if (lotes) e.ultimaObservacaoFonte = observacaoEmAvaliacao;
         if (lotes) {
           regraRpm(e, ts);
+          regraEmergencia(e, ts);
+          regraQualidadeColheita(e, ts);
         }
         regraFrenteDividida(e, ts);
         regraAguardandoCaminhao(e, ts);
@@ -1865,7 +2079,10 @@
       }
       observacaoEmAvaliacao = lotes ? `frente:rodada:${rodada}` : null;
       regrasFrente(ts);
+      acumularOciosidadeTurno(ts);
+      resumoFrentes();
       estado.monitorados = cont;
+      if (el.frentes && !el.frentes.classList.contains('hide')) renderFrentes();
     } finally {
       avaliacaoSoTempo = modoAnterior;
       observacaoEmAvaliacao = observacaoAnterior;
@@ -2520,24 +2737,36 @@
       return; // só central/histórico: não consome rajada nem entrega canais
     }
 
-    const silenciado = ts < (Number(cfg.silencioAte) || 0) || jaReconhecido;
-    const oficial = alerta.fonte === 'portal';
+    const emergencia = alerta.regra === 'emergencia';
+    const seguranca = policy.ehAlertaSeguranca(alerta.regra);
+    const chuvaAtiva = !seguranca && !a.simulado
+      ? frenteEmChuva(alerta.e && (alerta.e.frente || alerta.e.frenteInferida || alerta.e.grupoEquipamento))
+      : null;
+    if (chuvaAtiva) {
+      alerta.emChuva = chuvaAtiva.frente;
+      renderAtivos();
+      renderCabecalho();
+      return; // frente em pausa/chuva: mantém registro na Central sem gerar fadiga sonora
+    }
+
+    const silenciado = !emergencia && (ts < (Number(cfg.silencioAte) || 0) || jaReconhecido);
+    const oficial = alerta.fonte === 'portal' || emergencia;
     const localAberto = localComCanais(alerta) && alerta.notificar;
-    // Alarmes oficiais chegam pelo stream e não podem ser suprimidos pela proteção
-    // de rajada destinada apenas aos cálculos locais e exemplos.
+    // Alarmes oficiais e emergências não podem ser suprimidos pela proteção de rajada.
     let demais = false;
     if (!oficial) {
       if (ts - rajada.ts > 20000) rajada = { ts, voz: 0, aviso: false };
       demais = ++rajada.voz > Math.max(1, Number(cfg.maxPorCiclo) || 4);
     }
+    if (emergencia) mostrarBannerEmergencia(alerta);
     if (cfg.popup && (oficial || localAberto || a.simulado)) mostrarToast(alerta, silenciado || demais);
     if (!silenciado && !demais) {
-      if ((oficial || localAberto || a.simulado) && cfg.som) tocar(regra.severidade);
-      if (cfg.voz && (oficial || localAberto || a.simulado || vozLocalSemPontoConfirmado) && (!alerta.repeticao || cfg.repetirVoz)) {
-        falar(alerta.fala, { oficial });
+      if ((oficial || localAberto || a.simulado) && cfg.som) tocar(emergencia ? 4 : regra.severidade, emergencia);
+      if (cfg.voz && (oficial || localAberto || a.simulado || vozLocalSemPontoConfirmado) && (emergencia || !alerta.repeticao || cfg.repetirVoz)) {
+        falar(alerta.fala, { oficial, emergencia });
         faladoEm.set(chave, ts);
       }
-      if ((oficial || localAberto || a.simulado) && cfg.vibrar) vibrar(regra.severidade);
+      if ((oficial || localAberto || a.simulado) && cfg.vibrar) vibrar(emergencia ? 4 : regra.severidade);
       if (oficial || localAberto) notificar(alerta);
     }
     if (demais && rajada.aviso !== true && ts - rajada.ts < 5000) {
@@ -2704,9 +2933,14 @@
 
   function falar(texto, opcoes) {
     if (!cfg.voz) return;
-    const item = { texto: String(texto), oficial: !!(opcoes && opcoes.oficial), retentou: false };
-    ultimaFalaEmitida = { texto: item.texto, ts: agora(), oficial: item.oficial };
-    if (item.oficial) {
+    const emergencia = !!(opcoes && opcoes.emergencia);
+    const item = { texto: String(texto), oficial: !!(opcoes && opcoes.oficial) || emergencia, emergencia, retentou: false };
+    ultimaFalaEmitida = { texto: item.texto, ts: agora(), oficial: item.oficial, emergencia };
+    if (emergencia) {
+      const pendentes = fila.slice();
+      pararVoz();
+      fila = [item, ...pendentes];
+    } else if (item.oficial) {
       let inserir = 0;
       while (inserir < fila.length && fila[inserir].oficial) inserir++;
       fila.splice(inserir, 0, item);
@@ -2887,6 +3121,14 @@
 
   let ac = null;
   function padraoNotasToque(estilo, severidade, escalado) {
+    if (severidade >= 4) {
+      return [
+        ['sawtooth', 880, 0, 0.16, 0.22],
+        ['sawtooth', 1320, 0.17, 0.16, 0.22],
+        ['sawtooth', 880, 0.34, 0.16, 0.22],
+        ['sawtooth', 1320, 0.51, 0.2, 0.24],
+      ];
+    }
     if (estilo === 'radio-bip') {
       return severidade >= 3 || escalado
         ? [['square', 1046, 0, 0.09, 0.14], ['square', 1318, 0.11, 0.09, 0.16], ['square', 1046, 0.22, 0.11, 0.14]]
@@ -3207,18 +3449,21 @@
     if (!cfg.vibrar) return;
     try {
       const nativa = ponteNativa();
-      if (nativa && nativa.vibrar) nativa.vibrar(severidade >= 3 ? 400 : 180);
+      if (nativa && nativa.vibrar) nativa.vibrar(severidade >= 4 ? 700 : severidade >= 3 ? 400 : 180);
       // o navegador só deixa vibrar depois do primeiro toque do usuário: sem isso, enche o console de aviso
-      else if (toquei && navigator.vibrate) navigator.vibrate(severidade >= 3 ? [220, 90, 220] : [140]);
+      else if (toquei && navigator.vibrate) navigator.vibrate(severidade >= 4 ? [300, 100, 300, 100, 300] : severidade >= 3 ? [220, 90, 220] : [140]);
     } catch {
       /* aparelho sem vibração */
     }
   }
 
-  /* Exceção pedida pelo usuário: “Sem apontamento” (cálculo do app) usa todos os
-     canais, mas só enquanto o app está aberto — nunca passa pelo Web Push. */
+  /* Exceção pedida pelo usuário: regras COA locais com fala/pop-up enquanto o app está aberto. */
   function localComCanais(a) {
-    return !!a && a.fonte === 'app' && (a.regra === 'semApontamento' || a.regra === 'refeicao' || a.regra === 'paradaImprodutiva' || a.regra === 'gestaoFrente' || a.regra === 'aguardandoBasculamento' || a.regra === 'frenteDividida');
+    return !!a && a.fonte === 'app' && (
+      a.regra === 'semApontamento' || a.regra === 'refeicao' || a.regra === 'paradaImprodutiva' ||
+      a.regra === 'gestaoFrente' || a.regra === 'aguardandoBasculamento' || a.regra === 'frenteDividida' ||
+      a.regra === 'emergencia' || a.regra === 'telemetriaMuda' || a.regra === 'qualidadeColheita'
+    );
   }
   function canalSistema(a) {
     return !!a && (a.fonte === 'portal' || localComCanais(a));
@@ -3426,6 +3671,7 @@
     <div class="ferramentas">
       <div class="abas">
         <button class="aba ativa" data-aba="ativos">Ativos <span id="cont-ativos" class="pill">0</span></button>
+        <button class="aba" data-aba="frentes">Frentes <span id="cont-frentes" class="pill">0</span></button>
         <button class="aba" data-aba="historico">Histórico <span id="cont-hist" class="pill">0</span></button>
       </div>
       <div class="atalhos">
@@ -3437,7 +3683,7 @@
       </div>
     </div>
     <div class="busca-central" role="search">
-      <input id="alertas-busca" type="search" aria-label="Buscar por frota, alerta ou operador" aria-controls="lista-ativos lista-historico" placeholder="Frota, alerta ou operador" autocomplete="off">
+      <input id="alertas-busca" type="search" aria-label="Buscar por frota, alerta ou operador" aria-controls="lista-ativos lista-frentes lista-historico" placeholder="Frota, frente, alerta ou operador" autocomplete="off">
       <button id="alertas-busca-limpar" class="icone hide" type="button" title="Limpar busca" aria-label="Limpar busca">✕</button>
     </div>
     <div class="linha-status">
@@ -3447,9 +3693,11 @@
       <span class="fine" id="alertas-escopo"></span>
     </div>
     <div id="lista-ativos" class="lista"></div>
+    <div id="lista-frentes" class="lista hide"></div>
     <div id="lista-historico" class="lista hide"></div>
     <footer>
       <button id="btn-limpar">Limpar ativos</button>
+      <button id="btn-passagem" title="Gerar boletim automático de passagem de turno do COA">📋 Turno</button>
       <button id="btn-exportar">Exportar CSV</button>
       <button id="btn-teste" class="primary">Testar pop-up e voz</button>
     </footer>
@@ -3457,7 +3705,45 @@
   <div class="veu"></div>
 </div>
 
+<div id="emergencia-banner" class="hide" role="alert" aria-live="assertive">
+  <div class="emg-info">
+    <span class="emg-tag">🔥 EMERGÊNCIA COA</span>
+    <strong id="emg-titulo"></strong>
+    <span id="emg-detalhe"></span>
+  </div>
+  <div class="emg-acoes">
+    <button id="emg-mapa" type="button">📍 Ver local</button>
+    <button id="emg-whats" type="button">💬 Cobrar</button>
+    <button id="emg-ciente" type="button" class="emg-ok">✓ Ciente</button>
+  </div>
+</div>
+
+<div id="coa-telao-bar" aria-label="Painel Telão COA">
+  <div class="telao-kpis" id="telao-kpis"></div>
+  <button id="telao-sair" type="button">✕ Sair do Telão</button>
+</div>
+
 <div id="toasts" aria-live="assertive" aria-atomic="false"></div>
+
+<div id="modal-passagem" class="hide" role="dialog" aria-modal="true" aria-labelledby="passagem-titulo">
+  <div class="card cfg passagem-card">
+    <div class="cfg-topo">
+      <span aria-hidden="true"></span>
+      <img class="marca" src="/icons/logo.png" alt="" width="44" height="44" />
+      <button id="passagem-fechar-x" class="icone cfg-fechar-x" type="button" title="Fechar passagem de turno" aria-label="Fechar passagem de turno">✕</button>
+    </div>
+    <h2 id="passagem-titulo">Boletim de Passagem de Turno · COA</h2>
+    <p id="passagem-meta" class="fine"></p>
+    <div id="passagem-kpis" class="passagem-kpis"></div>
+    <textarea id="passagem-texto" rows="13" aria-label="Texto da passagem de turno" spellcheck="false"></textarea>
+    <div class="row">
+      <button id="passagem-copiar" type="button" class="primary">📋 Copiar boletim</button>
+      <a id="passagem-whats" class="btn" target="_blank" rel="noopener">💬 Enviar WhatsApp</a>
+      <button id="passagem-imprimir" type="button">🖨️ Imprimir / PDF</button>
+      <button id="passagem-fechar" type="button">Fechar</button>
+    </div>
+  </div>
+</div>
 
 <div id="cfg-alertas" class="hide" role="dialog" aria-modal="true" aria-labelledby="cfg-titulo">
   <div class="card cfg">
@@ -3557,6 +3843,9 @@
       <label class="campo"><span>Fila: nº de equipamentos aguardando carregamento</span><input id="cfg-fila-frente" type="number" min="0" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Todas as colhedoras paradas há (min)</span><input id="cfg-sem-colh" type="number" min="0" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Transbordos aguardando colhedora (nº)</span><input id="cfg-transb-ag" type="number" min="0" step="1" inputmode="numeric"></label>
+      <label class="campo"><span>Frota muda: sem telemetria há (min)</span><input id="cfg-frota-muda" type="number" min="0" step="5" inputmode="numeric"></label>
+      <label class="campo"><span>Qualidade colheita: vel. máx. (km/h)</span><input id="cfg-vel-colheita" type="number" min="0" step="0.5" inputmode="decimal"></label>
+      <label class="campo"><span>Meta SLA de atendimento COA (min)</span><input id="cfg-sla-min" type="number" min="1" step="1" inputmode="numeric"></label>
     </div>
     <h3 class="secao-alertas">Pronúncia dos termos (glossário)</h3>
     <p class="fine">Ensine a voz a falar abreviações do SGPA. Uma regra por linha, no formato <b>termo=como falar</b>. O glossário já transforma <b>AG colhedora parada rápida</b> em <b>Aguardando colhedora parada rápida</b>. Exemplos: <code>AG=Aguardando</code>, <code>COLH=colhedora</code>. Deixar vazio depois do = faz a voz omitir o termo (ex.: <code>HR=</code>). Vale para todos os alertas falados; maiúsculas e acentos não importam. Depois, toque em Salvar preferências.</p>
@@ -3630,16 +3919,28 @@
       stream: $('alertas-stream'),
       escopo: $('alertas-escopo'),
       ativos: $('lista-ativos'),
+      frentes: $('lista-frentes'),
       historico: $('lista-historico'),
       busca: $('alertas-busca'),
       buscaLimpar: $('alertas-busca-limpar'),
       contAtivos: $('cont-ativos'),
+      contFrentes: $('cont-frentes'),
       contHist: $('cont-hist'),
       dot: $('dot-ciclo'),
       toasts: $('toasts'),
       cfg: $('cfg-alertas'),
       sino: $('btn-alertas'),
       badge: $('alert-badge'),
+      emgBanner: $('emergencia-banner'),
+      emgTitulo: $('emg-titulo'),
+      emgDetalhe: $('emg-detalhe'),
+      telaoBar: $('coa-telao-bar'),
+      telaoKpis: $('telao-kpis'),
+      modalPassagem: $('modal-passagem'),
+      passagemMeta: $('passagem-meta'),
+      passagemKpis: $('passagem-kpis'),
+      passagemTexto: $('passagem-texto'),
+      passagemWhats: $('passagem-whats'),
     };
 
     const p = el.painel;
@@ -3647,23 +3948,20 @@
       buscaCentral = el.busca.value;
       el.buscaLimpar.classList.toggle('hide', !norm(buscaCentral));
       renderAtivos();
+      if (el.frentes && !el.frentes.classList.contains('hide')) renderFrentes();
     });
     el.buscaLimpar.onclick = () => {
       el.busca.value = '';
       buscaCentral = '';
       el.buscaLimpar.classList.add('hide');
       renderAtivos();
+      if (el.frentes && !el.frentes.classList.contains('hide')) renderFrentes();
       el.busca.focus();
     };
     $('alertas-fechar').onclick = fecharPainel;
     p.querySelector('.veu').onclick = fecharPainel;
     for (const b of p.querySelectorAll('.aba')) {
-      b.onclick = () => {
-        for (const x of p.querySelectorAll('.aba')) x.classList.toggle('ativa', x === b);
-        el.ativos.classList.toggle('hide', b.dataset.aba !== 'ativos');
-        el.historico.classList.toggle('hide', b.dataset.aba !== 'historico');
-        renderAtivos();
-      };
+      b.onclick = () => selecionarAbaCentral(b.dataset.aba);
     }
     if ($('btn-calar')) $('btn-calar').onclick = calarFalaAtual;
     $('btn-som').onclick = () => {
@@ -3686,8 +3984,32 @@
       renderAtivos();
       renderCabecalho();
     };
+    if ($('btn-passagem')) $('btn-passagem').onclick = abrirPassagemTurno;
     $('btn-exportar').onclick = exportarCsv;
     $('btn-teste').onclick = testar;
+    if ($('emg-mapa')) $('emg-mapa').onclick = () => { if (emergenciaAtiva) abrirNoMapa(emergenciaAtiva); };
+    if ($('emg-whats')) $('emg-whats').onclick = () => { if (emergenciaAtiva) cobrarNoWhatsApp(emergenciaAtiva); };
+    if ($('emg-ciente')) $('emg-ciente').onclick = () => {
+      if (emergenciaAtiva) {
+        podarAcks(acks);
+        acks[emergenciaAtiva.chave] = agora();
+        salvar(KEY_ACK, acks);
+      }
+      fecharBannerEmergencia();
+      renderAtivos();
+    };
+    if ($('telao-sair')) $('telao-sair').onclick = () => alternarTelao(false);
+    if ($('passagem-fechar')) $('passagem-fechar').onclick = fecharPassagemTurno;
+    if ($('passagem-fechar-x')) $('passagem-fechar-x').onclick = fecharPassagemTurno;
+    if (el.modalPassagem) el.modalPassagem.addEventListener('click', (ev) => { if (ev.target === el.modalPassagem) fecharPassagemTurno(); });
+    if ($('passagem-copiar')) $('passagem-copiar').onclick = () => {
+      const txt = el.passagemTexto ? el.passagemTexto.value : '';
+      copiarTextoArea(txt, 'Boletim de passagem de turno copiado!');
+    };
+    if ($('passagem-imprimir')) $('passagem-imprimir').onclick = () => imprimirPassagemTurno();
+    try {
+      if (localStorage.getItem(KEY_TELAO) === '1') alternarTelao(true, false);
+    } catch { /* sem storage */ }
     $('cfg-fechar').onclick = fecharConfig;
     $('cfg-fechar-x').onclick = fecharConfig;
     $('cfg-salvar').onclick = lerConfig;
@@ -3783,14 +4105,298 @@
     renderPushStatus();
   }
 
-  function abrirPainel() {
+  function selecionarAbaCentral(aba) {
+    if (!el.painel) return;
+    const alvo = aba === 'frentes' || aba === 'historico' ? aba : 'ativos';
+    for (const x of el.painel.querySelectorAll('.aba')) x.classList.toggle('ativa', x.dataset.aba === alvo);
+    if (el.ativos) el.ativos.classList.toggle('hide', alvo !== 'ativos');
+    if (el.frentes) el.frentes.classList.toggle('hide', alvo !== 'frentes');
+    if (el.historico) el.historico.classList.toggle('hide', alvo !== 'historico');
+    if (alvo === 'frentes') renderFrentes();
+    else renderAtivos();
+  }
+
+  function abrirPainel(aba) {
     if (!el.painel) montar();
     el.painel.classList.remove('hide');
-    renderAtivos();
+    if (aba) selecionarAbaCentral(aba);
+    else {
+      renderAtivos();
+      if (el.frentes && !el.frentes.classList.contains('hide')) renderFrentes();
+    }
     renderCabecalho();
   }
   function fecharPainel() {
     el.painel.classList.add('hide');
+  }
+
+  function copiarTextoArea(texto, msgSucesso, linkWhats) {
+    const val = String(texto || '');
+    const finalizar = () => {
+      if (linkWhats) mostrarAvisoComLink(msgSucesso || 'Copiado!', 'Abrir WhatsApp ↗', linkWhats);
+      else mostrarAviso(msgSucesso || 'Texto copiado!', 'info');
+    };
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(val).then(finalizar).catch(() => {
+        copiarFallback(val);
+        finalizar();
+      });
+      return;
+    }
+    copiarFallback(val);
+    finalizar();
+  }
+
+  function copiarFallback(val) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = val;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    } catch { /* sem clipboard */ }
+  }
+
+  function cobrarNoWhatsApp(alerta) {
+    const tr = tratativas[alerta.chave];
+    const msg = policy.textoCobrancaWhatsApp(alerta, ctx.unidade || 'Usina Branco Peres', tr);
+    const url = 'https://wa.me/?text=' + encodeURIComponent(msg);
+    copiarTextoArea(msg, 'Cobrança COA copiada para colar no grupo.', url);
+    return msg;
+  }
+
+  function mostrarAvisoComLink(txt, rotuloLink, href) {
+    if (!el.toasts) return;
+    prepararBotaoLimparToasts();
+    const d = document.createElement('div');
+    d.className = 'aviso aviso-whats';
+    const sp = document.createElement('span');
+    sp.textContent = txt + ' ';
+    const a = document.createElement('a');
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.className = 'aviso-link';
+    a.textContent = rotuloLink;
+    d.append(sp, a);
+    el.toasts.appendChild(d);
+    atualizarBotaoLimparToasts();
+    rolarToastMaisNovo();
+    setTimeout(() => fecharCard(d), 7500);
+  }
+
+  function mostrarBannerEmergencia(alerta) {
+    emergenciaAtiva = alerta;
+    if (!el.emgBanner) return;
+    if (el.emgTitulo) el.emgTitulo.textContent = `${alerta.classe} ${alerta.numero} — ${alerta.texto}`;
+    if (el.emgDetalhe) el.emgDetalhe.textContent = alerta.detalhe || '';
+    el.emgBanner.classList.remove('hide');
+  }
+
+  function fecharBannerEmergencia() {
+    emergenciaAtiva = null;
+    if (el.emgBanner) el.emgBanner.classList.add('hide');
+  }
+
+  function alternarTelao(forcar, persistir = true) {
+    const proximoEstado = typeof forcar === 'boolean' ? forcar : !telaoAtivo;
+    telaoAtivo = proximoEstado;
+    document.documentElement.dataset.telao = telaoAtivo ? '1' : '0';
+    const txtMenu = $('menu-telao-txt');
+    if (txtMenu) txtMenu.textContent = telaoAtivo ? 'Sair do Modo Telão / Videowall COA' : 'Modo Telão / Videowall COA';
+    if (persistir) {
+      try { localStorage.setItem(KEY_TELAO, telaoAtivo ? '1' : '0'); } catch { /* sem storage */ }
+    }
+    renderTelaoBar();
+    if (persistir) {
+      mostrarAviso(telaoAtivo ? 'Modo Telão COA ativado: alertas críticos ficam fixos até confirmação.' : 'Modo Telão COA desativado.', 'info');
+    }
+    return telaoAtivo;
+  }
+
+  function renderTelaoBar() {
+    if (!el.telaoKpis) return;
+    const res = ultimoResumoCtt && ultimoResumoCtt.totais ? ultimoResumoCtt : resumoFrentes();
+    const t = res.totais || {};
+    const criticos = [...ativos.values()].filter((a) => (a.severidade || 0) >= 3 && !(acks[a.chave] && agora() - acks[a.chave] < 2 * 3600_000)).length;
+    const st = estadoConexaoCoa();
+    const chuvasAtivas = Object.keys(chuvas || {}).length;
+    el.telaoKpis.innerHTML =
+      `<span class="tkpi">🚜 Colhedoras <b>${t.colhedorasColhendo || 0}/${t.colhedoras || 0}</b></span>` +
+      `<span class="tkpi ${t.caminhoesFila >= (num(cfg.filaMaxFrente) || 4) ? 'alerta-kpi' : ''}">🚛 Fila <b>${t.caminhoesFila || 0}</b></span>` +
+      `<span class="tkpi ${criticos > 0 ? 'critico-kpi' : ''}">🚨 Críticos s/ ciência <b>${criticos}</b></span>` +
+      `<span class="tkpi ${(t.mudas || 0) > 0 ? 'alerta-kpi' : ''}">📡 Mudas <b>${t.mudas || 0}</b></span>` +
+      (chuvasAtivas ? `<span class="tkpi">🌧️ Chuva <b>${chuvasAtivas}</b></span>` : '') +
+      `<span class="tkpi">SGPA <b>${esc(st.rotulo)}</b></span>`;
+  }
+
+  function gerarPassagemTurno() {
+    const res = resumoFrentes();
+    const listaOciosos = Object.values((ociosidadeTurno && ociosidadeTurno.itens) || {});
+    return policy.gerarBoletimPassagemTurno({
+      ativos: [...ativos.values()],
+      hist,
+      tratativas,
+      chuvas,
+      resumoCtt: res,
+      ociosidadeTurno: listaOciosos,
+      unidade: ctx.unidade || 'Usina Branco Peres',
+      usuario: ctx.usuario || '',
+      agoraMs: agora(),
+    });
+  }
+
+  function abrirPassagemTurno() {
+    if (!el.modalPassagem) montar();
+    const boletim = gerarPassagemTurno();
+    if (el.passagemMeta) el.passagemMeta.textContent = `${boletim.turno.data} · ${boletim.turno.nome} · ${boletim.totalEventosTurno} evento(s) registrados no turno`;
+    if (el.passagemKpis) {
+      el.passagemKpis.innerHTML =
+        `<span class="pkpi"><b>${boletim.pendentesTotal}</b> pendências abertas</span>` +
+        `<span class="pkpi ${boletim.criticosAbertos ? 'crit' : ''}"><b>${boletim.criticosAbertos}</b> críticos</span>` +
+        `<span class="pkpi"><b>${boletim.totalEventosTurno}</b> alertas no turno</span>` +
+        `<span class="pkpi"><b>${boletim.topOciosidade.length}</b> máquinas c/ ocioso</span>`;
+    }
+    if (el.passagemTexto) el.passagemTexto.value = boletim.texto;
+    if (el.passagemWhats) el.passagemWhats.href = 'https://wa.me/?text=' + encodeURIComponent(boletim.texto);
+    el.modalPassagem.classList.remove('hide');
+    return boletim;
+  }
+
+  function fecharPassagemTurno() {
+    if (el.modalPassagem) el.modalPassagem.classList.add('hide');
+  }
+
+  function imprimirPassagemTurno() {
+    const txt = el.passagemTexto ? el.passagemTexto.value : gerarPassagemTurno().texto;
+    const w = window.open('', '_blank', 'width=820,height=720');
+    if (!w) {
+      copiarTextoArea(txt, 'Pop-up de impressão bloqueado — boletim copiado para a área de transferência.');
+      return;
+    }
+    w.document.write(`<!doctype html><html lang="pt-br"><head><meta charset="utf-8"><title>Passagem de Turno COA</title>` +
+      `<style>body{font:13px/1.6 ui-monospace,Consolas,monospace;padding:24px;color:#111}pre{white-space:pre-wrap;margin:0}</style></head>` +
+      `<body><pre>${esc(txt)}</pre></body></html>`);
+    w.document.close();
+    try { w.focus(); w.print(); } catch { /* ignora */ }
+  }
+
+  function classeSla(inicioMs, severidade, ts = agora()) {
+    const min = Math.max(0, Math.floor((ts - (inicioMs || ts)) / 60_000));
+    const meta = Math.max(1, num(cfg.slaAlertaMin) || 10);
+    const estourado = (severidade >= 3 && min >= meta) || min >= meta * 2;
+    const atencao = !estourado && min >= Math.max(3, Math.floor(meta * 0.6));
+    const rotulo = min < 1 ? 'agora' : min < 60 ? `há ${min}m` : `há ${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`;
+    return {
+      cls: estourado ? 'sla-crit' : atencao ? 'sla-warn' : 'sla-ok',
+      txt: estourado ? `${rotulo} · SLA` : rotulo,
+    };
+  }
+
+  function atualizarCronometrosSla(ts = agora()) {
+    document.querySelectorAll('.a-sla[data-sla-inicio]').forEach((sp) => {
+      const ini = Number(sp.dataset.slaInicio) || ts;
+      const sev = Number(sp.dataset.slaSev) || 1;
+      const info = classeSla(ini, sev, ts);
+      sp.className = 'a-sla ' + info.cls;
+      sp.textContent = info.txt;
+    });
+  }
+
+  function renderFrentes() {
+    if (!el.frentes) return;
+    const res = resumoFrentes();
+    if (el.contFrentes) el.contFrentes.textContent = String(res.frentes.length);
+    const frentesFiltradas = res.frentes.filter((f) => correspondeBuscaCentral([f.frente, f.semaforo, f.chuva && f.chuva.motivo]));
+    const htmlPartes = [];
+
+    if (res.sugestoesBalanceamento.length) {
+      htmlPartes.push(
+        '<div class="ctt-balanceamento"><strong>⚖️ Sugestão de Balanceamento CTT</strong>' +
+        res.sugestoesBalanceamento.map((s) => `<p>${esc(s.texto)}</p>`).join('') +
+        '</div>'
+      );
+    }
+
+    if (!frentesFiltradas.length) {
+      htmlPartes.push('<div class="vazio">Nenhuma frente de colheita lida ainda.<br><span class="fine">Assim que a telemetria SGPA chegar, o Raio-X CTT aparece automaticamente aqui.</span></div>');
+    } else {
+      for (const f of frentesFiltradas) {
+        const semLbl = f.chuva ? '🌧️ CHUVA / PAUSA' : f.semaforo === 'critico' ? 'CRÍTICO' : f.semaforo === 'atencao' ? 'ATENÇÃO' : 'OPERANDO';
+        const semCls = f.chuva ? 'sem-chuva' : 'sem-' + f.semaforo;
+        const razaoTxt = f.razaoTbColh != null ? `${f.razaoTbColh} TB/Colh` : '—';
+        htmlPartes.push(`
+          <div class="ctt-card ${semCls}" data-frente="${esc(f.frente)}">
+            <div class="ctt-head">
+              <strong class="ctt-nome">${esc(f.frente)}</strong>
+              <span class="ctt-sem ${semCls}">${semLbl}</span>
+            </div>
+            <div class="ctt-grid">
+              <div class="ctt-cell"><span>🚜 Colhedoras</span><b>${f.colhColhendo}/${f.colhTotal} colh.</b><small>${f.colhParadas} par. · ${f.colhManut} manut.</small></div>
+              <div class="ctt-cell"><span>🌾 Transbordos</span><b>${f.tbAtivos}/${f.tbTotal} ativ.</b><small>${f.tbAgCam} ag. cam. · ${razaoTxt}</small></div>
+              <div class="ctt-cell"><span>🚛 Caminhões</span><b>${f.camFila} em fila</b><small>${f.camCarregando} carreg. · ${f.camTotal} total</small></div>
+              <div class="ctt-cell"><span>🔧 Apoio / Sinal</span><b>${f.manutTotal} manut.</b><small>${f.mudas} muda(s) · ${f.equipamentos} eq.</small></div>
+            </div>
+            <div class="ctt-acoes">
+              <button type="button" data-ctt-act="filtrar" data-frente="${esc(f.frente)}">🔍 Ver alertas</button>
+              <button type="button" data-ctt-act="chuva" data-frente="${esc(f.frente)}" class="${f.chuva ? 'chuva-on' : ''}">${f.chuva ? '☀️ Encerrar chuva' : '🌧️ Modo Chuva'}</button>
+            </div>
+          </div>`);
+      }
+    }
+
+    if (res.frotasMudas.length) {
+      htmlPartes.push(
+        '<div class="ctt-sec"><h4>📡 Frota Muda — sem telemetria (' + res.frotasMudas.length + ')</h4>' +
+        res.frotasMudas.slice(0, 8).map((m) =>
+          `<div class="ctt-row"><div><b>${esc(m.numero)}</b> · ${esc(m.frente)}<br><small>sem sinal há ${m.minutos} min · últ. op: ${esc(m.operacao)}${m.local ? ' · ' + esc(m.local) : ''}</small></div>` +
+          `<button type="button" data-ctt-mapa="${esc(m.id)}">📍 último ponto</button></div>`
+        ).join('') +
+        '</div>'
+      );
+    }
+
+    const ociosos = Object.values((ociosidadeTurno && ociosidadeTurno.itens) || {})
+      .filter((o) => (Number(o.segAcumulados) || 0) >= 60)
+      .sort((a, b) => (b.segAcumulados || 0) - (a.segAcumulados || 0))
+      .slice(0, 5);
+    if (ociosos.length) {
+      const maxSeg = ociosos[0].segAcumulados || 60;
+      htmlPartes.push(
+        '<div class="ctt-sec"><h4>⛽ Top 5 Desperdício de Diesel (Ocioso no Turno)</h4>' +
+        ociosos.map((o) => {
+          const mins = Math.round(o.segAcumulados / 60);
+          const litros = Math.round((o.segAcumulados / 3600) * 4 * 10) / 10;
+          const pct = Math.max(12, Math.round((o.segAcumulados / maxSeg) * 100));
+          return `<div class="ctt-diesel"><div class="ctt-diesel-top"><b>${esc(o.classe)} ${esc(o.numero)}</b><span>${mins} min (~${litros} L)</span></div>` +
+            `<div class="ctt-diesel-bar"><span style="width:${pct}%"></span></div>` +
+            `<small>${esc(o.frente || 'Sem frente')}${o.operador ? ' · ' + esc(o.operador) : ''}</small></div>`;
+        }).join('') +
+        '</div>'
+      );
+    }
+
+    el.frentes.innerHTML = htmlPartes.join('');
+    el.frentes.querySelectorAll('[data-ctt-act="filtrar"]').forEach((btn) => {
+      btn.onclick = () => {
+        const fr = btn.dataset.frente || '';
+        if (el.busca) {
+          el.busca.value = fr;
+          buscaCentral = fr;
+          if (el.buscaLimpar) el.buscaLimpar.classList.toggle('hide', !fr);
+        }
+        selecionarAbaCentral('ativos');
+      };
+    });
+    el.frentes.querySelectorAll('[data-ctt-act="chuva"]').forEach((btn) => {
+      btn.onclick = () => alternarChuvaFrente(btn.dataset.frente || '');
+    });
+    el.frentes.querySelectorAll('[data-ctt-mapa]').forEach((btn) => {
+      btn.onclick = () => abrirNoMapa({ cdEquipamento: btn.dataset.cttMapa });
+    });
   }
 
   function renderHudBarra() {
@@ -3839,6 +4445,7 @@
     if (btnPip) {
       btnPip.classList.toggle('pip-ativo', !!(janelaPip && !janelaPip.closed));
     }
+    renderTelaoBar();
     atualizarJanelaFlutuante();
   }
 
@@ -3846,12 +4453,15 @@
     renderHudBarra();
     if (!el.painel) return;
     const n = ativos.size;
-    const avisaveis = [...ativos.values()].filter((a) => a.fonte === 'portal' && a.notificar).length;
+    const avisaveis = [...ativos.values()].filter((a) => (a.fonte === 'portal' || a.regra === 'emergencia') && a.notificar).length;
     if (el.badge) {
       el.badge.textContent = n ? String(n) : '';
       el.badge.classList.toggle('hide', !n);
     }
     if (el.sino) el.sino.classList.toggle('alertando', cfg.ativo && avisaveis > 0);
+    if (el.contFrentes && ultimoResumoCtt && Array.isArray(ultimoResumoCtt.frentes)) {
+      el.contFrentes.textContent = String(ultimoResumoCtt.frentes.length);
+    }
     const s = Math.max(0, Math.round((proximo - agora()) / 1000));
     if (el.proximo) el.proximo.textContent = estado.ligado ? `próxima leitura em ${s}s` : 'central desligada';
     if (el.status) {
@@ -3882,6 +4492,8 @@
       if (cfg.frentes.length) pedacos.push(cfg.frentes.length + ' frente(s)');
       if ((cfg.equipamentos || '').trim()) pedacos.push('lista de equipamentos');
       if (cfg.seguirSelecaoMapa) pedacos.push('seleção do mapa');
+      const qtdChuva = Object.keys(chuvas || {}).length;
+      if (qtdChuva) pedacos.push(`🌧️ ${qtdChuva} frente(s) em chuva`);
       el.escopo.textContent = pedacos.length ? 'escopo: ' + pedacos.join(', ') : 'escopo: unidade toda';
     }
     document.title = n ? `(${n}) Monitoramento BP · COA` : 'Monitoramento BP — Branco Peres · COA';
@@ -3891,12 +4503,16 @@
     if (bVoz) bVoz.classList.toggle('mudo', !cfg.voz);
   }
 
-  function card(a, comAccoes) {
+  function card(a, comAccoes, contexto) {
     const d = document.createElement('div');
-    d.className = 'alerta sev' + a.severidade + (a.fonte === 'portal' ? ' oficial' : '');
+    d.className = 'alerta sev' + a.severidade + (a.fonte === 'portal' ? ' oficial' : '') + (a.regra === 'emergencia' ? ' emergencia' : '');
     d.dataset.chave = a.chave;
     d.style.setProperty('--cor', a.cor);
     const reconhecido = acks[a.chave] && agora() - acks[a.chave] < 2 * 3600_000;
+    const trat = tratativas[a.chave] || null;
+    const inicioSla = a.inicio || a.ts;
+    const sla = classeSla(inicioSla, a.severidade || 1);
+    const mostrarPainelTratativa = contexto === 'central' && comAccoes && reconhecido;
     d.innerHTML = `
       <div class="a-top">
         <span class="a-icone">${a.icone}</span>
@@ -3904,23 +4520,36 @@
         <span class="a-chip">${esc(a.nome)}</span>
         ${a.fonte === 'portal' ? '<span class="a-chip oficial">SGPA</span>' : ''}
         ${a.fonte === 'teste' ? '<span class="a-chip cinza">AMOSTRA MANUAL</span>' : ''}
+        ${a.emChuva ? `<span class="a-chip cinza">🌧️ Chuva</span>` : ''}
         ${a.paradaId === 'aguardandoCarregamento' && a.e && a.e.frenteInferida ? `<span class="a-chip">Frente inferida: ${esc(a.e.frenteInferida)}</span>` : ''}
         ${!a.notificar ? '<span class="a-chip cinza">sem notificação do sistema</span>' : ''}
         ${a.contagem > 1 ? `<span class="a-chip cinza">×${a.contagem}</span>` : ''}
+        ${trat && trat.tag ? `<span class="a-chip verde">📝 ${esc(trat.tag)}</span>` : ''}
+        <span class="a-sla ${sla.cls}" data-sla-inicio="${inicioSla}" data-sla-sev="${a.severidade || 1}">${sla.txt}</span>
         <span class="a-hora" title="há ${desde(a.ts)}">${hora(a.ts)}</span>
       </div>
       <p class="a-txt">${esc(a.texto)}</p>
       <p class="a-meta">${esc(a.descricao)}${a.operador ? ' · operador <b>' + esc(a.operador) + '</b>' : ' · <b>sem operador definido</b>'}${a.detalhe ? '<br>' + esc(a.detalhe) : ''}</p>
       <p class="a-fala">🗣️ ${esc(a.fala)}</p>
+      ${mostrarPainelTratativa ? `
+      <div class="a-tratativa">
+        <div class="a-trat-tags">${TAGS_TRATATIVA_COA.map((tag) => `<button type="button" data-trat-tag="${esc(tag)}" class="${trat && trat.tag === tag ? 'on' : ''}">${esc(tag)}</button>`).join('')}</div>
+        <div class="a-trat-nota">
+          <input type="text" data-trat-nota value="${esc(trat && trat.nota ? trat.nota : '')}" placeholder="Obs. COA (ex.: mecânico acionado no rádio)..." maxlength="180" autocomplete="off">
+          <button type="button" data-trat-salvar>Salvar</button>
+        </div>
+      </div>` : ''}
       <div class="a-acoes">
         <button data-q="ouvir">▶ ouvir</button>
         <button data-q="mapa">📍 ver no mapa</button>
+        <button data-q="whats" title="Copiar cobrança padronizada COA e abrir WhatsApp">💬 cobrar</button>
         ${comAccoes ? '<button data-q="snz">🤫 15 min</button>' : ''}
         ${comAccoes && !reconhecido ? '<button data-q="ack">✓ reconhecer</button>' : comAccoes ? '<span class="a-chip verde">reconhecido</span>' : ''}
         <button data-q="fechar" class="fim">✕</button>
       </div>`;
     d.querySelector('[data-q="ouvir"]').onclick = () => falar(a.fala);
     d.querySelector('[data-q="mapa"]').onclick = () => abrirNoMapa(a);
+    d.querySelector('[data-q="whats"]').onclick = () => cobrarNoWhatsApp(a);
     const snz = d.querySelector('[data-q="snz"]');
     if (snz)
       snz.onclick = () => {
@@ -3935,10 +4564,31 @@
         podarAcks(acks);
         acks[a.chave] = agora();
         salvar(KEY_ACK, acks);
+        if (emergenciaAtiva && emergenciaAtiva.chave === a.chave) fecharBannerEmergencia();
         renderAtivos();
+        renderCabecalho();
       };
+    if (mostrarPainelTratativa) {
+      d.querySelectorAll('[data-trat-tag]').forEach((btnTag) => {
+        btnTag.onclick = () => {
+          const inp = d.querySelector('[data-trat-nota]');
+          registrarTratativa(a.chave, { tag: btnTag.dataset.tratTag, nota: inp ? inp.value : undefined });
+          renderAtivos();
+        };
+      });
+      const btnSalvarNota = d.querySelector('[data-trat-salvar]');
+      if (btnSalvarNota) {
+        btnSalvarNota.onclick = () => {
+          const inp = d.querySelector('[data-trat-nota]');
+          registrarTratativa(a.chave, { nota: inp ? inp.value : '' });
+          mostrarAviso('Tratativa COA registrada no turno.', 'info');
+          renderAtivos();
+        };
+      }
+    }
     d.querySelector('[data-q="fechar"]').onclick = () => {
       ativos.delete(a.chave);
+      if (emergenciaAtiva && emergenciaAtiva.chave === a.chave) fecharBannerEmergencia();
       fecharCard(d);
       renderAtivos();
       renderCabecalho();
@@ -4014,7 +4664,7 @@
         : '<div class="vazio">Nenhum alerta ativo agora.<br><span class="fine">A central continua lendo o portal a cada ' +
           cfg.intervaloSeg + 's e os eventos do mapa em tempo real.</span></div>';
     }
-    for (const a of lista) el.ativos.appendChild(card(a, true));
+    for (const a of lista) el.ativos.appendChild(card(a, true, 'central'));
     el.contAtivos.textContent = String(ativos.size);
     el.contHist.textContent = String(hist.length);
 
@@ -4022,7 +4672,7 @@
       el.historico.innerHTML = '';
       const resultados = hist.filter((h) => correspondeBuscaCentral([
         h.equipamento, h.descricao, h.nomeAlarme, h.tipoAlarme, h.regra,
-        h.texto, h.detalhe, h.operador, h.frente, h.frenteInferida,
+        h.texto, h.detalhe, h.operador, h.frente, h.frenteInferida, h.tratativa,
       ]));
       if (!resultados.length) {
         el.historico.innerHTML = norm(buscaCentral)
@@ -4036,7 +4686,7 @@
         d.style.setProperty('--cor', r.cor);
         d.innerHTML =
           `<div class="a-top"><span class="a-icone">${r.icone}</span><strong class="a-eq">${esc(h.equipamento)}</strong>` +
-          `<span class="a-chip">${esc(h.nomeAlarme || r.nome)}</span>${h.frenteInferida ? `<span class="a-chip">Frente inferida: ${esc(h.frenteInferida)}</span>` : ''}${h.notificacaoSelecionada === false ? '<span class="a-chip cinza">sem aviso</span>' : ''}<span class="a-hora">${hora(h.ts)}</span></div>` +
+          `<span class="a-chip">${esc(h.nomeAlarme || r.nome)}</span>${h.frenteInferida ? `<span class="a-chip">Frente inferida: ${esc(h.frenteInferida)}</span>` : ''}${h.tratativa ? `<span class="a-chip verde">📝 ${esc(h.tratativa)}</span>` : ''}${h.notificacaoSelecionada === false ? '<span class="a-chip cinza">sem aviso</span>' : ''}<span class="a-hora">${hora(h.ts)}</span></div>` +
           `<p class="a-txt">${esc(h.texto)}</p>` +
           `<p class="a-meta">${esc(h.descricao || '')}${h.operador ? ' · ' + esc(h.operador) : ''} · fonte ${esc(h.fonte)}</p>`;
         d.onclick = () => falar(h.fala || h.texto);
@@ -4048,28 +4698,32 @@
   function mostrarToast(a, silenciado) {
     if (!el.toasts) return;
     prepararBotaoLimparToasts();
-    const d = card(a, !silenciado);
+    const d = card(a, !silenciado, 'toast');
     d.classList.add('toast');
     if (silenciado) d.classList.add('mudo');
+    const fixoNoTelao = (telaoAtivo && (a.severidade || 0) >= 3) || a.regra === 'emergencia';
+    if (fixoNoTelao) d.classList.add('toast-fixo');
     d.style.setProperty('--tempo', (a.severidade >= 3 ? 26 : 18) + 's');
     el.toasts.appendChild(d);
-    const barra = document.createElement('div');
-    barra.className = 'barra';
-    barra.style.animationDuration = (a.severidade >= 3 ? 26 : 18) + 's';
-    d.appendChild(barra);
+    if (!fixoNoTelao) {
+      const barra = document.createElement('div');
+      barra.className = 'barra';
+      barra.style.animationDuration = (a.severidade >= 3 ? 26 : 18) + 's';
+      d.appendChild(barra);
+      const t = setTimeout(() => fecharCard(d), (a.severidade >= 3 ? 26 : 18) * 1000);
+      d.addEventListener('mouseenter', () => {
+        clearTimeout(t);
+        barra.style.animationPlayState = 'paused';
+      });
+      d.addEventListener('mouseleave', () => {
+        setTimeout(() => fecharCard(d), 4000);
+      });
+    }
     const maxVisiveis = Math.max(4, Math.min(8, Math.floor(innerHeight / 120))); // retém mais notificações; a área continua rolável
     const cardsFlutuantes = () => Array.from(el.toasts.children).filter((n) => n.matches('.toast, .aviso'));
     while (cardsFlutuantes().length > maxVisiveis) cardsFlutuantes()[0].remove();
     atualizarBotaoLimparToasts();
     rolarToastMaisNovo();
-    const t = setTimeout(() => fecharCard(d), (a.severidade >= 3 ? 26 : 18) * 1000);
-    d.addEventListener('mouseenter', () => {
-      clearTimeout(t);
-      barra.style.animationPlayState = 'paused';
-    });
-    d.addEventListener('mouseleave', () => {
-      setTimeout(() => fecharCard(d), 4000);
-    });
   }
 
   function rolarToastMaisNovo() {
@@ -4154,8 +4808,11 @@
     frenteDividida: 'Apontamento “Frente dividida” observado no stream/telemetria em trator/transbordo. Alerta sem tolerância para o COA validar a chamada da colhedora no FUT. Fala/notificação locais dependem do PWA aberto e conectado.',
     refeicao: 'Refeição acima do tempo configurado por grupo ou equipamento (seção Controle de refeições). Fala e notifica só com o app aberto.',
     semApontamento: 'Equipamento na operação SGPA “Sem Apontamento” por 5 min ou mais (sem alarme do portal). Fala e notifica só com o app aberto.',
-    paradaImprodutiva: 'Paradas improdutivas de maior impacto (fila, aguardando carregamento, 983, falta de transbordo etc.) acima da tolerância da seção Paradas improdutivas. Fala e notifica com o app aberto.',
+    paradaImprodutiva: 'Paradas improdutivas de maior impacto (fila, aguardando carregamento, 983, falta de transbordo, mecânica, comboio etc.) acima da tolerância da seção Paradas improdutivas. Fala e notifica com o app aberto.',
     gestaoFrente: 'Alertas da frente: fila acumulada de caminhões, frente com todas as colhedoras paradas e transbordos demais aguardando colhedora (seção Gestão por frente).',
+    emergencia: 'Prioridade máxima: apontamento ou alarme de incêndio/fogo ou caminhão bombeiro em deslocamento rápido. Fura a fila de voz, dispara sirene e abre banner vermelho no topo.',
+    telemetriaMuda: 'Frota monitorada sem comunicação de telemetria acima do limiar configurado (ponto cego de bordo/GPS). Fala e exibe último ponto conhecido.',
+    qualidadeColheita: 'Colhedora operando em colheita acima da velocidade técnica configurada (risco de perda de cana e impureza mineral/vegetal).',
     generico: 'Demais tipos oficiais, com o nome original do SGPA.',
   };
   let limiteTipos = 80;
@@ -4522,6 +5179,9 @@
       'cfg-fila-frente': cfg.filaMaxFrente,
       'cfg-sem-colh': cfg.minutosFrenteSemColhedora,
       'cfg-transb-ag': cfg.transbordosAguardandoMax,
+      'cfg-frota-muda': cfg.minutosFrotaMuda != null ? cfg.minutosFrotaMuda : 25,
+      'cfg-vel-colheita': cfg.velMaxColheita != null ? cfg.velMaxColheita : 7.5,
+      'cfg-sla-min': cfg.slaAlertaMin != null ? cfg.slaAlertaMin : 10,
       'cfg-turno': cfg.minutosTurno,
       'cfg-cooldown': cfg.cooldownMin,
       'cfg-maxvoz': cfg.maxPorCiclo,
@@ -4644,6 +5304,9 @@
       filaMaxFrente: n('cfg-fila-frente', 4),
       minutosFrenteSemColhedora: n('cfg-sem-colh', 10),
       transbordosAguardandoMax: n('cfg-transb-ag', 3),
+      minutosFrotaMuda: n('cfg-frota-muda', 25),
+      velMaxColheita: n('cfg-vel-colheita', 7.5),
+      slaAlertaMin: Math.max(1, n('cfg-sla-min', 10)),
       minutosTurno: n('cfg-turno', 4),
       cooldownMin: n('cfg-cooldown', 10),
       maxPorCiclo: n('cfg-maxvoz', 4),
@@ -4669,7 +5332,7 @@
   }
 
   function exportarCsv() {
-    const cab = ['quando', 'tipo', 'equipamento', 'descricao', 'operador', 'valor', 'mensagem', 'fonte', 'detalhe', 'fala', 'codigo_sgpa', 'nome_sgpa', 'frente_grupo', 'notificacao_selecionada'];
+    const cab = ['quando', 'tipo', 'equipamento', 'descricao', 'operador', 'valor', 'mensagem', 'fonte', 'detalhe', 'fala', 'codigo_sgpa', 'nome_sgpa', 'frente_grupo', 'notificacao_selecionada', 'tratativa_coa'];
     const linhas = hist.map((h) => [
       new Date(h.ts).toLocaleString('pt-BR'),
       (REGRAS[h.regra] || {}).nome || h.regra,
@@ -4685,6 +5348,7 @@
       h.nomeAlarme || '',
       h.frente || '',
       h.notificacaoSelecionada === false ? 'não' : 'sim',
+      h.tratativa || '',
     ]);
     const csv = [cab, ...linhas].map((l) => l.map((c) => `"${String(c == null ? '' : c).replace(/"/g, '""')}"`).join(';')).join('\r\n');
     const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
@@ -4976,6 +5640,14 @@
     alternarJanelaFlutuante,
     aplicarTema: aplicarAcabamento,
     obterTema: () => normalizarTema(document.documentElement.dataset.acabamento),
+    alternarTelao,
+    alternarChuvaFrente,
+    resumoFrentes,
+    registrarTratativa,
+    cobrarNoWhatsApp,
+    gerarPassagemTurno,
+    abrirPassagemTurno,
+    fecharPassagemTurno,
     abrirPainel,
     fecharPainel,
     abrirStream,

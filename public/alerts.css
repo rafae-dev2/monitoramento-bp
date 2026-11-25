@@ -464,6 +464,7 @@ button.mudo {
 
 .alerta .a-acoes {
   display: flex;
+  align-items: center;
   gap: 4px;
   margin-top: 8px;
   flex-wrap: wrap;
@@ -1739,3 +1740,622 @@ html[data-acabamento='solido'] .cfg-topo {
   border-bottom-color: rgba(255, 255, 255, 0.22);
 }
 
+
+/* =====================================================================
+   MESA DE COMANDO COA v3.0 — Raio-X CTT, SLA, Tratativa, Emergência,
+   Passagem de Turno e Modo Telão / Videowall (Liquid Glass + Tema Black)
+   ===================================================================== */
+
+/* ---------------------------- SLA & Tratativa ---------------------------- */
+
+.a-sla {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.a-sla.sla-ok {
+  background: rgba(15, 23, 34, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  color: #cbd5e1;
+}
+
+.a-sla.sla-warn {
+  background: rgba(120, 53, 15, 0.75);
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  color: #fef08a;
+}
+
+.a-sla.sla-crit {
+  background: rgba(127, 29, 29, 0.88);
+  border: 1px solid rgba(248, 113, 113, 0.75);
+  color: #ffffff;
+}
+
+.a-tratativa {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(3, 12, 20, 0.68);
+  border: 1px solid rgba(52, 211, 153, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.a-trat-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.a-trat-tags button {
+  padding: 4px 8px;
+  min-height: 26px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #dbe7f3;
+  background: rgba(15, 25, 36, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: none;
+}
+
+.a-trat-tags button.on {
+  background: rgba(16, 185, 129, 0.28);
+  border-color: rgba(110, 231, 183, 0.65);
+  color: #ecfdf5;
+}
+
+.a-trat-nota {
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+}
+
+.a-trat-nota input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.45);
+  color: #ffffff;
+  font: inherit;
+  font-size: 11.5px;
+}
+
+.a-trat-nota button {
+  padding: 6px 10px;
+  min-height: 30px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 8px;
+  background: rgba(16, 185, 129, 0.26);
+  border-color: rgba(110, 231, 183, 0.5);
+  color: #ecfdf5;
+}
+
+.aviso-whats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.aviso-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #10b981;
+  color: #022014;
+  font-weight: 800;
+  font-size: 11.5px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* ------------------------ Aba Frentes (Raio-X CTT) ------------------------ */
+
+.ctt-balanceamento {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(250, 204, 21, 0.48);
+  border-left: 4px solid var(--bp-ouro);
+  background: linear-gradient(150deg, rgba(66, 42, 6, 0.84) 0%, rgba(26, 18, 5, 0.9) 100%);
+  color: #fef9c3;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ctt-balanceamento strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #fde047;
+  font-size: 12.5px;
+}
+
+.ctt-balanceamento p {
+  margin: 3px 0 0;
+}
+
+.ctt-card {
+  border-radius: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-left: 4px solid var(--ok);
+  background: rgba(9, 16, 25, 0.84);
+  padding: 10px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 8px 20px rgba(0, 0, 0, 0.36);
+}
+
+.ctt-card.sem-atencao {
+  border-left-color: var(--warn);
+}
+
+.ctt-card.sem-critico {
+  border-left-color: var(--danger);
+  background: rgba(24, 10, 14, 0.86);
+}
+
+.ctt-card.sem-chuva {
+  border-left-color: #38bdf8;
+  background: rgba(10, 22, 34, 0.86);
+}
+
+.ctt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ctt-nome {
+  font-size: 14px;
+  font-weight: 800;
+  color: #ffffff;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ctt-sem {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.ctt-sem.sem-ok {
+  background: rgba(6, 78, 59, 0.72);
+  border: 1px solid rgba(52, 211, 153, 0.55);
+  color: #d1fae5;
+}
+
+.ctt-sem.sem-atencao {
+  background: rgba(120, 53, 15, 0.76);
+  border: 1px solid rgba(251, 191, 36, 0.58);
+  color: #fef08a;
+}
+
+.ctt-sem.sem-critico {
+  background: rgba(127, 29, 29, 0.86);
+  border: 1px solid rgba(248, 113, 113, 0.68);
+  color: #ffffff;
+}
+
+.ctt-sem.sem-chuva {
+  background: rgba(12, 74, 110, 0.8);
+  border: 1px solid rgba(56, 189, 248, 0.58);
+  color: #e0f2fe;
+}
+
+.ctt-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.ctt-cell {
+  padding: 6px 8px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.ctt-cell span {
+  font-size: 10.5px;
+  color: #cbd5e1;
+}
+
+.ctt-cell b {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
+.ctt-cell small {
+  font-size: 10.5px;
+  color: #cbd5e1;
+  overflow-wrap: anywhere;
+}
+
+.ctt-acoes {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ctt-acoes button {
+  flex: 1 1 110px;
+  min-height: 32px;
+  padding: 5px 9px;
+  justify-content: center;
+  font-size: 11.5px;
+  font-weight: 700;
+  border-radius: 8px;
+}
+
+.ctt-acoes button.chuva-on {
+  background: rgba(12, 74, 110, 0.86);
+  border-color: rgba(56, 189, 248, 0.68);
+  color: #e0f2fe;
+}
+
+.ctt-sec {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(7, 13, 21, 0.8);
+  padding: 10px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ctt-sec h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #fde047;
+}
+
+.ctt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  color: #f8fafc;
+}
+
+.ctt-row small {
+  color: #cbd5e1;
+  font-size: 11px;
+}
+
+.ctt-row button {
+  flex: none;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 8px;
+}
+
+.ctt-diesel {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ctt-diesel-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
+.ctt-diesel-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.ctt-diesel-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f59e0b 0%, #ef4444 100%);
+}
+
+.ctt-diesel small {
+  font-size: 10.5px;
+  color: #cbd5e1;
+}
+
+/* --------------------- Banner de Emergência Prioritário --------------------- */
+
+#emergencia-banner {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  right: 12px;
+  z-index: 48;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 11px 14px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(153, 27, 27, 0.96) 0%, rgba(92, 11, 17, 0.97) 100%);
+  border: 2px solid #fca5a5;
+  color: #ffffff;
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.78), 0 0 0 3px rgba(220, 38, 38, 0.35);
+  animation: pulso-emg 1.2s ease-in-out infinite;
+}
+
+@keyframes pulso-emg {
+  0%, 100% { box-shadow: 0 18px 46px rgba(0, 0, 0, 0.78), 0 0 0 3px rgba(220, 38, 38, 0.45); }
+  50% { box-shadow: 0 18px 46px rgba(0, 0, 0, 0.78), 0 0 0 8px rgba(239, 68, 68, 0.22); }
+}
+
+.emg-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.emg-tag {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #991b1b;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.emg-info strong {
+  font-size: 14px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.emg-info span:last-child {
+  font-size: 11.5px;
+  color: #fee2e2;
+}
+
+.emg-acoes {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.emg-acoes button {
+  padding: 7px 11px;
+  font-size: 12px;
+  font-weight: 800;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.48);
+  border-color: rgba(255, 255, 255, 0.38);
+  color: #ffffff;
+}
+
+.emg-acoes button.emg-ok {
+  background: #ffffff;
+  color: #7f1d1d;
+  border-color: #ffffff;
+}
+
+/* --------------------- Modal de Passagem de Turno --------------------- */
+
+#modal-passagem {
+  position: absolute;
+  inset: 0;
+  z-index: 46;
+  display: grid;
+  place-items: center;
+  background: rgba(4, 8, 13, 0.62);
+  padding: 12px;
+  overflow: hidden;
+}
+
+.passagem-kpis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 10px;
+}
+
+.pkpi {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: 11.5px;
+  color: #e2e8f0;
+  font-variant-numeric: tabular-nums;
+}
+
+.pkpi b {
+  color: #ffffff;
+}
+
+.pkpi.crit {
+  background: rgba(127, 29, 29, 0.68);
+  border-color: rgba(248, 113, 113, 0.55);
+  color: #fee2e2;
+}
+
+#passagem-texto {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 230px;
+  padding: 11px 12px;
+  margin-bottom: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(3, 8, 14, 0.86);
+  color: #f8fafc;
+  font: 12.5px/1.55 var(--font-mono);
+  resize: vertical;
+}
+
+/* --------------------- Modo Telão / Videowall COA --------------------- */
+
+#coa-telao-bar {
+  display: none;
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 38;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(5, 10, 17, 0.92);
+  border: 1.5px solid rgba(255, 255, 255, 0.24);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.78);
+  -webkit-backdrop-filter: blur(20px) saturate(170%);
+  backdrop-filter: blur(20px) saturate(170%);
+}
+
+html[data-telao='1'] #coa-telao-bar {
+  display: flex;
+}
+
+.telao-kpis {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tkpi {
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #f8fafc;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tkpi b {
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.tkpi.alerta-kpi {
+  background: rgba(120, 53, 15, 0.8);
+  border-color: rgba(251, 191, 36, 0.6);
+  color: #fef08a;
+}
+
+.tkpi.critico-kpi {
+  background: rgba(153, 27, 27, 0.9);
+  border-color: rgba(248, 113, 113, 0.75);
+  color: #ffffff;
+}
+
+html[data-telao='1'] #btn-pip,
+html[data-telao='1'] #btn-refresh {
+  display: none;
+}
+
+html[data-telao='1'] #toasts {
+  width: min(470px, calc(100vw - 24px));
+  bottom: 72px;
+  max-height: calc(100vh - 136px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  max-height: calc(100dvh - 136px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+}
+
+html[data-telao='1'] #voz-bloqueada {
+  bottom: calc(76px + env(safe-area-inset-bottom));
+}
+
+html[data-telao='1'] #toasts .alerta .a-eq {
+  font-size: 16px;
+}
+
+html[data-telao='1'] #toasts .alerta .a-txt {
+  font-size: 15px;
+}
+
+html[data-telao='1'] #toasts .alerta.toast-fixo {
+  border-top: 2px solid var(--bp-ouro);
+}
+
+#alertas-painel .alerta {
+  animation: none;
+}
+
+/* --------------------- Ajustes Tema Black + Responsividade --------------------- */
+
+html[data-acabamento='black'] .ctt-card,
+html[data-acabamento='solido'] .ctt-card,
+html[data-acabamento='black'] .ctt-sec,
+html[data-acabamento='solido'] .ctt-sec,
+html[data-acabamento='black'] #coa-telao-bar,
+html[data-acabamento='solido'] #coa-telao-bar,
+html[data-acabamento='black'] #passagem-texto,
+html[data-acabamento='solido'] #passagem-texto {
+  background: #04060a;
+  border-color: rgba(255, 255, 255, 0.24);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-acabamento='black'] #modal-passagem,
+html[data-acabamento='solido'] #modal-passagem {
+  background: rgba(0, 0, 0, 0.84);
+}
+
+@media (max-width: 420px) {
+  .aba {
+    padding: 5px 8px;
+    font-size: 11px;
+  }
+  .ctt-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #emergencia-banner {
+    animation: none;
+  }
+}

@@ -790,7 +790,7 @@ with sync_playwright() as pw:
     assert page.locator('#cfg-alertas').evaluate("el => el.classList.contains('hide')"), 'O X deve fechar as preferências'
     assert page.evaluate('document.activeElement.id === "btn-cfg"'), 'Ao fechar, o foco deve voltar ao controle de configurações visível'
     page.click('#btn-cfg')
-    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 13")
+    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 16")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
     assert page.locator('#cfg-categorias input[aria-label="Notificar: Frente dividida (validar FUT)"]').is_checked(), 'Frente dividida deve aparecer ligada por padrão nas preferências'
     assert page.locator('#cfg-gestao-frente').is_checked(), 'Atenção gestão deve ter opção mestre ligada por padrão'
@@ -822,7 +822,7 @@ with sync_playwright() as pw:
     print('OK: expansão de AG/COLH, prévia, substituição personalizada e persistência do glossário')
     page.fill('#cfg-busca-categoria', 'fila')
     vis = page.evaluate("[...document.querySelectorAll('#cfg-categorias > *')].filter(x => !x.classList.contains('hide')).length")
-    assert 1 <= vis < 13, f'busca de categorias deve filtrar ({vis})'
+    assert 1 <= vis < 16, f'busca de categorias deve filtrar ({vis})'
     page.fill('#cfg-busca-categoria', 'xyzinexistente')
     assert page.locator('#cfg-categorias-vazio').is_visible(), 'mensagem de nenhum alerta'
     page.fill('#cfg-busca-categoria', '')
@@ -1138,9 +1138,72 @@ with sync_playwright() as pw:
     }""")
     print('OK: seletor Liquid Glass / Tema Black em Preferências, persistência local e migração validados')
 
+    # Verificações Mesa de Comando COA v3.0.0 (todas as 8 funcionalidades)
+    page.evaluate("""() => {
+      __test.reset();
+      __test.capturarFalas();
+      MonitoramentoAlertas.configurar({ ativo: true, voz: true, popup: true, som: false, vibrar: false, minutosFrotaMuda: 25, velMaxColheita: 7.5, slaAlertaMin: 10, filaMaxFrente: 4 });
+      const agoraIso = new Date().toISOString();
+      __test.aplicarTelemetria([
+        { cdEquipamento: 'C-501', descEquipamento: '57838 - Colhedora John Deere', descTpEquipamento: 'COLHEDORA', descFrente: 'Frente 1', descOperacao: '101 - Colheita Mecanizada', vlVelocidade: 8.6, vlParametro4: 1800, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:05', fgMonitoramentoAtivo: 'T', dtHrLocal: agoraIso },
+        { cdEquipamento: 'T-501', descEquipamento: '7001 - Transbordo BP', descTpEquipamento: 'TRANSBORDO', descFrente: 'Frente 1', descOperacao: '201 - Transbordo', vlVelocidade: 6, vlParametro4: 1400, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:05', fgMonitoramentoAtivo: 'T', dtHrLocal: agoraIso },
+        { cdEquipamento: 'K-501', descEquipamento: '4401 - Caminhão Canavieiro Terc', descTpEquipamento: 'CAMINHÕES CANAVIEIRO TERC', descFrente: 'Frente 1', descOperacao: '910 - Aguardando Carregamento', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', vlTempoSemComunicacao: '0 DIA(S) 00:00:05', fgMonitoramentoAtivo: 'T', dtHrLocal: agoraIso },
+        { cdEquipamento: 'K-502', descEquipamento: '4402 - Caminhão Canavieiro Terc', descTpEquipamento: 'CAMINHÕES CANAVIEIRO TERC', descFrente: 'Frente 1', descOperacao: '910 - Aguardando Carregamento', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', vlTempoSemComunicacao: '0 DIA(S) 00:00:05', fgMonitoramentoAtivo: 'T', dtHrLocal: agoraIso },
+        { cdEquipamento: 'K-503', descEquipamento: '4403 - Caminhão Canavieiro Terc', descTpEquipamento: 'CAMINHÕES CANAVIEIRO TERC', descFrente: 'Frente 1', descOperacao: '910 - Aguardando Carregamento', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', vlTempoSemComunicacao: '0 DIA(S) 00:00:05', fgMonitoramentoAtivo: 'T', dtHrLocal: agoraIso },
+        { cdEquipamento: 'C-502', descEquipamento: '57839 - Colhedora Case', descTpEquipamento: 'COLHEDORA', descFrente: 'Frente 3', descOperacao: '101 - Colheita Mecanizada', vlVelocidade: 5.1, vlParametro4: 1700, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:05', fgMonitoramentoAtivo: 'T', dtHrLocal: agoraIso },
+        { cdEquipamento: 'T-502', descEquipamento: '7002 - Transbordo BP', descTpEquipamento: 'TRANSBORDO', descFrente: 'Frente 3', descOperacao: '905 - Aguardando Caminhão', vlVelocidade: 0, vlParametro4: 700, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:05', fgMonitoramentoAtivo: 'T', dtHrLocal: agoraIso },
+        { cdEquipamento: 'M-501', descEquipamento: '9010 - Trator Apoio', descTpEquipamento: 'TRATOR', descFrente: 'Frente 3', descOperacao: '953 - Sem Apontamento', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', vlTempoSemComunicacao: '0 DIA(S) 00:35:00', fgMonitoramentoAtivo: 'T', dtHrLocal: agoraIso },
+      ]);
+      __test.avaliarFrota(Date.now(), 'lotes');
+
+      // 1) Raio-X CTT + sugestão de balanceamento + Frota Muda + Qualidade de Colheita
+      const res = MonitoramentoAlertas.resumoFrentes();
+      if (res.frentes.length < 2) throw new Error('Raio-X deve listar Frente 1 e Frente 3');
+      if (!res.sugestoesBalanceamento.length) throw new Error('Deveria sugerir balanceamento da Frente 1 para Frente 3');
+      if (!MonitoramentoAlertas.ativos().some(a => a.regra === 'telemetriaMuda' && a.numero === '9010')) throw new Error('Frota muda 9010 deveria alertar');
+      if (!MonitoramentoAlertas.ativos().some(a => a.regra === 'qualidadeColheita' && a.numero === '57838')) throw new Error('Colhedora 57838 acima de 7.5 km/h deveria alertar qualidade');
+
+      // 2) Aba Frentes renderizada
+      MonitoramentoAlertas.abrirPainel('frentes');
+      if (document.getElementById('lista-frentes').classList.contains('hide')) throw new Error('Aba Frentes não ficou visível');
+      if (!document.querySelector('#lista-frentes .ctt-balanceamento')) throw new Error('Sugestão de balanceamento ausente na aba Frentes');
+
+      // 3) Modo Chuva silencia improdutivo mas NÃO silencia segurança (velocidade/emergência)
+      MonitoramentoAlertas.alternarChuvaFrente('Frente 3', 'Chuva forte');
+      const falasAntesChuva = __test.falasCapturadas().length;
+      __test.espelharAlarmes([{ cdEquipamento: 'T-502', cdId: 'CHUVA-SEG', cdTpAlarme: 5, descTpAlarme: 'VELOCIDADE EXCEDIDA', descEquipamento: '7002 - Transbordo BP', descFrente: 'Frente 3', vlAlarme: 68, fgOnline: true }]);
+      if (__test.falasCapturadas().length <= falasAntesChuva) throw new Error('Alerta de velocidade (segurança) não pode ser silenciado pelo Modo Chuva');
+      MonitoramentoAlertas.alternarChuvaFrente('Frente 3');
+
+      // 4) Emergência / Incêndio abre banner prioritário e fura a fila de voz
+      __test.aplicarTelemetria([
+        { cdEquipamento: 'B-911', descEquipamento: '9911 - Caminhão Bombeiro', descTpEquipamento: 'CAMINHÃO BOMBEIRO', descFrente: 'Frente 2', descOperacao: '999 - Combate a Incêndio', vlVelocidade: 45, vlParametro4: 1900, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:02', fgMonitoramentoAtivo: 'T', dtHrLocal: agoraIso },
+      ]);
+      __test.avaliarFrota(Date.now(), 'lotes');
+      if (document.getElementById('emergencia-banner').classList.contains('hide')) throw new Error('Banner de emergência não abriu');
+      if (!__test.falasCapturadas().some(f => f.includes('Emergência C O A'))) throw new Error('Voz de emergência não disparou');
+      document.getElementById('emg-ciente').click();
+      if (!document.getElementById('emergencia-banner').classList.contains('hide')) throw new Error('Botão Ciente deveria fechar banner de emergência');
+
+      // 5) Tratativa COA + WhatsApp + Passagem de Turno + Modo Telão
+      MonitoramentoAlertas.registrarTratativa('T-502|sgpa:5', { tag: 'Cobrado no rádio', nota: 'operador reduziu' });
+      const msgWhats = MonitoramentoAlertas.cobrarNoWhatsApp(MonitoramentoAlertas.ativos().find(a => a.chave === 'T-502|sgpa:5'));
+      if (!msgWhats.includes('Cobrado no rádio')) throw new Error('Cobrança WhatsApp deve incluir tratativa');
+      const boletim = MonitoramentoAlertas.abrirPassagemTurno();
+      if (document.getElementById('modal-passagem').classList.contains('hide')) throw new Error('Modal Passagem de Turno não abriu');
+      if (!boletim.texto.includes('PASSAGEM DE TURNO COA')) throw new Error('Boletim de passagem incompleto');
+      MonitoramentoAlertas.fecharPassagemTurno();
+
+      MonitoramentoAlertas.alternarTelao(true, false);
+      if (document.documentElement.dataset.telao !== '1') throw new Error('Modo Telão não ativou');
+      MonitoramentoAlertas.alternarTelao(false, false);
+      __test.restaurarFalas();
+    }""")
+    print('OK: Mesa de Comando COA v3.0.0 (CTT, balanceamento, frota muda, chuva, emergência, qualidade, tratativa, WhatsApp, passagem e telão) validada')
+
     assert not errors, errors
     assert not any(m=='POST' for m,u in requests), 'Teste tentou POST'
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+14} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+15} grupos de verificações.')
