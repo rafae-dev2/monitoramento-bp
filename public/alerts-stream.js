@@ -163,8 +163,38 @@ function fechar() {
   if (tinhaDados) self.postMessage({ type: 'estado', status: 'fechado' });
 }
 
+let timerRelogio = null;
+let intervaloRelogioMs = 0;
+
+function agendarPulso() {
+  if (!intervaloRelogioMs) return;
+  timerRelogio = setTimeout(() => {
+    timerRelogio = null;
+    if (!intervaloRelogioMs) return;
+    self.postMessage({ type: 'pulso', ts: Date.now() });
+    agendarPulso();
+  }, intervaloRelogioMs);
+}
+
+function iniciarRelogio(ms) {
+  pararRelogio();
+  const n = Number(ms);
+  intervaloRelogioMs = Number.isFinite(n) && n >= 250 ? Math.round(n) : 5000;
+  agendarPulso();
+}
+
+function pararRelogio() {
+  intervaloRelogioMs = 0;
+  if (timerRelogio) {
+    clearTimeout(timerRelogio);
+    timerRelogio = null;
+  }
+}
+
 self.onmessage = (ev) => {
   const m = (ev && ev.data) || {};
   if (m.type === 'abrir') abrir(m);
   else if (m.type === 'fechar') fechar();
+  else if (m.type === 'relogio') iniciarRelogio(m.intervaloMs);
+  else if (m.type === 'parar-relogio') pararRelogio();
 };

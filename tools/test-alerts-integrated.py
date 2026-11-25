@@ -17,6 +17,8 @@ hooks = """
   const avaliarFrotaReal = avaliarFrota;
   window.__test = {
     aplicarTelemetria, atualizarFrentesInferidas, avaliarFrota, tique, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, regraParada, regraFrenteDividida, regrasFrente, registrarNoServidor, enviarAudit, ciclo, chamar, abrirNoMapa, timestampEquipamento,
+    marcarComunicacaoSgpa, verificarSaudeComunicacaoSgpa, verificarReescalonamentoCriticos, rotuloVozAmigavel,
+    setFalhasSgpa: (erros, ultimaTs) => { estado.erros = erros; ultimaComunicacaoSgpa = ultimaTs; },
     frota: () => [...frota.values()],
     setCtx: (v) => { ctx = Object.assign(ctx, v); },
     setChamar: (fn) => { chamar = fn; },
@@ -34,6 +36,7 @@ hooks = """
       correndo = false; nCiclo = 0; sequenciaObservacao = 0; sequenciaStreamObservacao = 0;
       prazoRequisicaoMs = 15000; auditPausaAte = 0; auditEnviando = false;
       auditStorageError = ''; auditRemoteError = '';
+      ultimaComunicacaoSgpa = 0; quedaSgpaAtiva = false; ultimoAvisoQuedaSgpa = 0;
       frota.clear(); estados.clear(); ativos.clear(); hist = []; filaAudit.length = 0;
       gestaoUltimoDisparo.clear();
       paradaAtual.clear();
@@ -1051,9 +1054,75 @@ with sync_playwright() as pw:
     }""")
     page.wait_for_function("window.__nativeSpoken.some(x=>x.text==='Voz Android padrão do APK' && x.name==='')", timeout=3000)
     print('OK: APK usa voz Android padrão mesmo antes de uma preferência explícita quando não há speechSynthesis Web')
+
+    # Verificações COA v2.0.0: rótulos amigáveis, perfil de locução + tom no Android, sentinela 2º plano, queda SGPA e re-alerta crítico
+    page.evaluate("""() => {
+      window.dispatchEvent(new Event('bperes-tts-fim'));
+      window.__nativePitchSpoken = [];
+      window.__bgStates = [];
+      window.AndroidTTS.falarComVozETom = (text, volume, rate, pitch, name) => {
+        window.__nativePitchSpoken.push({ text, volume, rate, pitch, name });
+        setTimeout(() => window.dispatchEvent(new Event('bperes-tts-fim')), 5);
+      };
+      window.AndroidTTS.configurarSegundoPlano = (ativo) => window.__bgStates.push(ativo);
+
+      const rotuloGoogle = __test.rotuloVozAmigavel('pt-br-x-afs-network', 'pt-BR', 'android');
+      const rotuloNatural = __test.rotuloVozAmigavel('Microsoft Francisca Online (Natural)', 'pt-BR', 'web');
+      if (!rotuloGoogle.includes('Português Brasil') || !rotuloGoogle.includes('AFS') || !rotuloGoogle.includes('pt-br-x-afs-network')) {
+        throw new Error('Rótulo Google TTS inválido: ' + rotuloGoogle);
+      }
+      if (!rotuloNatural.includes('Recomendada COA')) {
+        throw new Error('Rótulo Natural inválido: ' + rotuloNatural);
+      }
+
+      document.getElementById('btn-cfg').click();
+      const selPerfil = document.getElementById('cfg-perfil-voz');
+      selPerfil.value = 'coa-firme';
+      selPerfil.dispatchEvent(new Event('change', { bubbles: true }));
+      MonitoramentoAlertas.configurar({ voz: true, vozURI: 'android:Android PT-BR A', sentinelaSegundoPlano: false });
+      MonitoramentoAlertas.configurar({ sentinelaSegundoPlano: true });
+      MonitoramentoAlertas.falar('Teste perfil COA firme com tom no Android', { oficial: true });
+    }""")
+    page.wait_for_function("window.__nativePitchSpoken.some(x => x.text.includes('perfil COA firme'))", timeout=3000)
+    assert page.evaluate("Math.abs(window.__nativePitchSpoken[0].pitch - 0.88) < 0.01 && Math.abs(window.__nativePitchSpoken[0].rate - 1.05) < 0.01 && window.__bgStates.includes(false) && window.__bgStates.at(-1) === true"), 'Perfil COA deve aplicar taxa/tom e sincronizar serviço Android 2º plano'
+    print('OK: rótulos amigáveis, perfil de locução COA, tom encaminhado ao AndroidTTS e ponte de 2º plano validados')
+
+    page.evaluate("""() => {
+      __test.reset();
+      __test.capturarFalas();
+      MonitoramentoAlertas.configurar({ ativo: true, voz: true, som: false, alertaQuedaSgpa: true, reescalarCriticos: true, reescalarCriticosMin: 5 });
+      const baseTs = Date.now();
+      __test.setFalhasSgpa(3, baseTs - 180000);
+      __test.verificarSaudeComunicacaoSgpa(baseTs);
+      if (!__test.falasCapturadas().some(f => f.includes('sem comunicação com o S G P A'))) {
+        throw new Error('Deveria anunciar queda de comunicação SGPA: ' + JSON.stringify(__test.falasCapturadas()));
+      }
+      __test.marcarComunicacaoSgpa(baseTs + 1000);
+      if (!__test.falasCapturadas().some(f => f.includes('restabelecida'))) {
+        throw new Error('Deveria anunciar restabelecimento do SGPA');
+      }
+
+      __test.espelharAlarmes([{ cdEquipamento: 'CRIT-99', cdId: 'EV-CRIT-99', cdTpAlarme: 5, descTpAlarme: 'VELOCIDADE EXCEDIDA', descEquipamento: '8833 - Transbordo BP', vlAlarme: 88, fgOnline: true }]);
+      const falasAntes = __test.falasCapturadas().length;
+      __test.verificarReescalonamentoCriticos(baseTs + 6 * 60000);
+      if (__test.falasCapturadas().length <= falasAntes || !__test.falasCapturadas().at(-1).includes('Alerta crítico pendente sem confirmação')) {
+        throw new Error('Deveria re-escalar alerta crítico não confirmado');
+      }
+      MonitoramentoAlertas.abrirPainel();
+      const btnAck = document.querySelector('#lista-ativos .alerta[data-chave="CRIT-99|sgpa:5"] [data-q="ack"]');
+      if (btnAck) btnAck.click();
+      const falasAposAck = __test.falasCapturadas().length;
+      __test.verificarReescalonamentoCriticos(baseTs + 13 * 60000);
+      if (__test.falasCapturadas().length !== falasAposAck) {
+        throw new Error('Não deve re-escalar alerta crítico já reconhecido');
+      }
+      __test.restaurarFalas();
+    }""")
+    print('OK: aviso falado de queda/recuperação SGPA e re-alerta de críticos pendentes (com pausa após reconhecimento) validados')
+
     assert not errors, errors
     assert not any(m=='POST' for m,u in requests), 'Teste tentou POST'
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+11} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+13} grupos de verificações.')

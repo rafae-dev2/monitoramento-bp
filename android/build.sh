@@ -25,8 +25,8 @@ OUT="${HERE}/out"
 PKG="br.com.bperes.monitoramento"
 MIN_API=21
 TARGET_API=34
-VCODE=5
-VNAME=1.4
+VCODE=6
+VNAME=1.5
 MODO="${1:-debug}"
 
 KEYSTORE="${KEYSTORE:-${HERE}/keystore/monitoramento-release.jks}"

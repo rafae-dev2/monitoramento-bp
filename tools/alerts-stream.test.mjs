@@ -69,3 +69,13 @@ test('drena quadros já recebidos antes de fechar e abortar o stream', async () 
   const lotes = worker.mensagens.filter((m) => m.type === 'quadros').flatMap((m) => m.itens);
   assert.deepEqual(lotes, [quadro]);
 });
+
+test('emite pulsos regulares de segundo plano quando solicitado e encerra ao parar', async () => {
+  const worker = criarWorker(async () => new Response('', { status: 200 }));
+  worker.enviar({ type: 'relogio', intervaloMs: 250 });
+  await esperar(worker.mensagens, () => worker.mensagens.filter((m) => m.type === 'pulso').length >= 2, 'pulsos do worker');
+  worker.enviar({ type: 'parar-relogio' });
+  const contagemAposParar = worker.mensagens.filter((m) => m.type === 'pulso').length;
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.equal(worker.mensagens.filter((m) => m.type === 'pulso').length, contagemAposParar);
+});

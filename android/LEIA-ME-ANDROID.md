@@ -2,8 +2,9 @@
 
 Ícone na tela inicial (brasão da Branco Peres) → **abre direto no monitoramento** (`#!/details/analytic-map-v4`), em tela cheia, sem abas, sem barra de endereço e **sem pedir login depois do primeiro acesso**.
 
-**Arquivo:** `MonitoramentoBP.apk` · 121 KB · pacote `br.com.bperes.monitoramento` · **v1.3 (versionCode 4)** · minSdk 21 / target 34 · assinado v1+v2 com o mesmo keystore da v1.0.
+**Arquivo:** `MonitoramentoBP.apk` · pacote `br.com.bperes.monitoramento` · **v1.5 (versionCode 6)** · minSdk 21 / target 34 · assinado v1+v2+v3 com o mesmo keystore da v1.0.
 
+> **v1.5 (25/11):** **Sentinela COA em 2º plano (`MonitoramentoService`)** — mantém `ForegroundService` (`mediaPlayback`), `PARTIAL_WAKE_LOCK`, `WifiLock` e timers da WebView ativos para que **os alertas continuem falando mesmo com outro app à frente ou com a tela bloqueada**. Inclui *audio ducking* automático (`USAGE_ASSISTANCE_NAVIGATION_GUIDANCE`), suporte a ajuste de **Tom** (`falarComVozETom`) e atalho direto para liberar restrição de bateria do Android.
 > **v1.3 (23/11):** endereço inicial atualizado para **`https://sgpa-solinftec-bpa.netlify.app/`**
 > (o projeto do Netlify foi renomeado). Como a assinatura é a mesma, instale **por cima** da
 > v1.2 sem perder nada. A v1.2 continua funcionando enquanto o site antigo existir.
@@ -47,6 +48,8 @@ Toque no ⚙ (ou aperte o botão de volume para baixo, em aparelhos com botão f
 | Opção | Para que serve |
 |---|---|
 | **Recarregar o mapa** | Atualiza a tela sem sair do app |
+| **Pausar / Ativar voz em 2º plano (Sentinela COA)** | Mantém serviço de primeiro plano para falar alertas mesmo minimizado ou com tela bloqueada |
+| **Liberar bateria para não pausar em 2º plano** | Abre a tela oficial do Android para remover restrição de economia de bateria |
 | **Layout de computador / do celular** | O padrão é desktop, porque o portal não tem versão mobile. Só mude se quiser testar |
 | **Tela sempre acesa** | Ligado por padrão — feito para tablet de cabine que não pode apagar |
 | **Trocar de usuário / limpar sessão** | Apaga cookies e localStorage do app (desloga). Use ao trocar de operador |
@@ -61,7 +64,7 @@ Consequências práticas:
 - **Nada no app guarda sua senha.** Não existe campo salvo, existe só a sessão que o portal emitiu.
 - **Desinstalar o app apaga a sessão** (e com ela o login). Atualizar por cima (`adb install -r`) mantém.
 - O app tem `allowBackup="false"`: a sessão não sai por backup do Android.
-- Permissões do APK: apenas `INTERNET` e `ACCESS_NETWORK_STATE`. Sem armazenamento externo, sem localização, sem câmera, sem contatos.
+- Permissões do APK: `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `VIBRATE`, `WAKE_LOCK`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `POST_NOTIFICATIONS` e `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`. Sem armazenamento externo, sem localização, sem câmera, sem contatos.
 
 ## 5. Limitações honestas
 

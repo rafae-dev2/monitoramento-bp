@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.9.0';
+  const VERSAO = '2.0.0';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -129,12 +129,19 @@
     voz: true,
     vozNome: '',
     vozURI: '',
+    perfilVoz: 'padrao',
+    estiloToque: 'gongo-coa',
     volume: 1,
     taxa: 1,
     tom: 1,
     vibrar: true,
     notificacao: false,
     repetirVoz: false,
+    sentinelaSegundoPlano: true,
+    manterTelaAtiva: true,
+    alertaQuedaSgpa: true,
+    reescalarCriticos: true,
+    reescalarCriticosMin: 5,
     silencioAte: 0,
   };
 
@@ -142,7 +149,7 @@
   /* estado                                                             */
   /* ------------------------------------------------------------------ */
 
-  let cfg = policy.normalizeCfg(carregar(KEY_CFG, PADRAO));
+  let cfg = policy.normalizeCfg(Object.assign({}, PADRAO, carregar(KEY_CFG, PADRAO)));
   let hist = carregar(KEY_HIST, []);
   let acks = carregar(KEY_ACK, {});
   let ctx = { selecao: new Set(Array.isArray(cfg.selecaoMapa) ? cfg.selecaoMapa.map(String) : []), props: null };
@@ -150,11 +157,19 @@
   let correndo = false;
   let proximo = 0;
   let worker = null;
+  let workerRelogio = null;
   let streamRetryTimer = null;
   let ultimoSinalStream = 0;
   let ultimoQuadro = 0;
   let tentativasStream = 0;
   let renovacaoPendente = null;
+  let ultimaComunicacaoSgpa = 0;
+  let quedaSgpaAtiva = false;
+  let ultimoAvisoQuedaSgpa = 0;
+  let wakeLockAtivo = null;
+  let sentinelaAudio = null;
+  let janelaPip = null;
+  let ultimaFalaEmitida = null;
 
   const frota = new Map(); // cdEquipamento => leitura consolidada
   const estados = new Map(); // "equipamento|regra" => máquina de estados
@@ -830,12 +845,99 @@
   /* 1) stream ao vivo (subscribe-live) dentro de um Web Worker         */
   /* ------------------------------------------------------------------ */
 
+  function marcarComunicacaoSgpa(ts = agora()) {
+    ultimaComunicacaoSgpa = ts;
+    if (quedaSgpaAtiva) {
+      quedaSgpaAtiva = false;
+      ultimoAvisoQuedaSgpa = 0;
+      mostrarAviso('Comunicação com o SGPA restabelecida.', 'info');
+      if (cfg.ativo && cfg.voz && cfg.alertaQuedaSgpa !== false && ts >= (Number(cfg.silencioAte) || 0)) {
+        falar('Comunicação com o S G P A restabelecida.', { oficial: true });
+      }
+      renderCabecalho();
+    }
+  }
+
+  function verificarSaudeComunicacaoSgpa(ts = agora()) {
+    if (!cfg.ativo || cfg.alertaQuedaSgpa === false || !ultimaComunicacaoSgpa) return;
+    const streamVivo = estado.stream === 'ao vivo' && ultimoSinalStream > 0 && ts - ultimoSinalStream < 90_000;
+    if (streamVivo) return;
+    const semSinalMs = ts - ultimaComunicacaoSgpa;
+    const falhando = estado.erros >= 2 || estado.sessao === 'expirada' || estado.sessao === 'sem autorização';
+    if (!falhando || semSinalMs < 120_000) return;
+    if (ultimoAvisoQuedaSgpa && ts - ultimoAvisoQuedaSgpa < 5 * 60_000) return;
+    quedaSgpaAtiva = true;
+    ultimoAvisoQuedaSgpa = ts;
+    const minutos = Math.max(2, Math.round(semSinalMs / 60_000));
+    mostrarAviso(`Atenção COA: sem comunicação com o SGPA há ${minutos} minutos. Verifique rede ou sessão.`, 'erro');
+    if (ts >= (Number(cfg.silencioAte) || 0)) {
+      if (cfg.som) tocar(3, true);
+      if (cfg.voz) {
+        falar(`Atenção C O A: sem comunicação com o S G P A há ${minutos} minutos. Verificar conexão.`, { oficial: true });
+      }
+    }
+    renderCabecalho();
+  }
+
+  function aoPulsoSegundoPlano() {
+    if (!cfg.ativo) return;
+    tique();
+    if (!correndo && proximo > 0 && agora() >= proximo + 1500) {
+      ciclo();
+    }
+  }
+
+  function encerrarRelogioIsolado() {
+    if (!workerRelogio) return;
+    const w = workerRelogio;
+    workerRelogio = null;
+    try { w.postMessage({ type: 'parar-relogio' }); } catch { /* encerrando */ }
+    try { w.terminate(); } catch { /* já encerrado */ }
+    if (w._blobUrl) {
+      try { URL.revokeObjectURL(w._blobUrl); } catch { /* ignora */ }
+    }
+  }
+
+  function sincronizarRelogioSegundoPlano() {
+    if (!iniciar.escutou || !cfg.ativo || cfg.sentinelaSegundoPlano === false || typeof Worker === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+      encerrarRelogioIsolado();
+      return;
+    }
+    if (worker) {
+      encerrarRelogioIsolado();
+      return;
+    }
+    if (workerRelogio) return;
+    let blobUrl = '';
+    try {
+      const src = "let t=null,ms=0;function loop(){if(!ms)return;t=setTimeout(()=>{t=null;if(!ms)return;self.postMessage({type:'pulso',ts:Date.now()});loop();},ms);}self.onmessage=(e)=>{const m=(e&&e.data)||{};if(m.type==='relogio'){if(t)clearTimeout(t);ms=Math.max(250,Number(m.intervaloMs)||5000);loop();}else if(m.type==='parar-relogio'){ms=0;if(t)clearTimeout(t);t=null;}};";
+      blobUrl = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+      const w = new Worker(blobUrl);
+      w._blobUrl = blobUrl;
+      w.onmessage = (ev) => {
+        if (ev && ev.data && ev.data.type === 'pulso') aoPulsoSegundoPlano();
+      };
+      w.onerror = (ev) => {
+        if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
+        if (workerRelogio === w) encerrarRelogioIsolado();
+      };
+      w.postMessage({ type: 'relogio', intervaloMs: 5000 });
+      workerRelogio = w;
+    } catch {
+      if (blobUrl) {
+        try { URL.revokeObjectURL(blobUrl); } catch { /* ignora */ }
+      }
+      workerRelogio = null;
+    }
+  }
+
   function abrirStream() {
     clearTimeout(streamRetryTimer);
     streamRetryTimer = null;
     fecharStream();
     if (!cfg.ativo || !cfg.usarStream || typeof Worker === 'undefined' || !ctx.token) {
       estado.stream = !cfg.ativo || !cfg.usarStream ? 'desligado' : 'indisponível';
+      sincronizarRelogioSegundoPlano();
       renderCabecalho();
       return;
     }
@@ -848,6 +950,7 @@
     try {
       workerAtual = new Worker('/alerts-stream.js');
       worker = workerAtual;
+      encerrarRelogioIsolado();
     } catch {
       estado.stream = 'indisponível';
       estado.proximoErro = 'não foi possível iniciar o Worker do stream';
@@ -859,12 +962,17 @@
     estado.stream = 'conectando';
     workerAtual.onmessage = (ev) => {
       const m = (ev && ev.data) || {};
+      if (m.type === 'pulso') {
+        if (workerAtual === worker) aoPulsoSegundoPlano();
+        return;
+      }
       if (m.type === 'quadros') {
         if (workerAtual === worker) {
           ultimoQuadro = agora();
           ultimoSinalStream = ultimoQuadro;
           tentativasStream = 0;
           estado.stream = 'ao vivo';
+          marcarComunicacaoSgpa(ultimoQuadro);
         }
         processarQuadros(m.itens);
       } else if (m.type === 'estado') {
@@ -876,7 +984,10 @@
           return;
         }
         estado.stream = m.status;
-        if (m.status === 'ao vivo') ultimoSinalStream = agora();
+        if (m.status === 'ao vivo') {
+          ultimoSinalStream = agora();
+          marcarComunicacaoSgpa(ultimoSinalStream);
+        }
         if (m.status === 'erro' || m.status === 'fechado') {
           const reconectar = (espera) => agendarReconexaoStream(espera);
           if (m.statusCode === 401) renovarToken().catch(() => reconectar());
@@ -905,6 +1016,9 @@
       agendarReconexaoStream();
     };
     workerAtual.postMessage({ type: 'abrir', url, token: ctx.token, corpo });
+    if (cfg.sentinelaSegundoPlano !== false) {
+      workerAtual.postMessage({ type: 'relogio', intervaloMs: 5000 });
+    }
   }
 
   function agendarReconexaoStream(esperaForcada) {
@@ -926,6 +1040,7 @@
     worker = null;
     if (anterior) {
       try {
+        anterior.postMessage({ type: 'parar-relogio' });
         anterior.postMessage({ type: 'fechar' });
         anterior._timerFechamento = setTimeout(() => {
           try { anterior.terminate(); } catch { /* já encerrado */ }
@@ -1521,6 +1636,9 @@
         telemetriaNova = true;
       }
       if (cfg.espelharServidor && alarmesOK) espelharAlarmes(resultados[1].value);
+      if (telemetriaOK || (cfg.espelharServidor && alarmesOK)) {
+        marcarComunicacaoSgpa(agora());
+      }
       if (!telemetriaOK && !cfg.espelharServidor) throw new Error(falhas.join(' · ') || 'sem resposta das fontes SGPA');
       if (!telemetriaOK && !alarmesOK) throw new Error(falhas.join(' · ') || 'sem resposta das fontes SGPA');
 
@@ -1549,17 +1667,42 @@
       estado.backoff = Math.max(estado.backoff, Math.min(5 * 60_000, estado.backoff || 20_000));
     } finally {
       correndo = false;
+      verificarSaudeComunicacaoSgpa(agora());
       renderAtivos();
       renderCabecalho();
       agendar();
     }
   }
 
+  function verificarReescalonamentoCriticos(ts) {
+    if (!cfg.ativo || cfg.reescalarCriticos === false) return;
+    if (ts < (Number(cfg.silencioAte) || 0)) return;
+    const intervaloMin = Number(cfg.reescalarCriticosMin);
+    if (!Number.isFinite(intervaloMin) || intervaloMin <= 0) return;
+    const intervaloMs = Math.max(1, intervaloMin) * 60_000;
+    for (const alerta of ativos.values()) {
+      if (!alerta || alerta.simulado || !alerta.notificar || (alerta.severidade || 0) < 3) continue;
+      if (alerta.fonte !== 'portal' && alerta.regra !== 'frenteDividida') continue;
+      if (acks[alerta.chave] && ts - acks[alerta.chave] < 2 * 3600_000) continue;
+      const referencia = Number(alerta.ultimoReescalonamento || alerta.ts || 0);
+      if (!referencia || ts - referencia < intervaloMs) continue;
+      alerta.ultimoReescalonamento = ts;
+      if (cfg.som) tocar(3, true);
+      if (cfg.voz) {
+        falar('Alerta crítico pendente sem confirmação. ' + alerta.fala, { oficial: true });
+        faladoEm.set(alerta.chave, ts);
+      }
+    }
+  }
+
   /* relógio fino: avalia troca de turno/ociosidade entre duas leituras */
   function tique() {
-    if (!cfg.ativo || !frota.size) return;
+    if (!cfg.ativo) return;
     try {
-      avaliarFrota(agora(), 'tempo');
+      const ts = agora();
+      if (frota.size) avaliarFrota(ts, 'tempo');
+      verificarReescalonamentoCriticos(ts);
+      verificarSaudeComunicacaoSgpa(ts);
       renderCabecalho();
     } catch {
       /* o tique nunca derruba a interface */
@@ -2365,11 +2508,34 @@
 
   /* --------------------------- voz (TTS) --------------------------- */
 
+  const PERFIS_VOZ = {
+    padrao: { nome: 'Padrão equilibrado', taxa: 1.0, tom: 1.0, estiloToque: 'gongo-coa' },
+    'coa-firme': { nome: 'Locutor firme COA (comando)', taxa: 1.05, tom: 0.88, estiloToque: 'gongo-coa' },
+    'clara-pausada': { nome: 'Locução clara e pausada (ambiente ruidoso)', taxa: 0.92, tom: 1.04, estiloToque: 'radio-bip' },
+    urgente: { nome: 'Alerta rápido operacional', taxa: 1.15, tom: 1.02, estiloToque: 'sirene-curta' },
+    personalizado: { nome: 'Personalizado (ritmo e tom manuais)', taxa: null, tom: null, estiloToque: null },
+  };
+
   let rajada = { ts: 0, voz: 0, aviso: false };
   const faladoEm = new Map();
   let vozBloqueada = false;
+  let timerResumeVoz = null;
+  let timerWatchdogVoz = null;
+
+  function limparTimersVozWeb() {
+    if (timerResumeVoz) {
+      clearInterval(timerResumeVoz);
+      timerResumeVoz = null;
+    }
+    if (timerWatchdogVoz) {
+      clearTimeout(timerWatchdogVoz);
+      timerWatchdogVoz = null;
+    }
+  }
+
   /* Chrome/Safari bloqueiam a voz antes do primeiro toque: guarda a fila e pede um toque. */
   function bloquearVoz(item) {
+    limparTimersVozWeb();
     vozBloqueada = true;
     falando = false;
     if (item) fila.unshift(item);
@@ -2383,19 +2549,26 @@
       document.body.appendChild(b);
     }
     b.classList.remove('hide');
+    renderHudBarra();
   }
   function liberarVoz() {
+    toquei = true;
     const b = document.getElementById('voz-bloqueada');
     if (b) b.classList.add('hide');
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (AC) { ac = ac || new AC(); if (ac.state === 'suspended') ac.resume(); }
     } catch { /* sem áudio */ }
-    if (!vozBloqueada) return;
+    sincronizarAudioSentinela();
+    if (!vozBloqueada) {
+      renderHudBarra();
+      return;
+    }
     vozBloqueada = false;
     falando = false;
     const s = sintetizador();
     if (s) { try { s.cancel(); s.resume(); } catch { /* nada */ } }
+    renderHudBarra();
     descargarFila();
   }
   /* Ao entrar no app: abre a central e fala os alertas ativos que importam. */
@@ -2447,6 +2620,17 @@
     }
   }
 
+  function qualidadeVozPt(v) {
+    const nome = String((v && v.name) || '');
+    const lang = String((v && v.lang) || '');
+    let pontos = 0;
+    if (/pt[-_]br/i.test(lang)) pontos += 50;
+    else if (/^pt/i.test(lang)) pontos += 25;
+    if (/natural|neural|francisca|antonio|thalita|luciana|felipe|google portugu/i.test(nome)) pontos += 30;
+    if (/online|network/i.test(nome)) pontos += 10;
+    return pontos;
+  }
+
   function escolherVoz() {
     const s = sintetizador();
     if (!s) return;
@@ -2459,15 +2643,20 @@
       v = vozes.find((x) => x.voiceURI === cfg.vozURI);
     }
     if (!v && cfg.vozNome) v = vozes.find((x) => x.name === cfg.vozNome);
-    if (!v) v = vozes.find((x) => /pt[-_]br/i.test(x.lang));
-    if (!v) v = vozes.find((x) => /^pt/i.test(x.lang));
-    if (!v) v = vozes.find((x) => /brazil|brasil/i.test(x.name));
+    if (!v) {
+      const candidatasPt = vozes.filter((x) => /pt[-_]br/i.test(x.lang) || /^pt/i.test(x.lang) || /brazil|brasil/i.test(x.name));
+      if (candidatasPt.length) {
+        candidatasPt.sort((a, b) => qualidadeVozPt(b) - qualidadeVozPt(a));
+        v = candidatasPt[0];
+      }
+    }
     vozEscolhida = v || null;
   }
 
   function falar(texto, opcoes) {
     if (!cfg.voz) return;
-    const item = { texto: String(texto), oficial: !!(opcoes && opcoes.oficial) };
+    const item = { texto: String(texto), oficial: !!(opcoes && opcoes.oficial), retentou: false };
+    ultimaFalaEmitida = { texto: item.texto, ts: agora(), oficial: item.oficial };
     if (item.oficial) {
       let inserir = 0;
       while (inserir < fila.length && fila[inserir].oficial) inserir++;
@@ -2481,6 +2670,7 @@
       }
       fila.push(item);
     }
+    atualizarJanelaFlutuante();
     descargarFila();
   }
 
@@ -2497,6 +2687,7 @@
 
   function descargarFila() {
     if (falando || vozBloqueada || !fila.length) return;
+    limparTimersVozWeb();
     const item = fila.shift();
     const texto = item.texto;
     const nativa = ponteNativa();
@@ -2507,9 +2698,16 @@
       falando = true;
       try {
         const idNativo = uriVoz.startsWith('android:') ? uriVoz.slice('android:'.length) : '';
-        if (typeof nativa.falarComVoz === 'function') {
-          nativa.falarComVoz(texto, Number(cfg.volume) || 1, Number(cfg.taxa) || 1, idNativo);
-        } else nativa.falar(texto, Number(cfg.volume) || 1, Number(cfg.taxa) || 1);
+        const vol = Number(cfg.volume) || 1;
+        const taxa = Number(cfg.taxa) || 1;
+        const tom = Number(cfg.tom) || 1;
+        if (typeof nativa.falarComVozETom === 'function') {
+          nativa.falarComVozETom(texto, vol, taxa, tom, idNativo);
+        } else if (typeof nativa.falarComVoz === 'function') {
+          nativa.falarComVoz(texto, vol, taxa, idNativo);
+        } else {
+          nativa.falar(texto, vol, taxa);
+        }
       } catch {
         /* segue sem voz */
       }
@@ -2523,6 +2721,9 @@
       return;
     }
     escolherVoz();
+    try {
+      if (s.paused && typeof s.resume === 'function') s.resume();
+    } catch { /* navegador sem resume */ }
     const u = new SpeechSynthesisUtterance(texto);
     u.lang = (vozEscolhida && vozEscolhida.lang) || 'pt-BR';
     if (vozEscolhida) u.voice = vozEscolhida;
@@ -2530,32 +2731,65 @@
     u.rate = Math.max(0.5, Math.min(2, Number(cfg.taxa)));
     u.pitch = Math.max(0.5, Math.min(2, Number(cfg.tom)));
     let comecou = false;
-    u.onstart = () => { comecou = true; };
-    u.onend = () => {
+    let concluida = false;
+    const finalizarItem = () => {
+      if (concluida) return;
+      concluida = true;
+      limparTimersVozWeb();
       falando = false;
-      setTimeout(descargarFila, 200);
+      setTimeout(descargarFila, 180);
     };
+    u.onstart = () => { comecou = true; };
+    u.onend = finalizarItem;
     u.onerror = (ev) => {
+      if (concluida) return;
+      limparTimersVozWeb();
       const erro = ev && ev.error;
       if (erro === 'not-allowed' || (!comecou && erro !== 'interrupted' && erro !== 'canceled' && !toquei)) {
         bloquearVoz(item);
         return;
       }
-      falando = false;
-      setTimeout(descargarFila, 200);
+      if (!comecou && !item.retentou && erro !== 'canceled' && erro !== 'interrupted') {
+        item.retentou = true;
+        falando = false;
+        try { s.cancel(); if (typeof s.resume === 'function') s.resume(); } catch { /* nada */ }
+        fila.unshift(item);
+        setTimeout(descargarFila, 250);
+        return;
+      }
+      if (!comecou && cfg.som) tocar(3);
+      finalizarItem();
     };
     falando = true;
     try {
       s.speak(u);
-      setTimeout(() => {
-        if (falando && !s.speaking && !s.pending) {
+      if (falando) {
+        // Evita o bug clássico do Chrome onde falas longas ou em 2º plano pausam sozinhas após ~14s.
+        timerResumeVoz = setInterval(() => {
+          if (!falando) { limparTimersVozWeb(); return; }
+          try { if (s.paused && typeof s.resume === 'function') s.resume(); } catch { /* ignora */ }
+        }, 4000);
+        const prazoMax = Math.min(28000, 3500 + texto.length * 110);
+        timerWatchdogVoz = setTimeout(() => {
+          if (!falando || concluida) return;
           const semGesto = !toquei && navigator.userActivation && !navigator.userActivation.hasBeenActive;
           if (!comecou && semGesto) { bloquearVoz(item); return; }
-          falando = false;
-          descargarFila();
-        }
-      }, Math.min(30000, 3500 + texto.length * 110));
+          try { s.cancel(); if (typeof s.resume === 'function') s.resume(); } catch { /* ignora */ }
+          if (!comecou && !item.retentou) {
+            item.retentou = true;
+            concluida = true;
+            limparTimersVozWeb();
+            falando = false;
+            fila.unshift(item);
+            setTimeout(descargarFila, 220);
+            return;
+          }
+          if (!comecou && cfg.som) tocar(3);
+          finalizarItem();
+        }, prazoMax);
+      }
     } catch {
+      limparTimersVozWeb();
       falando = false;
     }
   }
@@ -2563,12 +2797,15 @@
   function pararVoz() {
     fila = [];
     falando = false;
+    limparTimersVozWeb();
     if (timerVozNativa) {
       clearTimeout(timerVozNativa);
       timerVozNativa = null;
     }
     const s = sintetizador();
-    if (s) s.cancel();
+    if (s) {
+      try { s.cancel(); } catch { /* ignora */ }
+    }
     const nativa = ponteNativa();
     if (nativa && typeof nativa.parar === 'function') {
       try {
@@ -2579,39 +2816,340 @@
     }
   }
 
+  function calarFalaAtual() {
+    pararVoz();
+    mostrarAviso('Fala atual interrompida — os próximos alertas continuam habilitados.', 'info');
+  }
+
+  function alternarVoz() {
+    if (vozBloqueada) {
+      liberarVoz();
+      if (!cfg.voz) configurar({ voz: true });
+      return cfg.voz;
+    }
+    const novo = !cfg.voz;
+    configurar({ voz: novo });
+    if (novo) falar('Voz dos alertas ativada.');
+    else pararVoz();
+    return novo;
+  }
+
   /* --------------------------- som / vibração --------------------------- */
 
   let ac = null;
-  function tocar(severidade) {
+  function padraoNotasToque(estilo, severidade, escalado) {
+    if (estilo === 'radio-bip') {
+      return severidade >= 3 || escalado
+        ? [['square', 1046, 0, 0.09, 0.14], ['square', 1318, 0.11, 0.09, 0.16], ['square', 1046, 0.22, 0.11, 0.14]]
+        : [['sine', 988, 0, 0.08, 0.14], ['sine', 1174, 0.11, 0.1, 0.14]];
+    }
+    if (estilo === 'sirene-curta') {
+      return severidade >= 3 || escalado
+        ? [['sawtooth', 740, 0, 0.14, 0.14], ['sawtooth', 1108, 0.15, 0.14, 0.15], ['sawtooth', 740, 0.3, 0.14, 0.14], ['sawtooth', 1108, 0.45, 0.16, 0.15]]
+        : [['triangle', 698, 0, 0.14, 0.16], ['triangle', 932, 0.16, 0.16, 0.16]];
+    }
+    if (estilo === 'gongo-coa') {
+      return severidade >= 3 || escalado
+        ? [['sine', 587.33, 0, 0.26, 0.22], ['triangle', 880, 0.14, 0.28, 0.2], ['sine', 1174.66, 0.28, 0.34, 0.22]]
+        : severidade === 2
+          ? [['sine', 523.25, 0, 0.22, 0.18], ['sine', 783.99, 0.15, 0.26, 0.18]]
+          : [['sine', 587.33, 0, 0.2, 0.15]];
+    }
+    return severidade >= 3 || escalado
+      ? [['triangle', 880, 0, 0.18, 0.2], ['triangle', 1174, 0.17, 0.18, 0.2], ['triangle', 880, 0.34, 0.18, 0.2]]
+      : severidade === 2
+        ? [['triangle', 698, 0, 0.18, 0.18], ['triangle', 880, 0.19, 0.18, 0.18]]
+        : [['triangle', 587, 0, 0.18, 0.16]];
+  }
+
+  function tocar(severidade, escalado = false) {
     if (!cfg.som) return;
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
       ac = ac || new AC();
       if (ac.state === 'suspended') ac.resume();
-      const notas = severidade >= 3 ? [[880, 0], [1174, 0.17], [880, 0.34]] : severidade === 2 ? [[698, 0], [880, 0.19]] : [[587, 0]];
-      for (const [f, t] of notas) {
+      const notas = padraoNotasToque(cfg.estiloToque || 'gongo-coa', severidade, escalado);
+      for (const [tipo, f, t, dur, ganho] of notas) {
         const o = ac.createOscillator();
         const g = ac.createGain();
-        o.type = 'triangle';
+        o.type = tipo;
         o.frequency.value = f;
         const i = ac.currentTime + t;
         g.gain.setValueAtTime(0.0001, i);
-        g.gain.exponentialRampToValueAtTime(0.2, i + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001, i + 0.16);
+        g.gain.exponentialRampToValueAtTime(ganho, i + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, i + dur);
         o.connect(g).connect(ac.destination);
         o.start(i);
-        o.stop(i + 0.2);
+        o.stop(i + dur + 0.04);
       }
     } catch {
       /* sem WebAudio: a voz e o pop-up continuam */
     }
   }
 
+  /* ------------ Sentinela 2º plano (Áudio Keep-Alive, Wake Lock e PiP) ------------ */
+
+  function criarWavSilenciosoUrl() {
+    const taxaAmostragem = 8000;
+    const amostras = taxaAmostragem; // 1 segundo mono 8-bit PCM sem ruído
+    const buffer = new ArrayBuffer(44 + amostras);
+    const v = new DataView(buffer);
+    const str = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+    str(0, 'RIFF');
+    v.setUint32(4, 36 + amostras, true);
+    str(8, 'WAVE');
+    str(12, 'fmt ');
+    v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true);
+    v.setUint32(24, taxaAmostragem, true);
+    v.setUint32(28, taxaAmostragem, true);
+    v.setUint16(32, 1, true);
+    v.setUint16(34, 8, true);
+    str(36, 'data');
+    v.setUint32(40, amostras, true);
+    new Uint8Array(buffer, 44).fill(128);
+    return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+  }
+
+  function sincronizarAudioSentinela() {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    const deveManter = !!toquei && !!cfg.ativo && !!cfg.voz && cfg.sentinelaSegundoPlano !== false && !ponteNativa();
+    if (!deveManter) {
+      if (sentinelaAudio) {
+        try { sentinelaAudio.el.pause(); } catch { /* ignora */ }
+        if (sentinelaAudio.osc) {
+          try { sentinelaAudio.osc.stop(); sentinelaAudio.osc.disconnect(); } catch { /* ignora */ }
+          sentinelaAudio.osc = null;
+        }
+      }
+      return;
+    }
+    try {
+      if (!sentinelaAudio) {
+        const audio = document.createElement('audio');
+        audio.loop = true;
+        audio.preload = 'auto';
+        audio.volume = 0.01;
+        audio.setAttribute('playsinline', '');
+        audio.src = criarWavSilenciosoUrl();
+        sentinelaAudio = { el: audio, osc: null };
+      }
+      if (sentinelaAudio.el.paused) {
+        const p = sentinelaAudio.el.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) {
+        ac = ac || new AC();
+        if (ac.state === 'suspended') ac.resume().catch(() => {});
+        if (!sentinelaAudio.osc && ac.state === 'running') {
+          const osc = ac.createOscillator();
+          const gain = ac.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = 18;
+          gain.gain.value = 0.00001;
+          osc.connect(gain).connect(ac.destination);
+          osc.start();
+          sentinelaAudio.osc = osc;
+        }
+      }
+      if ('mediaSession' in navigator && navigator.mediaSession) {
+        if (typeof MediaMetadata !== 'undefined') {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: 'Monitoramento BP · Sentinela COA',
+            artist: 'Branco Peres — Alertas por voz em 2º plano',
+            album: 'Centro de Operações Agrícolas',
+          });
+        }
+      }
+    } catch {
+      /* ambiente sem suporte a keep-alive de mídia */
+    }
+  }
+
+  async function sincronizarWakeLock() {
+    if (typeof navigator === 'undefined' || !navigator.wakeLock || typeof navigator.wakeLock.request !== 'function') return;
+    const deveTravar = !!cfg.ativo && cfg.manterTelaAtiva !== false && typeof document !== 'undefined' && document.visibilityState === 'visible';
+    if (!deveTravar) {
+      if (wakeLockAtivo) {
+        const atual = wakeLockAtivo;
+        wakeLockAtivo = null;
+        try { await atual.release(); } catch { /* já liberado */ }
+      }
+      return;
+    }
+    if (wakeLockAtivo && !wakeLockAtivo.released) return;
+    try {
+      const sentinel = await navigator.wakeLock.request('screen');
+      wakeLockAtivo = sentinel;
+      if (sentinel && typeof sentinel.addEventListener === 'function') {
+        sentinel.addEventListener('release', () => {
+          if (wakeLockAtivo === sentinel) wakeLockAtivo = null;
+        });
+      }
+    } catch {
+      /* permissão de wakeLock recusada ou aba em segundo plano */
+    }
+  }
+
+  function sincronizarSegundoPlanoNativo() {
+    const nativa = ponteNativa();
+    if (!nativa || typeof nativa.configurarSegundoPlano !== 'function') return;
+    try {
+      nativa.configurarSegundoPlano(Boolean(cfg.ativo && cfg.sentinelaSegundoPlano !== false));
+    } catch {
+      /* APK anterior sem suporte a serviço de segundo plano */
+    }
+  }
+
+  function sincronizarSentinelaCompleta() {
+    sincronizarRelogioSegundoPlano();
+    sincronizarAudioSentinela();
+    sincronizarWakeLock();
+    sincronizarSegundoPlanoNativo();
+  }
+
+  function estadoConexaoCoa() {
+    if (!cfg.ativo) return { chave: 'off', rotulo: 'DESLIGADO' };
+    const ts = agora();
+    const streamVivo = estado.stream === 'ao vivo' && ultimoSinalStream > 0 && ts - ultimoSinalStream < 90_000;
+    if (quedaSgpaAtiva || estado.sessao === 'expirada' || estado.sessao === 'sem autorização' || (estado.erros >= 2 && !streamVivo)) {
+      return { chave: 'warn', rotulo: 'SEM SINAL' };
+    }
+    if (streamVivo) return { chave: 'live', rotulo: 'AO VIVO' };
+    if (estado.ultimoCiclo > 0) return { chave: 'rest', rotulo: 'REST ATIVO' };
+    return { chave: 'boot', rotulo: 'CONECTANDO' };
+  }
+
+  function atualizarJanelaFlutuante() {
+    if (!janelaPip || janelaPip.closed) {
+      janelaPip = null;
+      const btnPip = $('btn-pip');
+      if (btnPip) btnPip.classList.remove('pip-ativo');
+      return;
+    }
+    try {
+      const doc = janelaPip.document;
+      const lista = [...ativos.values()].sort((a, b) => (b.severidade || 0) - (a.severidade || 0) || (b.ts || 0) - (a.ts || 0));
+      const criticos = lista.filter((a) => (a.severidade || 0) >= 3).length;
+      const st = estadoConexaoCoa();
+      const pill = doc.getElementById('pip-status');
+      const cont = doc.getElementById('pip-contadores');
+      const card = doc.getElementById('pip-ultimo');
+      const btnVoz = doc.getElementById('pip-voz');
+      const btnMapa = doc.getElementById('pip-mapa');
+      if (pill) {
+        pill.textContent = st.rotulo;
+        pill.dataset.state = st.chave;
+      }
+      if (cont) {
+        cont.textContent = `${lista.length} ativo${lista.length === 1 ? '' : 's'} · ${criticos} crítico${criticos === 1 ? '' : 's'}`;
+      }
+      const topo = lista[0];
+      if (card) {
+        if (topo) {
+          card.innerHTML = '';
+          const eq = doc.createElement('strong');
+          eq.textContent = `${topo.icone || '🚨'} ${topo.classe || 'Equipamento'} ${topo.numero || ''} — ${topo.nome || ''}`;
+          const txt = doc.createElement('p');
+          txt.textContent = topo.texto || '';
+          const meta = doc.createElement('span');
+          meta.className = 'pip-meta';
+          meta.textContent = `${hora(topo.ts)} · ${(topo.e && (topo.e.frente || topo.e.frenteInferida)) || 'Unidade BP'}`;
+          card.append(eq, txt, meta);
+          if (btnMapa) {
+            btnMapa.disabled = false;
+            btnMapa.onclick = () => { window.focus(); abrirNoMapa(topo); };
+          }
+        } else {
+          card.innerHTML = '<p class="pip-vazio">Nenhum alerta ativo no momento. Monitoramento e voz prontos em 2º plano.</p>';
+          if (btnMapa) btnMapa.disabled = true;
+        }
+      }
+      if (btnVoz) {
+        btnVoz.textContent = cfg.voz ? '🔊 Voz ativa' : '🔇 Voz muda';
+        btnVoz.className = cfg.voz ? 'pip-btn ok' : 'pip-btn warn';
+      }
+    } catch {
+      janelaPip = null;
+    }
+  }
+
+  async function alternarJanelaFlutuante() {
+    if (janelaPip && !janelaPip.closed) {
+      janelaPip.close();
+      janelaPip = null;
+      renderHudBarra();
+      return false;
+    }
+    toquei = true;
+    sincronizarAudioSentinela();
+    let win = null;
+    try {
+      if (window.documentPictureInPicture && typeof window.documentPictureInPicture.requestWindow === 'function') {
+        win = await window.documentPictureInPicture.requestWindow({ width: 390, height: 275 });
+      } else {
+        win = window.open('', 'bp_coa_sentinela', 'popup=yes,width=390,height=290');
+      }
+    } catch {
+      win = null;
+    }
+    if (!win || !win.document) {
+      mostrarAviso('Não foi possível abrir a janela flutuante neste navegador. O modo Sentinela em 2º plano continua ativo.', 'info');
+      return false;
+    }
+    janelaPip = win;
+    const d = win.document;
+    d.open();
+    d.write(`<!doctype html><html lang="pt-br"><head><meta charset="utf-8"><title>Sentinela COA — Branco Peres</title>
+      <style>
+        *{box-sizing:border-box}body{margin:0;padding:12px;background:#091119;color:#f1f5f9;font:13px/1.42 system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;gap:10px;height:100vh}
+        header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:8px;border-bottom:1px solid rgba(250,204,21,.28)}
+        .tit{font-weight:800;font-size:13.5px;letter-spacing:-.01em}.tit b{color:#facc15}
+        #pip-status{padding:3px 9px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.06em;background:#1e293b;color:#cbd5e1}
+        #pip-status[data-state="live"]{background:rgba(6,78,59,.6);color:#6ee7b7;border:1px solid rgba(16,185,129,.45)}
+        #pip-status[data-state="rest"]{background:rgba(120,53,15,.5);color:#fde68a;border:1px solid rgba(245,158,11,.45)}
+        #pip-status[data-state="warn"]{background:rgba(127,29,29,.65);color:#fecaca;border:1px solid rgba(239,68,68,.55)}
+        #pip-contadores{font-size:11.5px;color:#94a3b8;font-weight:600;font-variant-numeric:tabular-nums}
+        #pip-ultimo{flex:1;padding:10px 12px;border-radius:12px;background:#111d2a;border:1px solid rgba(148,163,184,.18);overflow:auto;display:flex;flex-direction:column;gap:4px}
+        #pip-ultimo strong{font-size:13px;color:#fef08a}#pip-ultimo p{margin:0;font-size:12.5px;color:#e2e8f0}
+        .pip-meta{font-size:11px;color:#94a3b8}.pip-vazio{color:#94a3b8!important}
+        footer{display:flex;gap:6px}
+        .pip-btn{flex:1;padding:7px 8px;border-radius:9px;border:1px solid rgba(255,255,255,.12);background:#172636;color:#f1f5f9;font-size:11.5px;font-weight:600;cursor:pointer}
+        .pip-btn.ok{border-color:rgba(16,185,129,.45);color:#6ee7b7}.pip-btn.warn{border-color:rgba(239,68,68,.5);color:#fca5a5}
+        .pip-btn:disabled{opacity:.45;cursor:default}
+      </style></head><body>
+      <header><span class="tit">Sentinela <b>COA · BP</b></span><span id="pip-status">ATIVO</span></header>
+      <div id="pip-contadores">0 ativos</div>
+      <div id="pip-ultimo"></div>
+      <footer>
+        <button id="pip-calar" class="pip-btn" type="button">⏹ Calar fala</button>
+        <button id="pip-voz" class="pip-btn ok" type="button">🔊 Voz ativa</button>
+        <button id="pip-mapa" class="pip-btn" type="button">📍 No mapa</button>
+      </footer></body></html>`);
+    d.close();
+    d.getElementById('pip-calar').onclick = () => calarFalaAtual();
+    d.getElementById('pip-voz').onclick = () => { alternarVoz(); atualizarJanelaFlutuante(); };
+    win.addEventListener('pagehide', () => {
+      if (janelaPip === win) janelaPip = null;
+      renderHudBarra();
+    });
+    renderHudBarra();
+    atualizarJanelaFlutuante();
+    return true;
+  }
+
   let toquei = false;
   let escondidoEm = 0;
   if (typeof window !== 'undefined') {
-    const marcarToque = () => { toquei = true; if (vozBloqueada) setTimeout(liberarVoz, 0); };
+    const marcarToque = () => {
+      const primeiro = !toquei;
+      toquei = true;
+      if (vozBloqueada) setTimeout(liberarVoz, 0);
+      else if (primeiro) setTimeout(sincronizarAudioSentinela, 0);
+    };
     addEventListener('pointerdown', marcarToque, { passive: true, capture: true });
     addEventListener('touchstart', marcarToque, { passive: true, capture: true });
     addEventListener('keydown', marcarToque, { capture: true });
@@ -2831,8 +3369,8 @@
   <div id="alertas-painel">
     <header>
       <div class="titulo">
-        <img src="/icons/logo-mark.png" alt="" width="24" height="24" />
-        <div><strong>Central de alertas</strong><span id="alertas-status" class="fine"></span></div>
+        <img src="/icons/logo.png" alt="" width="28" height="28" />
+        <div><strong>Central de alertas · COA</strong><span id="alertas-status" class="fine"></span></div>
       </div>
       <button id="alertas-fechar" class="icone" title="Fechar" aria-label="Fechar">✕</button>
     </header>
@@ -2842,6 +3380,7 @@
         <button class="aba" data-aba="historico">Histórico <span id="cont-hist" class="pill">0</span></button>
       </div>
       <div class="atalhos">
+        <button id="btn-calar" class="icone" title="Calar apenas a fala atual (mantém próximos alertas)" aria-label="Calar fala atual">⏹</button>
         <button id="btn-som" class="icone" title="Som do alerta">🔊</button>
         <button id="btn-voz" class="icone" title="Fala do alerta">🗣️</button>
         <button id="btn-silencio" class="icone" title="Silenciar por 30 minutos">🤫</button>
@@ -2875,7 +3414,7 @@
   <div class="card cfg">
     <div class="cfg-topo">
       <span aria-hidden="true"></span>
-      <img class="marca" src="/icons/logo-mark.png" alt="" width="44" height="44" />
+      <img class="marca" src="/icons/logo.png" alt="" width="48" height="48" />
       <button id="cfg-fechar-x" class="icone cfg-fechar-x" type="button" title="Fechar preferências" aria-label="Fechar preferências">✕</button>
     </div>
     <h2 id="cfg-titulo">Preferências de alertas</h2>
@@ -2887,6 +3426,21 @@
       <p id="push-status" class="push-status" role="status" aria-live="polite">Verificando disponibilidade…</p>
       <div class="push-acoes"><button id="push-ativar" class="primary" type="button">Ativar notificações Push neste aparelho</button><button id="push-desligar" class="push-desligar hide" type="button">Desligar notificações Push neste aparelho</button></div>
     </section>
+    <h3 class="secao-alertas">Modo Sentinela COA (2º plano e anti-perda)</h3>
+    <p class="fine">Garante que o computador (aba minimizada ou atrás de outros sistemas) e o APK Android continuem monitorando e falando os alertas, além de avisar imediatamente caso o sinal do SGPA caia.</p>
+    <div class="switches">
+      <label class="chk"><input id="cfg-sentinela" type="checkbox"><span>Manter voz e monitoramento vivos em 2º plano (Sentinela COA — PC e APK Android)</span></label>
+      <label class="chk"><input id="cfg-wakelock" type="checkbox"><span>Impedir desligamento automático da tela (Wake Lock)</span></label>
+      <label class="chk"><input id="cfg-queda-sgpa" type="checkbox"><span>Avisar por som e voz se perder comunicação com o SGPA (&gt; 2 min)</span></label>
+      <label class="chk"><input id="cfg-reescalar-criticos" type="checkbox"><span>Re-alertar por voz alertas críticos pendentes sem confirmação</span></label>
+    </div>
+    <div class="grade">
+      <label class="campo"><span>Repetir crítico não confirmado a cada (min)</span><input id="cfg-reescalar-min" type="number" min="1" step="1" inputmode="numeric"></label>
+    </div>
+    <div class="voice-actions">
+      <button id="cfg-bateria-android" type="button" class="hide">Desativar restrição de bateria do Android (recomendado p/ 2º plano)</button>
+      <button id="cfg-abrir-pip" type="button">Abrir mini-painel flutuante COA (sempre visível no PC)</button>
+    </div>
     <p class="rotulo">Quais alertas devem notificar</p>
     <div class="busca-modulo"><input id="cfg-busca-categoria" type="search" placeholder="Pesquisar alerta (ex.: fila, velocidade, refeição)" aria-label="Pesquisar alertas" autocomplete="off"></div>
     <div id="cfg-categorias" class="alert-switch-list"></div>
@@ -2954,7 +3508,7 @@
     </div>
     <p id="cfg-glossario-previa" class="fine"></p>
     <button id="cfg-glossario-ouvir" type="button">Ouvir pronúncia</button>
-    <h3 class="secao-alertas">Fontes e canais de aviso</h3>
+    <h3 class="secao-alertas">Fontes, vozes e perfis de locução COA</h3>
     <div class="switches">
       <label class="chk"><input id="cfg-liga" type="checkbox"><span>Central de alertas ligada</span></label>
       <label class="chk"><input id="cfg-local" type="checkbox"><span>Cálculo complementar: RPM, motor ocioso e troca de turno</span></label>
@@ -2969,14 +3523,34 @@
       <label class="chk"><input id="cfg-repete" type="checkbox"><span>Repetir a fala enquanto durar o alerta</span></label>
     </div>
     <div class="grade">
-      <label class="campo"><span>Voz</span><select id="cfg-vozel"></select></label>
+      <label class="campo"><span>Perfil de locução COA</span>
+        <select id="cfg-perfil-voz">
+          <option value="padrao">Padrão equilibrado</option>
+          <option value="coa-firme">Locutor firme COA (comando)</option>
+          <option value="clara-pausada">Locução clara e pausada (rádio/ruído)</option>
+          <option value="urgente">Alerta rápido operacional</option>
+          <option value="personalizado">Personalizado (manual)</option>
+        </select>
+      </label>
+      <label class="campo"><span>Sinal sonoro pré-alerta</span>
+        <select id="cfg-estilo-toque">
+          <option value="gongo-coa">Gongo harmônico COA</option>
+          <option value="radio-bip">Bip duplo de rádio PTT</option>
+          <option value="sirene-curta">Pulso rápido de atenção</option>
+          <option value="padrao">Triângulo clássico</option>
+        </select>
+      </label>
+      <label class="campo"><span>Voz do sistema / aparelho</span><select id="cfg-vozel"></select></label>
       <label class="campo"><span>Volume <b id="lb-vol"></b></span><input id="cfg-vol" type="range" min="0" max="1" step="0.05"></label>
       <label class="campo"><span>Ritmo <b id="lb-taxa"></b></span><input id="cfg-taxa" type="range" min="0.6" max="1.6" step="0.05"></label>
       <label class="campo"><span>Tom <b id="lb-tom"></b></span><input id="cfg-tom" type="range" min="0.6" max="1.4" step="0.05"></label>
     </div>
     <div class="voice-actions">
-      <button id="cfg-gerenciar-vozes" type="button" class="hide">Instalar ou gerenciar vozes do Android</button>
-      <p class="fine">A lista mostra as vozes instaladas e disponibilizadas pelo navegador ou aparelho. Para aparecerem novas vozes, instale pacotes de voz nas configurações do dispositivo. Vozes IA online não estão configuradas; nenhum serviço pago será usado sem sua autorização explícita. A opção gratuita também depende de autorização e credencial segura. Não classificamos vozes locais por IA ou gênero sem informação confiável.</p>
+      <div class="voice-btn-row">
+        <button id="cfg-previa-voz" type="button">▶ Ouvir prévia desta voz</button>
+        <button id="cfg-gerenciar-vozes" type="button" class="hide">Instalar ou gerenciar vozes do Android</button>
+      </div>
+      <p class="fine">Dica COA: no computador com Microsoft Edge, selecione as vozes naturais gratuitas (<i>Francisca Natural</i> ou <i>Antonio Natural</i>); no Android, toque em “Instalar ou gerenciar vozes” para baixar variantes de alta definição em português do Brasil. Todos os perfis funcionam 100% localmente, sem custos externos.</p>
     </div>
     <div class="row">
       <button id="cfg-salvar" class="primary">Salvar preferências</button>
@@ -3032,6 +3606,7 @@
         renderAtivos();
       };
     }
+    if ($('btn-calar')) $('btn-calar').onclick = calarFalaAtual;
     $('btn-som').onclick = () => {
       configurar({ som: !cfg.som });
       if (cfg.som) tocar(3);
@@ -3063,10 +3638,76 @@
       configurar(preferenciaVoz($('cfg-vozel').value));
       escolherVoz();
     };
+    if ($('cfg-perfil-voz')) {
+      $('cfg-perfil-voz').onchange = () => {
+        const chave = $('cfg-perfil-voz').value;
+        const perfil = PERFIS_VOZ[chave];
+        if (perfil && perfil.taxa !== null) {
+          $('cfg-taxa').value = perfil.taxa;
+          $('cfg-tom').value = perfil.tom;
+          if (perfil.estiloToque && $('cfg-estilo-toque')) $('cfg-estilo-toque').value = perfil.estiloToque;
+          $('lb-taxa').textContent = Number(perfil.taxa).toFixed(2);
+          $('lb-tom').textContent = Number(perfil.tom).toFixed(2);
+          configurar({
+            perfilVoz: chave,
+            taxa: perfil.taxa,
+            tom: perfil.tom,
+            estiloToque: perfil.estiloToque || cfg.estiloToque,
+          });
+        } else {
+          configurar({ perfilVoz: 'personalizado' });
+        }
+      };
+    }
+    for (const idRange of [['cfg-vol', 'lb-vol', false], ['cfg-taxa', 'lb-taxa', true], ['cfg-tom', 'lb-tom', true]]) {
+      const inp = $(idRange[0]);
+      if (inp) {
+        inp.addEventListener('input', () => {
+          const lb = $(idRange[1]);
+          if (lb) lb.textContent = Number(inp.value).toFixed(2);
+          if (idRange[2] && $('cfg-perfil-voz')) $('cfg-perfil-voz').value = 'personalizado';
+        });
+      }
+    }
+    if ($('cfg-estilo-toque')) {
+      $('cfg-estilo-toque').onchange = () => {
+        configurar({ estiloToque: $('cfg-estilo-toque').value });
+        if (cfg.som) tocar(2);
+      };
+    }
+    if ($('cfg-previa-voz')) {
+      $('cfg-previa-voz').onclick = () => {
+        const patch = Object.assign(
+          {},
+          preferenciaVoz($('cfg-vozel').value),
+          {
+            voz: true,
+            volume: Number($('cfg-vol').value) || 1,
+            taxa: Number($('cfg-taxa').value) || 1,
+            tom: Number($('cfg-tom').value) || 1,
+            perfilVoz: $('cfg-perfil-voz') ? $('cfg-perfil-voz').value : cfg.perfilVoz,
+            estiloToque: $('cfg-estilo-toque') ? $('cfg-estilo-toque').value : cfg.estiloToque,
+          },
+        );
+        configurar(patch);
+        escolherVoz();
+        if (cfg.som) tocar(2);
+        falar('Atenção C O A: prévia de voz ativa. Colhedora cinco sete oito três oito operando normalmente na Frente 1.', { oficial: true });
+      };
+    }
     $('cfg-gerenciar-vozes').onclick = () => {
       const nativa = ponteNativa();
       if (nativa && typeof nativa.gerenciarVozes === 'function') nativa.gerenciarVozes();
     };
+    if ($('cfg-bateria-android')) {
+      $('cfg-bateria-android').onclick = () => {
+        const nativa = ponteNativa();
+        if (nativa && typeof nativa.otimizarBateria === 'function') nativa.otimizarBateria();
+      };
+    }
+    if ($('cfg-abrir-pip')) {
+      $('cfg-abrir-pip').onclick = () => alternarJanelaFlutuante();
+    }
     $('cfg-teste2').onclick = () => falar(policy.montarFala({ regra: 'velocidade', numero: '8833', valor: 85 }, cfg));
     $('cfg-busca-tipo').oninput = () => { limiteTipos = 80; renderTipos(); };
     if ($('cfg-busca-categoria')) $('cfg-busca-categoria').oninput = filtrarCategorias;
@@ -3090,7 +3731,57 @@
     el.painel.classList.add('hide');
   }
 
+  function renderHudBarra() {
+    const pillLive = $('coa-live');
+    const txtLive = $('coa-live-txt');
+    if (pillLive && txtLive) {
+      const st = estadoConexaoCoa();
+      pillLive.dataset.state = st.chave;
+      txtLive.textContent = st.rotulo;
+    }
+    const pillSev = $('coa-sev');
+    if (pillSev) {
+      const lista = [...ativos.values()];
+      const criticos = lista.filter((a) => (a.severidade || 0) >= 3).length;
+      const atencao = lista.length - criticos;
+      if (!lista.length) {
+        pillSev.classList.add('hide');
+        pillSev.classList.remove('critico');
+        pillSev.textContent = '';
+      } else {
+        const partes = [];
+        if (criticos > 0) partes.push(`${criticos} crít`);
+        if (atencao > 0) partes.push(`${atencao} aten`);
+        pillSev.textContent = partes.join(' · ');
+        pillSev.classList.toggle('critico', criticos > 0);
+        pillSev.classList.remove('hide');
+      }
+    }
+    const btnVozBar = $('btn-voz-bar');
+    if (btnVozBar) {
+      const ligada = !!cfg.voz && !vozBloqueada;
+      btnVozBar.classList.toggle('voz-ativa', ligada);
+      btnVozBar.classList.toggle('voz-muda', !ligada);
+      btnVozBar.setAttribute('aria-pressed', ligada ? 'true' : 'false');
+      btnVozBar.title = vozBloqueada
+        ? 'Voz aguardando um clique para liberar áudio — clique aqui'
+        : cfg.voz
+          ? 'Voz dos alertas ligada (clique para silenciar)'
+          : 'Voz dos alertas silenciada (clique para ativar)';
+      const onIco = btnVozBar.querySelector('.ico-voz-on');
+      const offIco = btnVozBar.querySelector('.ico-voz-off');
+      if (onIco) onIco.classList.toggle('hide', !ligada);
+      if (offIco) offIco.classList.toggle('hide', ligada);
+    }
+    const btnPip = $('btn-pip');
+    if (btnPip) {
+      btnPip.classList.toggle('pip-ativo', !!(janelaPip && !janelaPip.closed));
+    }
+    atualizarJanelaFlutuante();
+  }
+
   function renderCabecalho() {
+    renderHudBarra();
     if (!el.painel) return;
     const n = ativos.size;
     const avisaveis = [...ativos.values()].filter((a) => a.fonte === 'portal' && a.notificar).length;
@@ -3131,7 +3822,7 @@
       if (cfg.seguirSelecaoMapa) pedacos.push('seleção do mapa');
       el.escopo.textContent = pedacos.length ? 'escopo: ' + pedacos.join(', ') : 'escopo: unidade toda';
     }
-    document.title = n ? `(${n}) Monitoramento BP` : 'Monitoramento BP — Branco Peres';
+    document.title = n ? `(${n}) Monitoramento BP · COA` : 'Monitoramento BP — Branco Peres · COA';
     const bSom = $('btn-som');
     const bVoz = $('btn-voz');
     if (bSom) bSom.classList.toggle('mudo', !cfg.som);
@@ -3584,12 +4275,29 @@
   }
 
 
+  function rotuloVozAmigavel(nomeBruto, langBruta, origem) {
+    const nome = String(nomeBruto || 'Voz padrão').trim();
+    const lang = String(langBruta || '').trim();
+    const mGoogle = /^pt[-_]br[-_]x[-_]([a-z0-9]+)[-_](network|local)$/i.exec(nome);
+    if (mGoogle) {
+      const variante = mGoogle[1].toUpperCase();
+      const rede = /network/i.test(mGoogle[2]) ? 'Alta definição · Online' : 'Offline no aparelho';
+      return `Português Brasil · Voz ${variante} (${rede}) — ${nome}`;
+    }
+    const tags = [];
+    if (/natural|neural/i.test(nome)) tags.push('Voz Natural · Recomendada COA');
+    if (origem === 'android') tags.push('Android' + (lang ? ' · ' + lang : ''));
+    else if (lang) tags.push(lang);
+    else tags.push('idioma não informado');
+    return `${nome} (${tags.join(' · ')})`;
+  }
+
   function preencherVozes() {
     const sel = $('cfg-vozel');
     if (!sel) return;
     const s = sintetizador();
-    const vozes = s ? s.getVoices() || [] : [];
-    const nativas = vozesNativas();
+    const vozes = s ? (s.getVoices() || []).slice() : [];
+    const nativas = vozesNativas().slice();
     sel.innerHTML = '';
     const add = (v, t) => {
       const o = document.createElement('option');
@@ -3598,14 +4306,19 @@
       sel.appendChild(o);
     };
     if (nativas.length) {
+      nativas.sort((a, b) => {
+        const pa = /^pt/i.test(String(a.lang || '')) ? 1 : 0;
+        const pb = /^pt/i.test(String(b.lang || '')) ? 1 : 0;
+        return pb - pa || String(a.name || '').localeCompare(String(b.name || ''));
+      });
       for (const v of nativas) {
         const nome = String(v.name || v.id || 'Voz do aparelho');
-        add('android:' + nome, `${nome} (Android${v.lang ? ' · ' + v.lang : ''})`);
+        add('android:' + nome, rotuloVozAmigavel(nome, v.lang, 'android'));
       }
     } else if (ponteNativa()) add('__nativa__', 'Voz padrão do aparelho (Android)');
-    const pt = vozes.filter((v) => /^pt/i.test(v.lang));
+    const pt = vozes.filter((v) => /^pt/i.test(v.lang)).sort((a, b) => qualidadeVozPt(b) - qualidadeVozPt(a));
     const outras = vozes.filter((v) => !/^pt/i.test(v.lang));
-    for (const v of [...pt, ...outras]) add(idVozWeb(v), `${v.name} (${v.lang || 'idioma não informado'})`);
+    for (const v of [...pt, ...outras]) add(idVozWeb(v), rotuloVozAmigavel(v.name, v.lang, 'web'));
     if (!sel.options.length) add('', 'voz padrão do navegador');
 
     let escolhida = cfg.vozURI && [...sel.options].some((o) => o.value === cfg.vozURI) ? cfg.vozURI : '';
@@ -3758,8 +4471,13 @@
       'cfg-vol': cfg.volume,
       'cfg-taxa': cfg.taxa,
       'cfg-tom': cfg.tom,
+      'cfg-reescalar-min': cfg.reescalarCriticosMin != null ? cfg.reescalarCriticosMin : 5,
     };
-    for (const [id, v] of Object.entries(valores)) $(id).value = v;
+    for (const [id, v] of Object.entries(valores)) {
+      if ($(id)) $(id).value = v;
+    }
+    if ($('cfg-perfil-voz')) $('cfg-perfil-voz').value = PERFIS_VOZ[cfg.perfilVoz] ? cfg.perfilVoz : 'padrao';
+    if ($('cfg-estilo-toque')) $('cfg-estilo-toque').value = cfg.estiloToque || 'gongo-coa';
     const checks = {
       'cfg-liga': cfg.ativo,
       'cfg-gestao-frente': cfg.gestaoFrenteAtiva !== false,
@@ -3773,14 +4491,22 @@
       'cfg-notif': cfg.notificacao,
       'cfg-vib': cfg.vibrar,
       'cfg-repete': cfg.repetirVoz,
+      'cfg-sentinela': cfg.sentinelaSegundoPlano !== false,
+      'cfg-wakelock': cfg.manterTelaAtiva !== false,
+      'cfg-queda-sgpa': cfg.alertaQuedaSgpa !== false,
+      'cfg-reescalar-criticos': cfg.reescalarCriticos !== false,
     };
-    for (const [id, v] of Object.entries(checks)) $(id).checked = !!v;
+    for (const [id, v] of Object.entries(checks)) {
+      if ($(id)) $(id).checked = !!v;
+    }
     $('lb-vol').textContent = Number(cfg.volume).toFixed(2);
     $('lb-taxa').textContent = Number(cfg.taxa).toFixed(2);
     $('lb-tom').textContent = Number(cfg.tom).toFixed(2);
     const gerenciarVozes = $('cfg-gerenciar-vozes');
+    const bateriaAndroid = $('cfg-bateria-android');
     const ponteVoz = ponteNativa();
     if (gerenciarVozes) gerenciarVozes.classList.toggle('hide', !(ponteVoz && typeof ponteVoz.gerenciarVozes === 'function'));
+    if (bateriaAndroid) bateriaAndroid.classList.toggle('hide', !(ponteVoz && typeof ponteVoz.otimizarBateria === 'function'));
     preencherVozes();
     renderPushStatus();
 
@@ -3821,7 +4547,9 @@
 
   function lerConfig() {
     const n = (id, d) => {
-      const v = Number($(id).value);
+      const elInput = $(id);
+      if (!elInput) return d;
+      const v = Number(elInput.value);
       return Number.isFinite(v) ? v : d;
     };
     const patch = {
@@ -3837,6 +4565,13 @@
       vibrar: $('cfg-vib').checked,
       repetirVoz: $('cfg-repete').checked,
       gestaoFrenteAtiva: $('cfg-gestao-frente').checked,
+      sentinelaSegundoPlano: $('cfg-sentinela') ? $('cfg-sentinela').checked : cfg.sentinelaSegundoPlano !== false,
+      manterTelaAtiva: $('cfg-wakelock') ? $('cfg-wakelock').checked : cfg.manterTelaAtiva !== false,
+      alertaQuedaSgpa: $('cfg-queda-sgpa') ? $('cfg-queda-sgpa').checked : cfg.alertaQuedaSgpa !== false,
+      reescalarCriticos: $('cfg-reescalar-criticos') ? $('cfg-reescalar-criticos').checked : cfg.reescalarCriticos !== false,
+      reescalarCriticosMin: Math.max(1, n('cfg-reescalar-min', 5)),
+      perfilVoz: $('cfg-perfil-voz') ? $('cfg-perfil-voz').value : cfg.perfilVoz || 'padrao',
+      estiloToque: $('cfg-estilo-toque') ? $('cfg-estilo-toque').value : cfg.estiloToque || 'gongo-coa',
       limiteRpm: n('cfg-rpm', 2000),
       minutosOcioso: n('cfg-ocioso', 5),
       minutosSemApontamento: n('cfg-sem-ponto', 5),
@@ -4013,6 +4748,12 @@
     if (!cfg.ativo || !cfg.voz || patch.notificarCategorias || patch.tiposNotificacao) pararVoz();
     if (!cfg.ativo || !cfg.usarStream) { fecharStream(); estado.stream = 'desligado'; }
     else if ((!antes.ativo || !antes.usarStream) && ctx.token) abrirStream();
+    else if (worker && antes.sentinelaSegundoPlano !== cfg.sentinelaSegundoPlano) {
+      try {
+        worker.postMessage(cfg.sentinelaSegundoPlano === false ? { type: 'parar-relogio' } : { type: 'relogio', intervaloMs: 5000 });
+      } catch { /* ignora */ }
+    }
+    sincronizarSentinelaCompleta();
     if (!cfg.ativo && el.toasts) el.toasts.innerHTML = '';
     if (cfg.intervaloSeg < 30) cfg.intervaloSeg = 30;
     if (cfg.amostras < 1) cfg.amostras = 1;
@@ -4068,18 +4809,24 @@
       }
       setInterval(tique, 1000);
       setInterval(() => {
-        // Watchdog também cobre conexão aberta sem sequer ter recebido o primeiro quadro.
-        if (cfg.usarStream && cfg.ativo && worker && estado.stream === 'ao vivo' && ultimoSinalStream && agora() - ultimoSinalStream > 180000) {
-          estado.proximoErro = 'stream sem atividade há mais de 3 minutos; tentando reconectar';
+        // Watchdog mais rápido (75s) para reconectar stream travado sem perder janelas de alerta.
+        if (cfg.usarStream && cfg.ativo && worker && estado.stream === 'ao vivo' && ultimoSinalStream && agora() - ultimoSinalStream > 75000) {
+          estado.proximoErro = 'stream sem atividade há mais de 75s; reconectando automaticamente';
           fecharStream();
           renderCabecalho();
           agendarReconexaoStream();
         }
-      }, 20000);
+      }, 15000);
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') { escondidoEm = agora(); return; }
+        if (document.visibilityState === 'hidden') {
+          escondidoEm = agora();
+          sincronizarAudioSentinela();
+          return;
+        }
         if (document.visibilityState === 'visible' && cfg.ativo) {
           escolherVoz();
+          sincronizarWakeLock();
+          sincronizarAudioSentinela();
           if (agora() - (estado.ultimoCiclo || 0) > cfg.intervaloSeg * 1000 + 5000) cicloImediato();
           if (escondidoEm && agora() - escondidoEm > 20000) agendarResumoAbertura(4000);
         }
@@ -4109,6 +4856,7 @@
     clearTimeout(timer);
     timer = null;
     fecharStream();
+    encerrarRelogioIsolado();
     estado.ligado = false;
     renderCabecalho();
   }
@@ -4160,6 +4908,9 @@
     testar,
     falar,
     pararVoz,
+    calarFalaAtual,
+    alternarVoz,
+    alternarJanelaFlutuante,
     abrirPainel,
     fecharPainel,
     abrirStream,

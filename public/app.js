@@ -350,14 +350,53 @@
     }
   }
 
-  $('btn-alertas').addEventListener('click', () => {
+  function abrirCentralSegura() {
     if (!ALERTAS_ON) return;
     if (!alertasLigados) {
       if (session) ligarAlertas();
       else return;
     }
-    MonitoramentoAlertas.abrirPainel();
-  });
+    if (typeof MonitoramentoAlertas.abrirPainel === 'function') MonitoramentoAlertas.abrirPainel();
+  }
+
+  $('btn-alertas').addEventListener('click', abrirCentralSegura);
+  if ($('coa-live')) $('coa-live').addEventListener('click', abrirCentralSegura);
+  if ($('coa-sev')) $('coa-sev').addEventListener('click', abrirCentralSegura);
+
+  if ($('btn-voz-bar')) {
+    $('btn-voz-bar').addEventListener('click', () => {
+      if (!ALERTAS_ON) return;
+      if (!alertasLigados && session) ligarAlertas();
+      if (typeof MonitoramentoAlertas.alternarVoz === 'function') {
+        MonitoramentoAlertas.alternarVoz();
+      }
+    });
+  }
+
+  function acionarPipCoa() {
+    if (!ALERTAS_ON) return;
+    if (!alertasLigados && session) ligarAlertas();
+    if (typeof MonitoramentoAlertas.alternarJanelaFlutuante === 'function') {
+      MonitoramentoAlertas.alternarJanelaFlutuante();
+    }
+  }
+
+  if ($('btn-pip')) $('btn-pip').addEventListener('click', acionarPipCoa);
+
+  const elClock = $('coa-clock');
+  if (elClock) {
+    const atualizarRelogioCoa = () => {
+      try {
+        elClock.textContent = new Date().toLocaleTimeString('pt-BR', { hour12: false });
+      } catch {
+        const d = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        elClock.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      }
+    };
+    atualizarRelogioCoa();
+    setInterval(atualizarRelogioCoa, 1000);
+  }
 
   /* ---------------------------- fallback ---------------------------- */
   async function openInPortal(which) {
@@ -470,9 +509,10 @@
       const cfgBtn = document.getElementById('btn-cfg');
       if (cfgBtn) cfgBtn.click();
     }
+    if (act === 'pip') acionarPipCoa();
     if (act === 'teste' && ALERTAS_ON) {
       if (!alertasLigados && session) ligarAlertas();
-      MonitoramentoAlertas.testar();
+      if (typeof MonitoramentoAlertas.testar === 'function') MonitoramentoAlertas.testar();
     }
   });
 

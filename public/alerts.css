@@ -115,9 +115,10 @@
 }
 
 #alertas-painel .titulo img {
-  border-radius: 50%;
-  background: #fcfcfa;
-  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.16), 0 2px 8px rgba(0, 0, 0, 0.4);
+  object-fit: contain;
+  border-radius: 0;
+  background: transparent;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55));
   flex: none;
 }
 
@@ -1185,6 +1186,32 @@ button.mudo {
   border-left: 3px solid var(--bp-ouro);
   background: rgba(250, 204, 21, 0.075);
   border-radius: 4px 10px 10px 4px;
+}
+
+.voice-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.voice-btn-row button,
+.voice-actions > button {
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+}
+
+#cfg-previa-voz {
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.22) 0%, rgba(5, 150, 105, 0.28) 100%);
+  border-color: rgba(52, 211, 153, 0.42);
+  color: #d1fae5;
+  font-weight: 600;
+}
+
+#cfg-previa-voz:hover {
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.34) 0%, rgba(5, 150, 105, 0.4) 100%);
+  border-color: rgba(110, 231, 183, 0.65);
 }
 
 /* ============================== RESPONSIVIDADE ============================== */

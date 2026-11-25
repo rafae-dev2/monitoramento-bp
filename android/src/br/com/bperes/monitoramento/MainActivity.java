@@ -7,11 +7,17 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.Context;
+import android.content.pm.PackageManager;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
+import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.speech.tts.Voice;
@@ -93,6 +99,8 @@ public class MainActivity extends Activity {
     private static final String PREFS = "monitoramento";
     private static final String PREF_UA_DESKTOP = "ua_desktop";
     private static final String PREF_TELA_acesa = "tela_acesa";
+    private static final String PREF_SEGUNDO_PLANO = "segundo_plano";
+    private static final int REQ_NOTIF_PERMISSION = 1001;
 
     private WebView web;
     private volatile TextToSpeech tts;
@@ -102,6 +110,8 @@ public class MainActivity extends Activity {
     private final ArrayDeque<FalaPendente> filaVozPendente = new ArrayDeque<>();
     private boolean inicializandoVoz;
     private boolean drenandoVoz;
+    private AudioManager audioManager;
+    private AudioFocusRequest audioFocusRequest;
     private ProgressBar barra;
     private TextView engrenagem;
     private SharedPreferences prefs;
@@ -111,12 +121,14 @@ public class MainActivity extends Activity {
         final String texto;
         final double volume;
         final double taxa;
+        final double tom;
         final String nomeVoz;
 
-        FalaPendente(String texto, double volume, double taxa, String nomeVoz) {
+        FalaPendente(String texto, double volume, double taxa, double tom, String nomeVoz) {
             this.texto = texto;
             this.volume = volume;
             this.taxa = taxa;
+            this.tom = tom;
             this.nomeVoz = nomeVoz;
         }
     }
@@ -239,6 +251,8 @@ public class MainActivity extends Activity {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         }
 
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+
         // Deep link (QR code / "abrir com") chega aqui.
         Intent i = getIntent();
         String url = HOME_URL;
@@ -251,10 +265,103 @@ public class MainActivity extends Activity {
         // Alertas chama window.AndroidTTS.falar(...) / .parar() / .vibrar(ms).
         web.addJavascriptInterface(new PonteVoz(), "AndroidTTS");
         iniciarVoz();
+        solicitarPermissaoNotificacaoSeNecessario();
+        atualizarServicoSegundoPlano(prefs.getBoolean(PREF_SEGUNDO_PLANO, true));
         web.loadUrl(url);
     }
 
+    private void solicitarPermissaoNotificacaoSeNecessario() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            try {
+                if (checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, REQ_NOTIF_PERMISSION);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void atualizarServicoSegundoPlano(boolean ativo) {
+        prefs.edit().putBoolean(PREF_SEGUNDO_PLANO, ativo).apply();
+        try {
+            Intent srv = new Intent(this, MonitoramentoService.class);
+            if (ativo) {
+                srv.setAction(MonitoramentoService.ACAO_INICIAR);
+                if (Build.VERSION.SDK_INT >= 26) {
+                    startForegroundService(srv);
+                } else {
+                    startService(srv);
+                }
+                if (web != null) web.resumeTimers();
+            } else {
+                srv.setAction(MonitoramentoService.ACAO_PARAR);
+                stopService(srv);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    @SuppressLint("BatteryLife")
+    private void solicitarIsencaoBateria() {
+        if (Build.VERSION.SDK_INT < 23) {
+            toast("Sem restrição de bateria nesta versão do Android.");
+            return;
+        }
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null && pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                toast("O Monitoramento BP já está liberado para rodar em 2º plano sem restrição.");
+                return;
+            }
+            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            intent.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(intent);
+        } catch (Exception ignored) {
+            try {
+                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            } catch (Exception ignoredFallback) {
+                toast("Abra Configurações → Aplicativos → Monitoramento BP → Bateria → Sem restrições.");
+            }
+        }
+    }
+
+    private void requisitarFocoAudio() {
+        if (audioManager == null) return;
+        try {
+            if (Build.VERSION.SDK_INT >= 26) {
+                if (audioFocusRequest == null) {
+                    AudioAttributes attrs = new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build();
+                    audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                            .setAudioAttributes(attrs)
+                            .setAcceptsDelayedFocusGain(false)
+                            .build();
+                }
+                audioManager.requestAudioFocus(audioFocusRequest);
+            } else {
+                audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC,
+                        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void liberarFocoAudio() {
+        if (audioManager == null) return;
+        try {
+            if (Build.VERSION.SDK_INT >= 26 && audioFocusRequest != null) {
+                audioManager.abandonAudioFocusRequest(audioFocusRequest);
+            } else {
+                audioManager.abandonAudioFocus(null);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     private void notificarFimFala() {
+        liberarFocoAudio();
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
@@ -286,6 +393,13 @@ public class MainActivity extends Activity {
                         return;
                     }
                     try {
+                        if (Build.VERSION.SDK_INT >= 21) {
+                            AudioAttributes attrs = new AudioAttributes.Builder()
+                                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                    .build();
+                            tts.setAudioAttributes(attrs);
+                        }
                         int r = tts.setLanguage(new Locale("pt", "BR"));
                         if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
                             tts.setLanguage(Locale.getDefault());
@@ -293,6 +407,7 @@ public class MainActivity extends Activity {
                         tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
                             @Override
                             public void onStart(String utteranceId) {
+                                requisitarFocoAudio();
                             }
 
                             @Override
@@ -334,7 +449,7 @@ public class MainActivity extends Activity {
                     return;
                 }
             }
-            falarPronto(pendente.texto, pendente.volume, pendente.taxa, pendente.nomeVoz);
+            falarPronto(pendente.texto, pendente.volume, pendente.taxa, pendente.tom, pendente.nomeVoz);
         }
     }
 
@@ -343,19 +458,23 @@ public class MainActivity extends Activity {
         return Math.max(min, Math.min(max, v));
     }
 
-    /** Mantém compatibilidade interna com falas que não selecionam voz. */
+    /** Mantém compatibilidade interna com falas que não selecionam voz ou tom. */
     private void falar(final String texto, final double volume, final double taxa) {
-        falar(texto, volume, taxa, null);
+        falar(texto, volume, taxa, 1.0, null);
     }
 
-    /** Fala com a voz pedida; se o motor ainda estiver acordando, guarda a frase e a voz. */
     private void falar(final String texto, final double volume, final double taxa, final String nomeVoz) {
+        falar(texto, volume, taxa, 1.0, nomeVoz);
+    }
+
+    /** Fala com a voz e tom pedidos; se o motor ainda estiver acordando, guarda na fila. */
+    private void falar(final String texto, final double volume, final double taxa, final double tom, final String nomeVoz) {
         if (texto == null || texto.trim().isEmpty()) return;
         boolean enfileirada = false;
         boolean iniciar = false;
         synchronized (travaVoz) {
             if (tts == null || !vozPronta || drenandoVoz) {
-                filaVozPendente.addLast(new FalaPendente(texto, volume, taxa, nomeVoz));
+                filaVozPendente.addLast(new FalaPendente(texto, volume, taxa, tom, nomeVoz));
                 enfileirada = true;
                 iniciar = tts == null && !inicializandoVoz;
             }
@@ -364,14 +483,15 @@ public class MainActivity extends Activity {
             if (iniciar) iniciarVoz();
             return;
         }
-        falarPronto(texto, volume, taxa, nomeVoz);
+        falarPronto(texto, volume, taxa, tom, nomeVoz);
     }
 
-    private void falarPronto(final String texto, final double volume, final double taxa, final String nomeVoz) {
+    private void falarPronto(final String texto, final double volume, final double taxa, final double tom, final String nomeVoz) {
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 try {
+                    requisitarFocoAudio();
                     if (Build.VERSION.SDK_INT >= 21) {
                         Voice escolhida = null;
                         if (nomeVoz != null && !nomeVoz.trim().isEmpty()) {
@@ -386,7 +506,7 @@ public class MainActivity extends Activity {
                         else tts.setLanguage(new Locale("pt", "BR"));
                     }
                     tts.setSpeechRate((float) limitar(taxa, 0.6, 1.6) * 1.05f);
-                    tts.setPitch(1.0f);
+                    tts.setPitch((float) limitar(tom, 0.5, 2.0));
                     if (Build.VERSION.SDK_INT >= 21) {
                         Bundle p = new Bundle();
                         p.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME,
@@ -396,6 +516,7 @@ public class MainActivity extends Activity {
                         tts.speak(texto, TextToSpeech.QUEUE_ADD, null);
                     }
                 } catch (Exception ignored) {
+                    liberarFocoAudio();
                 }
             }
         });
@@ -403,7 +524,7 @@ public class MainActivity extends Activity {
 
     /**
      * Objetos expostos ao JavaScript da Central de Alertas.
-     * Só fala, cala e vibra: nenhum dado do aparelho é lido por aqui.
+     * Só fala, cala, vibra e gerencia o serviço de 2º plano: nenhum dado pessoal é lido.
      */
     public class PonteVoz {
         @JavascriptInterface
@@ -414,13 +535,19 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void falar(String texto, double volume, double taxa) {
             if (!origemAppConfiavel) return;
-            MainActivity.this.falar(texto, volume, taxa);
+            MainActivity.this.falar(texto, volume, taxa, 1.0, null);
         }
 
         @JavascriptInterface
         public void falarComVoz(String texto, double volume, double taxa, String nomeVoz) {
             if (!origemAppConfiavel) return;
-            MainActivity.this.falar(texto, volume, taxa, nomeVoz);
+            MainActivity.this.falar(texto, volume, taxa, 1.0, nomeVoz);
+        }
+
+        @JavascriptInterface
+        public void falarComVozETom(String texto, double volume, double taxa, double tom, String nomeVoz) {
+            if (!origemAppConfiavel) return;
+            MainActivity.this.falar(texto, volume, taxa, tom, nomeVoz);
         }
 
         @JavascriptInterface
@@ -457,6 +584,33 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void configurarSegundoPlano(final boolean ativo) {
+            if (!origemAppConfiavel) return;
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    atualizarServicoSegundoPlano(ativo);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public boolean segundoPlanoAtivo() {
+            return origemAppConfiavel && prefs.getBoolean(PREF_SEGUNDO_PLANO, true);
+        }
+
+        @JavascriptInterface
+        public void otimizarBateria() {
+            if (!origemAppConfiavel) return;
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    solicitarIsencaoBateria();
+                }
+            });
+        }
+
+        @JavascriptInterface
         public void parar() {
             if (!origemAppConfiavel) return;
             synchronized (travaVoz) {
@@ -467,6 +621,7 @@ public class MainActivity extends Activity {
                 @Override
                 public void run() {
                     try { t.stop(); } catch (Exception ignored) { }
+                    liberarFocoAudio();
                 }
             });
         }
@@ -501,7 +656,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String versao() {
-            return "AndroidTTS 1.3";
+            return "AndroidTTS 1.5";
         }
     }
 
@@ -527,6 +682,10 @@ public class MainActivity extends Activity {
     private void mostrarMenu() {
         final String[] opcoes = new String[]{
                 "Recarregar o mapa",
+                prefs.getBoolean(PREF_SEGUNDO_PLANO, true)
+                        ? "Pausar voz em 2º plano / tela bloqueada (Sentinela COA)"
+                        : "Ativar voz em 2º plano / tela bloqueada (Sentinela COA)",
+                "Liberar bateria para não pausar em 2º plano",
                 prefs.getBoolean(PREF_UA_DESKTOP, true)
                         ? "Usar layout do celular (desligar modo desktop)"
                         : "Usar layout de computador (desktop)",
@@ -537,7 +696,7 @@ public class MainActivity extends Activity {
                 "Sobre"
         };
         new AlertDialog.Builder(this)
-                .setTitle("Monitoramento BP")
+                .setTitle("Monitoramento BP · COA")
                 .setItems(opcoes, new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface d, int qual) {
@@ -546,13 +705,23 @@ public class MainActivity extends Activity {
                                 web.reload();
                                 break;
                             case 1:
+                                boolean segPlano = !prefs.getBoolean(PREF_SEGUNDO_PLANO, true);
+                                atualizarServicoSegundoPlano(segPlano);
+                                toast(segPlano
+                                        ? "Sentinela COA ativa em 2º plano e tela bloqueada."
+                                        : "Execução em 2º plano pausada.");
+                                break;
+                            case 2:
+                                solicitarIsencaoBateria();
+                                break;
+                            case 3:
                                 boolean agora = !prefs.getBoolean(PREF_UA_DESKTOP, true);
                                 prefs.edit().putBoolean(PREF_UA_DESKTOP, agora).apply();
                                 aplicarUserAgent();
                                 web.reload();
                                 toast(agora ? "Layout desktop ativado." : "Layout celular ativado.");
                                 break;
-                            case 2:
+                            case 4:
                                 boolean acesa = !prefs.getBoolean(PREF_TELA_acesa, true);
                                 prefs.edit().putBoolean(PREF_TELA_acesa, acesa).apply();
                                 if (acesa) {
@@ -561,10 +730,10 @@ public class MainActivity extends Activity {
                                     getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                                 }
                                 break;
-                            case 3:
+                            case 5:
                                 limparSessao();
                                 break;
-                            case 4:
+                            case 6:
                                 sobre();
                                 break;
                             default:
@@ -597,7 +766,7 @@ public class MainActivity extends Activity {
     }
 
     private void sobre() {
-        String versao = "1.0";
+        String versao = "1.5";
         try {
             versao = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
         } catch (Exception ignored) {
@@ -605,9 +774,8 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("Sobre")
                 .setMessage("Monitoramento BP v" + versao
-                        + "\n\nCasca de aplicativo sobre a tela do portal Solinftec."
+                        + "\n\nPainel operacional COA com Sentinela de 2º plano e voz prioritária."
                         + "\n\nA conta, os dados e a validade da sessão são controlados pelo portal."
-                        + "\n\nLogin: fica salvo neste app (localStorage do WebView)."
                         + "\n\nDestino:\n" + HOME_URL)
                 .setPositiveButton("OK", null)
                 .show();
@@ -652,6 +820,10 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         CookieManager.getInstance().flush();
+        if (web != null && prefs.getBoolean(PREF_SEGUNDO_PLANO, true)) {
+            // Mantém os timers JS e o Worker de stream vivos com tela apagada ou outro app à frente.
+            web.resumeTimers();
+        }
     }
 
     @Override
@@ -659,6 +831,7 @@ public class MainActivity extends Activity {
         super.onResume();
         if (web != null) {
             web.onResume();
+            web.resumeTimers();
             web.postDelayed(new Runnable() {
                 @Override
                 public void run() {
@@ -671,6 +844,8 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        atualizarServicoSegundoPlano(false);
+        liberarFocoAudio();
         if (tts != null) {
             try {
                 tts.stop();
