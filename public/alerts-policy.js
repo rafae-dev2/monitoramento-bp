@@ -7,7 +7,7 @@
 }(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis), function () {
   'use strict';
 
-  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'aguardandoBasculamento', 'frenteDividida', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente', 'emergencia', 'telemetriaMuda', 'qualidadeColheita'];
+  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'aguardandoBasculamento', 'frenteDividida', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente', 'emergencia', 'telemetriaMuda', 'qualidadeColheita', 'inconsistenciaApontamento', 'riscoMoenda', 'bateVolta', 'manutencaoPreditiva'];
   var DEFAULTS = {
     velocidade: true,
     rpm: true,
@@ -24,7 +24,11 @@
     gestaoFrente: true,
     emergencia: true,
     telemetriaMuda: true,
-    qualidadeColheita: true
+    qualidadeColheita: true,
+    inconsistenciaApontamento: true,
+    riscoMoenda: true,
+    bateVolta: true,
+    manutencaoPreditiva: true
   };
   var NUMEROS_FALADOS = ['zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'];
   // Expansões confirmadas pelo usuário no DOCX de 23/11/2026. Os códigos sem
@@ -309,7 +313,8 @@
       var aliases = {
         velocidade: 'velocidade', rpm: 'rpm', ocioso: 'ocioso', turno: 'turno',
         motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', aguardandobasculamento: 'aguardandoBasculamento', frentedividida: 'frenteDividida', semapontamento: 'semApontamento', refeicao: 'refeicao', paradaimprodutiva: 'paradaImprodutiva', gestaofrente: 'gestaoFrente',
-        ociososemapontamento: 'ocioso', emergencia: 'emergencia', telemetriamuda: 'telemetriaMuda', qualidadecolheita: 'qualidadeColheita'
+        ociososemapontamento: 'ocioso', emergencia: 'emergencia', telemetriamuda: 'telemetriaMuda', qualidadecolheita: 'qualidadeColheita',
+        inconsistenciaapontamento: 'inconsistenciaApontamento', riscomoenda: 'riscoMoenda', batevolta: 'bateVolta', manutencaopreditiva: 'manutencaoPreditiva'
       };
       if (aliases[compact]) return aliases[compact];
     }
@@ -573,6 +578,30 @@
         (vqc !== null ? ' colhendo a ' + vqc + ' quilômetros por hora' : ' acima da velocidade técnica') +
         (lqc !== null ? ', limite técnico de ' + lqc : '') +
         '. Frente/grupo ' + String(fqc).trim() + '. Verificar.';
+    }
+    if (selectedCategory === 'inconsistenciaApontamento') {
+      var finc = frenteOuGrupo(event);
+      var cinc = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
+      var tinc = cleanMessage(item.texto) || 'inconsistência de apontamento';
+      return 'Auditoria S G P A: ' + cinc + ' ' + vehicleNumber(item, event) + ' ' + tinc + '. Frente/grupo ' + String(finc).trim() + '. Cobrar apontamento correto.';
+    }
+    if (selectedCategory === 'riscoMoenda') {
+      var tmoe = cleanMessage(item.texto) || 'ritmo de colheita abaixo da meta da usina';
+      return 'Atenção C O A, risco de moenda: ' + tmoe + '. Priorizar liberação de colhedoras e caminhões.';
+    }
+    if (selectedCategory === 'bateVolta') {
+      var fbv = frenteOuGrupo(event);
+      var mbv = numericAlertValue(item.valor);
+      return 'Atenção logística: Caminhão ' + vehicleNumber(item, event) + ' em bate-volta acima do tempo esperado' +
+        (mbv ? ', há ' + String(mbv) + ' minutos em viagem' : '') +
+        '. Frente/grupo ' + String(fbv).trim() + '. Verificar trajeto.';
+    }
+    if (selectedCategory === 'manutencaoPreditiva') {
+      var fmp = frenteOuGrupo(event);
+      var cmp = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
+      var nmp = numericAlertValue(item.valor);
+      return 'Manutenção preditiva C O A: ' + cmp + ' ' + vehicleNumber(item, event) + ' acumulou ' +
+        (nmp || 3) + ' ocorrências mecânicas ou de motor no turno. Frente/grupo ' + String(fmp).trim() + '. Acionar oficina preventiva.';
     }
     if (selectedCategory === 'semApontamento') {
       var frente = frenteOuGrupo(event);
@@ -964,6 +993,15 @@
       }
     }
 
+    if (p.custoTotalTurnoRs != null && Number(p.custoTotalTurnoRs) > 0) {
+      linhas.push('• Custo estimado de paradas/ocioso no turno: R$ ' + Math.round(Number(p.custoTotalTurnoRs)).toLocaleString('pt-BR'));
+    }
+    if (p.placarPositivo && p.placarPositivo.resumoCurto) {
+      linhas.push('');
+      linhas.push('*6. DESTAQUES POSITIVOS PARA O DDS*');
+      linhas.push(p.placarPositivo.resumoCurto);
+    }
+
     return {
       turno: turno,
       totalEventosTurno: histTurno.length,
@@ -974,6 +1012,485 @@
       topOciosidade: topOciosidade,
       texto: linhas.join('\n')
     };
+  }
+
+  /* ------------------ Inteligência Preditiva & Comboio v4.0 ------------------ */
+
+  function decodificarGeohash(valor) {
+    var hash = String(valor || '').trim().toLowerCase();
+    if (hash.length < 5 || hash.length > 12) return null;
+    var alfabeto = '0123456789bcdefghjkmnpqrstuvwxyz';
+    var latMin = -90, latMax = 90, lonMin = -180, lonMax = 180, lonTurn = true;
+    for (var i = 0; i < hash.length; i += 1) {
+      var idx = alfabeto.indexOf(hash.charAt(i));
+      if (idx < 0) return null;
+      for (var bit = 4; bit >= 0; bit -= 1) {
+        var on = (idx & (1 << bit)) !== 0;
+        if (lonTurn) {
+          var mLon = (lonMin + lonMax) / 2;
+          if (on) lonMin = mLon; else lonMax = mLon;
+        } else {
+          var mLat = (latMin + latMax) / 2;
+          if (on) latMin = mLat; else latMax = mLat;
+        }
+        lonTurn = !lonTurn;
+      }
+    }
+    return { lat: (latMin + latMax) / 2, lon: (lonMin + lonMax) / 2 };
+  }
+
+  function distanciaKm(a, b) {
+    if (!a || !b || !Number.isFinite(a.lat) || !Number.isFinite(b.lat)) return null;
+    var rad = function (v) { return v * Math.PI / 180; };
+    var dLat = rad(b.lat - a.lat);
+    var dLon = rad(b.lon - a.lon);
+    var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    var km = 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(Math.max(0, 1 - h)));
+    return Math.round(km * 10) / 10;
+  }
+
+  function custoHoraEquipamento(e, cfg) {
+    var c = isObject(cfg) ? cfg : {};
+    var tipo = norm([e && e.tipo, e && e.tipoCompleto, e && e.nome].filter(Boolean).join(' '));
+    var classeCusto = 'apoio';
+    var valorHora = Number(c.custoHoraApoio) > 0 ? Number(c.custoHoraApoio) : 180;
+    if (/colhed/.test(tipo)) {
+      classeCusto = 'colhedora';
+      valorHora = Number(c.custoHoraColhedora) > 0 ? Number(c.custoHoraColhedora) : 850;
+    } else if (/caminh|\btruck\b|canav/.test(tipo) && !/bombeir|pipa|comboio|oficina|munck/.test(tipo)) {
+      classeCusto = 'caminhao';
+      valorHora = Number(c.custoHoraCaminhao) > 0 ? Number(c.custoHoraCaminhao) : 220;
+    } else if (/transbord|trator/.test(tipo)) {
+      classeCusto = 'transbordo';
+      valorHora = Number(c.custoHoraTransbordo) > 0 ? Number(c.custoHoraTransbordo) : 260;
+    }
+    return {
+      classeCusto: classeCusto,
+      valorHora: valorHora,
+      valorMinuto: Math.round((valorHora / 60) * 100) / 100
+    };
+  }
+
+  function inconsistenciaApontamento(e) {
+    if (!e || typeof e !== 'object' || e.operacaoConfirmada !== true) return null;
+    var opBruta = String(e.operacao || e.descOperacao || '').trim();
+    if (!opBruta) return null;
+    var op = norm(opBruta).replace(/^\d+\s*-\s*/, '').replace(/[._\-\/]+/g, ' ').replace(/\s+/g, ' ').trim();
+    var tipo = norm([e.tipo, e.tipoCompleto, e.nome].filter(Boolean).join(' '));
+    var vel = numericAlertValue(e.velocidade);
+    var rpm = numericAlertValue(e.rpm);
+    var motorOn = e.motor === true && (rpm === null || rpm >= 900);
+
+    // Caso 1: Colhedora apontando Colheita/Corte, porém parada (0 km/h)
+    if (/colhed/.test(tipo) && /\b(?:colheita|colhendo|corte mecaniz)\b/.test(op) &&
+        !/\b(?:aguard|parada|manobra|desloc|manutenc|sem apont|troca|refeic)\b/.test(op)) {
+      if ((vel === null ? 0 : vel) <= 0.5 && (e.motor === false || (rpm !== null && rpm <= 950) || vel === 0)) {
+        return {
+          subtipo: 'colheitaParada',
+          operacao: opBruta,
+          velocidade: vel || 0,
+          motivo: 'apontou Colheita mas está parada a 0 km/h'
+        };
+      }
+    }
+
+    // Caso 2: Apontamento de Parada / Refeição / Sem Apontamento / Aguardando, mas deslocando com motor em carga
+    var ehApontamentoParado = semApontamento(e) || emRefeicao(e) || aguardandoCaminhao(e) || !!paradaImprodutiva(e);
+    if (ehApontamentoParado && motorOn && vel !== null && vel >= 14 && vel <= 85) {
+      return {
+        subtipo: 'paradaEmMovimento',
+        operacao: opBruta,
+        velocidade: Math.round(vel),
+        motivo: 'apontou "' + opBruta.replace(/^\d+\s*-\s*/, '') + '" mas está em movimento a ' + Math.round(vel) + ' km/h'
+      };
+    }
+    return null;
+  }
+
+  function caminhaoEmBateVolta(e) {
+    if (!e || typeof e !== 'object' || e.operacaoConfirmada !== true) return false;
+    var tipo = norm([e.tipo, e.tipoCompleto, e.nome, e.grupoEquipamento].filter(Boolean).join(' '));
+    if (!/caminh/.test(tipo) || /bombeir|munck|pipa|comboio|oficina|cacamb/.test(tipo)) return false;
+    var op = norm(e.operacao || e.descOperacao || '').replace(/^\d+\s*-\s*/, '');
+    if (/aguard|fila|carregando|bascul|manutenc|refeic|parada|sem apont/.test(op)) return false;
+    return /\b(?:transporte|viagem|deslocamento|ida|retorno|bate\s*volta)\b/.test(op);
+  }
+
+  function detectarFalhaRecorrente(idEquipamento, hist, agoraMs, janelaMin, minOcorrencias) {
+    var alvo = String(idEquipamento || '').trim();
+    if (!alvo || !Array.isArray(hist)) return null;
+    var ts = Number(agoraMs) || Date.now();
+    var corte = ts - (Math.max(30, Number(janelaMin) || 240) * 60000);
+    var minOc = Math.max(2, Number(minOcorrencias) || 3);
+    var eventos = [];
+    for (var i = 0; i < hist.length; i += 1) {
+      var h = hist[i];
+      if (!h || Number(h.ts) < corte) continue;
+      var chaveId = String(h.chave || '').split('|')[0];
+      if (chaveId !== alvo && String(h.equipamento || '') !== alvo) continue;
+      var texto = norm([h.regra, h.nomeAlarme, h.texto].filter(Boolean).join(' '));
+      var ehMecanico = h.regra === 'rpm' || h.regra === 'motorCondicao' ||
+        (h.regra === 'paradaImprodutiva' && /\b(?:mecan|manut|socorro|borrach|eletric|oficina)/.test(texto));
+      if (ehMecanico) eventos.push(h);
+    }
+    if (eventos.length < minOc) return null;
+    return {
+      ocorrencias: eventos.length,
+      ultimoMotivo: eventos[0].nomeAlarme || eventos[0].texto || eventos[0].regra
+    };
+  }
+
+  function calcularTermometroMoenda(resumoCtt, cfg) {
+    var c = isObject(cfg) ? cfg : {};
+    var meta = Math.max(0, Number(c.metaMoagemTonHora != null ? c.metaMoagemTonHora : 420));
+    var taxaColh = Math.max(10, Number(c.tonHoraPorColhedora != null ? c.tonHoraPorColhedora : 65));
+    var tot = (resumoCtt && resumoCtt.totais) || {};
+    if (!meta) return { ativo: false, entregaTonHora: 0, metaTonHora: 0, pctMeta: 100, deficitTonHora: 0, status: 'desligado', texto: 'Meta desligada' };
+    var bruta = (tot.colhedorasColhendo || 0) * taxaColh;
+    // Se há transbordos retidos sem caminhão carregando, a entrega efetiva cai ~15%
+    var fatorLogistica = (tot.transbordosAgCam || 0) >= 2 && (tot.caminhoesCarregando || 0) === 0 ? 0.85 : 1;
+    var entrega = Math.round(bruta * fatorLogistica);
+    var pct = Math.min(150, Math.round((entrega / meta) * 100));
+    var deficit = Math.max(0, meta - entrega);
+    var status = (tot.colhedoras || 0) === 0 ? 'aguardando' : pct >= 85 ? 'seguro' : pct >= 70 ? 'atencao' : 'risco';
+    var texto = status === 'aguardando'
+      ? 'Aguardando telemetria das colhedoras para estimar entrega na moenda'
+      : 'Entrega estimada ' + entrega + ' t/h de ' + meta + ' t/h (' + pct + '% da meta)' +
+        (deficit > 0 ? ' · déficit ' + deficit + ' t/h' : ' · ritmo pleno');
+    return {
+      ativo: true,
+      colhedorasColhendo: tot.colhedorasColhendo || 0,
+      colhedorasTotal: tot.colhedoras || 0,
+      entregaTonHora: entrega,
+      metaTonHora: meta,
+      pctMeta: pct,
+      deficitTonHora: deficit,
+      status: status,
+      texto: texto
+    };
+  }
+
+  function classificarVeiculoApoio(e) {
+    if (!e || typeof e !== 'object') return null;
+    var txt = norm([e.tipo, e.tipoCompleto, e.nome, e.grupoEquipamento].filter(Boolean).join(' '));
+    if (/\b(?:comboio|abastec|lubrific|melosa)\b/.test(txt)) return 'comboio';
+    if (/\b(?:oficina|mecan|socorro|borrach|munck|manutenc)\b/.test(txt)) return 'oficina';
+    if (/\b(?:bombeir|pipa|agua)\b/.test(txt)) return 'bombeiro';
+    return null;
+  }
+
+  function calcularFilaComboioApoio(listaFrota, cfg, agoraMs) {
+    var lista = Array.isArray(listaFrota) ? listaFrota : [];
+    var ts = Number(agoraMs) || Date.now();
+    var recursos = { comboios: [], oficinas: [], bombeiros: [] };
+    var chamados = [];
+
+    for (var i = 0; i < lista.length; i += 1) {
+      var e = lista[i];
+      if (!e || String(e.ativo || 'T') === 'F') continue;
+      var pos = decodificarGeohash(e.geohash);
+      var tipoApoio = classificarVeiculoApoio(e);
+      if (tipoApoio) {
+        var rec = {
+          id: e.id,
+          numero: e.numero || e.id,
+          nome: e.nome || e.id,
+          tipoApoio: tipoApoio,
+          frente: e.frente || e.grupoEquipamento || 'Volante',
+          local: e.local || '',
+          operacao: e.operacao || 'Disponível',
+          velocidade: numericAlertValue(e.velocidade) || 0,
+          pos: pos
+        };
+        if (tipoApoio === 'comboio') recursos.comboios.push(rec);
+        else if (tipoApoio === 'oficina') recursos.oficinas.push(rec);
+        else recursos.bombeiros.push(rec);
+      }
+
+      if (e.operacaoConfirmada !== true) continue;
+      var p = paradaImprodutiva(e);
+      var opNorm = norm(e.operacao || e.descOperacao || '').replace(/^\d+\s*-\s*/, '');
+      var categoriaApoio = null;
+      var motivo = e.operacao || '';
+      if ((p && p.id === 'aguardComboio') || /\b(?:comboio|abastec|falta combust|diesel)\b/.test(opNorm)) {
+        categoriaApoio = 'comboio';
+        motivo = (p && p.nome) || e.operacao || 'Aguardando comboio/abastecimento';
+      } else if ((p && (p.id === 'aguardMecanico' || p.id === 'emManutencao' || p.id === 'equipamentoEncalhado')) ||
+                 /\b(?:mecan|manutenc|borrach|socorro|eletric|encalhad|quebra)\b/.test(opNorm)) {
+        if (!tipoApoio) {
+          categoriaApoio = 'oficina';
+          motivo = (p && p.nome) || e.operacao || 'Aguardando mecânico/manutenção';
+        }
+      } else if ((p && p.id === 'aguardAgua') || /\baguard\w*\s+(?:agua|pipa)\b/.test(opNorm)) {
+        if (!tipoApoio) {
+          categoriaApoio = 'bombeiro';
+          motivo = (p && p.nome) || e.operacao || 'Aguardando água/pipa';
+        }
+      }
+      if (!categoriaApoio) continue;
+
+      var inicio = Number(e.operacaoTs) > 0 && Number(e.operacaoTs) <= ts ? Number(e.operacaoTs) : (ts - 10 * 60000);
+      var minEspera = Math.max(1, Math.round((ts - inicio) / 60000));
+      var custoInfo = custoHoraEquipamento(e, cfg);
+      var pesoClasse = custoInfo.classeCusto === 'colhedora' ? 3.2 : custoInfo.classeCusto === 'transbordo' ? 1.6 : custoInfo.classeCusto === 'caminhao' ? 1.3 : 1.0;
+      var custoRs = Math.round(minEspera * custoInfo.valorMinuto);
+      var score = Math.round(pesoClasse * Math.max(5, minEspera) * 10);
+
+      chamados.push({
+        id: e.id,
+        numero: e.numero || e.id,
+        nome: e.nome || e.id,
+        classeCusto: custoInfo.classeCusto,
+        valorHora: custoInfo.valorHora,
+        operador: e.operador || '',
+        frente: e.frente || e.frenteInferida || e.grupoEquipamento || 'Sem frente',
+        local: e.local || '',
+        categoriaApoio: categoriaApoio,
+        motivo: motivo,
+        minutosEspera: minEspera,
+        custoRs: custoRs,
+        score: score,
+        pos: pos,
+        apoioMaisProximo: null,
+        distanciaKm: null
+      });
+    }
+
+    // Associa o veículo de apoio mais próximo (geohash ou mesma frente)
+    for (var cIdx = 0; cIdx < chamados.length; cIdx += 1) {
+      var ch = chamados[cIdx];
+      var pool = ch.categoriaApoio === 'comboio' ? recursos.comboios
+        : ch.categoriaApoio === 'oficina' ? recursos.oficinas
+        : recursos.bombeiros;
+      var melhor = null;
+      var melhorKm = Infinity;
+      for (var rIdx = 0; rIdx < pool.length; rIdx += 1) {
+        var cand = pool[rIdx];
+        var km = ch.pos && cand.pos ? distanciaKm(ch.pos, cand.pos) : null;
+        if (km !== null && km < melhorKm) {
+          melhorKm = km;
+          melhor = cand;
+        } else if (!melhor && norm(cand.frente) === norm(ch.frente)) {
+          melhor = cand;
+        }
+      }
+      if (!melhor && pool.length) melhor = pool[0];
+      if (melhor) {
+        ch.apoioMaisProximo = melhor.numero + ' (' + melhor.frente + ')';
+        ch.apoioNumero = melhor.numero;
+        ch.distanciaKm = Number.isFinite(melhorKm) ? melhorKm : null;
+      }
+    }
+
+    chamados.sort(function (a, b) {
+      return b.score - a.score || b.custoRs - a.custoRs || b.minutosEspera - a.minutosEspera;
+    });
+
+    for (var ord = 0; ord < chamados.length; ord += 1) {
+      var item = chamados[ord];
+      item.ordem = ord + 1;
+      var ico = item.categoriaApoio === 'comboio' ? '⛽ [DESPACHO COMBOIO' : item.categoriaApoio === 'oficina' ? '🔧 [DESPACHO OFICINA' : '🚒 [DESPACHO PIPA';
+      item.textoDespacho = ico + ' #' + item.ordem + ' — COA]\n' +
+        'Atender Frota ' + item.numero + ' (' + item.nome + ') · ' + item.frente + (item.local ? ' · Talhão ' + item.local : '') + '\n' +
+        'Situação: ' + item.motivo + ' há ' + item.minutosEspera + ' min (impacto ~R$ ' + item.custoRs + ')' +
+        (item.apoioMaisProximo ? '\nUnidade recomendada: Apoio ' + item.apoioMaisProximo + (item.distanciaKm !== null ? ' a ' + item.distanciaKm + ' km' : '') : '') +
+        '\nConfirmar chegada no rádio COA.';
+    }
+
+    return {
+      chamados: chamados,
+      recursos: recursos,
+      resumo: {
+        totalFila: chamados.length,
+        filaComboio: chamados.filter(function (x) { return x.categoriaApoio === 'comboio'; }).length,
+        filaOficina: chamados.filter(function (x) { return x.categoriaApoio === 'oficina'; }).length,
+        custoFilaRs: chamados.reduce(function (s, x) { return s + x.custoRs; }, 0)
+      }
+    };
+  }
+
+  function avaliarRiscoIncendio303030(clima, bombeiros, posFrente, nomeFrente) {
+    var c = isObject(clima) ? clima : {};
+    var temp = Number(c.tempC != null ? c.tempC : 28);
+    var umid = Number(c.umidadePct != null ? c.umidadePct : 48);
+    var vento = Number(c.ventoKmH != null ? c.ventoKmH : 14);
+    var chuvaMm = Number(c.chuvaMm != null ? c.chuvaMm : 0);
+
+    var fTemp = temp >= 30;
+    var fUmid = umid <= 30;
+    var fVento = vento >= 30;
+    var fatores = (fTemp ? 1 : 0) + (fUmid ? 1 : 0) + (fVento ? 1 : 0);
+
+    var bandeira = 'verde';
+    var nivel = 'BAIXO';
+    if (chuvaMm >= 1) {
+      bandeira = 'azul';
+      nivel = 'CHUVA DETECTADA';
+    } else if (fatores === 3) {
+      bandeira = 'vermelha';
+      nivel = 'EXTREMO · 30-30-30';
+    } else if (fatores === 2 || (temp >= 33 && umid <= 28)) {
+      bandeira = 'laranja';
+      nivel = 'ALTO';
+    } else if (fatores === 1) {
+      bandeira = 'amarela';
+      nivel = 'MODERADO';
+    }
+
+    var bLista = Array.isArray(bombeiros) ? bombeiros : [];
+    var maisProximo = null;
+    var menorKm = Infinity;
+    for (var i = 0; i < bLista.length; i += 1) {
+      var b = bLista[i];
+      var bPos = b.pos || decodificarGeohash(b.geohash);
+      var km = posFrente && bPos ? distanciaKm(posFrente, bPos) : null;
+      if (km !== null && km < menorKm) {
+        menorKm = km;
+        maisProximo = { numero: b.numero || b.id, frente: b.frente || '', km: km };
+      } else if (!maisProximo && nomeFrente && norm(b.frente) === norm(nomeFrente)) {
+        maisProximo = { numero: b.numero || b.id, frente: b.frente || '', km: null };
+      }
+    }
+    if (!maisProximo && bLista.length) {
+      maisProximo = { numero: bLista[0].numero || bLista[0].id, frente: bLista[0].frente || '', km: null };
+    }
+
+    return {
+      tempC: Math.round(temp * 10) / 10,
+      umidadePct: Math.round(umid),
+      ventoKmH: Math.round(vento),
+      chuvaMm: Math.round(chuvaMm * 10) / 10,
+      fatores303030: fatores,
+      bandeira: bandeira,
+      nivel: nivel,
+      bombeiroProximo: maisProximo
+    };
+  }
+
+  function gerarPlacarPositivoTurno(dados) {
+    var d = isObject(dados) ? dados : {};
+    var resumoCtt = d.resumoCtt || { frentes: [] };
+    var frota = Array.isArray(d.frota) ? d.frota : [];
+    var hist = Array.isArray(d.hist) ? d.hist : [];
+    var ociososMapa = isObject(d.ociososMapa) ? d.ociososMapa : {};
+    var turno = turnoAtualCoa(d.agoraMs);
+    var histTurno = hist.filter(function (h) { return Number(h && h.ts) >= turno.inicioMs - 15 * 60000; });
+
+    // 1) Frente Campeã
+    var candidatas = (resumoCtt.frentes || []).filter(function (f) { return f.colhTotal > 0 || f.tbTotal > 0; });
+    var frenteDestaque = null;
+    var melhorNotaFrente = -999;
+    for (var i = 0; i < candidatas.length; i += 1) {
+      var f = candidatas[i];
+      var disp = f.colhTotal > 0 ? (f.colhColhendo / f.colhTotal) * 100 : 60;
+      var nota = disp - (f.camFila * 6) - (f.emergencias * 50) - (f.mudas * 8);
+      if (nota > melhorNotaFrente) {
+        melhorNotaFrente = nota;
+        frenteDestaque = {
+          frente: f.frente,
+          colhColhendo: f.colhColhendo,
+          colhTotal: f.colhTotal,
+          camFila: f.camFila,
+          nota: Math.max(0, Math.min(100, Math.round(nota)))
+        };
+      }
+    }
+
+    // 2) Operadores Exemplares (zero infração de velocidade/inconsistência + menor ociosidade)
+    var infracoesPorOp = {};
+    for (var j = 0; j < histTurno.length; j += 1) {
+      var h = histTurno[j];
+      var opNome = String(h.operador || '').trim();
+      if (!opNome) continue;
+      if (!infracoesPorOp[opNome]) infracoesPorOp[opNome] = { graves: 0, total: 0 };
+      infracoesPorOp[opNome].total += 1;
+      if (h.regra === 'velocidade' || h.regra === 'rpm' || h.regra === 'inconsistenciaApontamento') {
+        infracoesPorOp[opNome].graves += 1;
+      }
+    }
+
+    var porOperador = {};
+    for (var k = 0; k < frota.length; k += 1) {
+      var eq = frota[k];
+      var nome = String((eq && eq.operador) || '').trim();
+      if (!nome || /sem operador|nao definid/i.test(nome)) continue;
+      var inf = infracoesPorOp[nome] || { graves: 0, total: 0 };
+      if (inf.graves > 0) continue; // exemplar exige zero excesso de velocidade / RPM / falso apontamento
+      var ocItem = ociososMapa[String(eq.id)] || {};
+      var minOcioso = Math.round((Number(ocItem.segAcumulados) || 0) / 60);
+      var scoreOp = 100 - Math.min(40, minOcioso * 2) - Math.min(20, inf.total * 5);
+      if (!porOperador[nome] || scoreOp > porOperador[nome].score) {
+        porOperador[nome] = {
+          operador: nome,
+          frota: eq.numero || eq.id,
+          frente: eq.frente || eq.grupoEquipamento || '',
+          minOcioso: minOcioso,
+          score: scoreOp
+        };
+      }
+    }
+
+    var operadoresDestaque = Object.keys(porOperador).map(function (n) { return porOperador[n]; })
+      .sort(function (a, b) { return b.score - a.score || a.minOcioso - b.minOcioso; })
+      .slice(0, 3);
+
+    var partesCurto = [];
+    if (frenteDestaque) {
+      partesCurto.push('🏆 Frente Destaque: ' + frenteDestaque.frente + ' (' + frenteDestaque.colhColhendo + '/' + frenteDestaque.colhTotal + ' colhedoras ativas · fila ' + frenteDestaque.camFila + ')');
+    }
+    if (operadoresDestaque.length) {
+      partesCurto.push('⭐ Operadores Exemplares (0 infração): ' + operadoresDestaque.map(function (o) {
+        return o.operador + ' (Frota ' + o.frota + ', ' + o.score + ' pts)';
+      }).join(' · '));
+    }
+    var resumoCurto = partesCurto.join('\n');
+    var textoDds = '🏆 *PLACAR POSITIVO DO TURNO (DDS) — ' + (d.unidade || 'Usina Branco Peres') + '*\n' +
+      '📅 ' + turno.data + ' · ' + turno.nome + '\n\n' +
+      (resumoCurto || 'Operação em andamento — aguardando consolidação da frota no turno.') +
+      '\n\n👏 Parabéns às equipes pela condução segura, apontamento correto e baixo desperdício de diesel!';
+
+    return {
+      frenteDestaque: frenteDestaque,
+      operadoresDestaque: operadoresDestaque,
+      resumoCurto: resumoCurto,
+      textoDds: textoDds
+    };
+  }
+
+  function interpretarComandoCoa(frase) {
+    var t = norm(frase);
+    if (!t) return { acao: 'desconhecido', textoOriginal: '' };
+    var numMatch = t.match(/\b(\d{2,6})\b/);
+    if (/\b(?:onde esta|localizar|achar|buscar|cad[eê]|mostrar frota|ver frota)\b/.test(t) && numMatch) {
+      return { acao: 'localizar', frota: numMatch[1] };
+    }
+    if (/\b(?:chuva)\b/.test(t)) {
+      var frM = t.match(/frente\s*(\d+)/);
+      return { acao: 'chuva', frente: frM ? 'Frente ' + frM[1] : 'Frente 1' };
+    }
+    if (/\b(?:comboio|abastec|oficina|mecan|apoio|uber)\b/.test(t)) {
+      return { acao: 'comboio' };
+    }
+    if (/\b(?:moenda|moagem|custo|taximetro|financeir|tonelad)\b/.test(t)) {
+      return { acao: 'moenda' };
+    }
+    if (/\b(?:reconhec|ciente|confirmar|cobrad)\b/.test(t)) {
+      return { acao: 'reconhecer' };
+    }
+    if (/\b(?:passagem|boletim|relatorio)\b/.test(t)) {
+      return { acao: 'passagem' };
+    }
+    if (/\b(?:dds|placar|destaque|campe|elogio)\b/.test(t)) {
+      return { acao: 'dds' };
+    }
+    if (/\b(?:resumo|frentes|situacao|panorama|ctt)\b/.test(t)) {
+      return { acao: 'frentes' };
+    }
+    if (numMatch) {
+      return { acao: 'localizar', frota: numMatch[1] };
+    }
+    return { acao: 'desconhecido', textoOriginal: String(frase || '') };
   }
 
   return Object.freeze({
@@ -1002,6 +1519,17 @@
     analisarFrentesCtt: analisarFrentesCtt,
     textoCobrancaWhatsApp: textoCobrancaWhatsApp,
     turnoAtualCoa: turnoAtualCoa,
-    gerarBoletimPassagemTurno: gerarBoletimPassagemTurno
+    gerarBoletimPassagemTurno: gerarBoletimPassagemTurno,
+    decodificarGeohash: decodificarGeohash,
+    distanciaKm: distanciaKm,
+    custoHoraEquipamento: custoHoraEquipamento,
+    inconsistenciaApontamento: inconsistenciaApontamento,
+    caminhaoEmBateVolta: caminhaoEmBateVolta,
+    detectarFalhaRecorrente: detectarFalhaRecorrente,
+    calcularTermometroMoenda: calcularTermometroMoenda,
+    calcularFilaComboioApoio: calcularFilaComboioApoio,
+    avaliarRiscoIncendio303030: avaliarRiscoIncendio303030,
+    gerarPlacarPositivoTurno: gerarPlacarPositivoTurno,
+    interpretarComandoCoa: interpretarComandoCoa
   });
 }));

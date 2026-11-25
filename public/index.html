@@ -64,6 +64,9 @@
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
           <span>Instalar</span>
         </button>
+        <button id="btn-mic-bar" class="icon-btn" type="button" title="Alô COA — Comando de voz mãos-livres (ex.: fila de comboio, risco de moenda)" aria-label="Comando de voz Alô COA">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+        </button>
         <button id="btn-voz-bar" class="icon-btn voz-ativa" type="button" title="Voz dos alertas ligada (clique para silenciar ou ativar)" aria-label="Alternar voz dos alertas" aria-pressed="true">
           <svg class="ico-voz-on" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
           <svg class="ico-voz-off hide" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
@@ -165,8 +168,10 @@
           </div>
           <div class="menu-group">
             <button data-act="alertas"><span class="m-ico">🔔</span><span>Central de alertas</span></button>
-            <button data-act="frentes"><span class="m-ico">🚜</span><span>Raio-X das Frentes (CTT ao vivo)</span></button>
-            <button data-act="passagem"><span class="m-ico">📋</span><span>Gerar Passagem de Turno COA</span></button>
+            <button data-act="frentes"><span class="m-ico">🚜</span><span>Raio-X das Frentes &amp; Moenda (CTT)</span></button>
+            <button data-act="comboio"><span class="m-ico">⛽</span><span>Despacho de Comboio &amp; Oficina (Uber COA)</span></button>
+            <button data-act="alocoa"><span class="m-ico">🎙️</span><span>Alô COA — Assistente por Voz/Comando</span></button>
+            <button data-act="passagem"><span class="m-ico">📋</span><span>Gerar Passagem de Turno &amp; DDS</span></button>
             <button data-act="telao"><span class="m-ico">🖥️</span><span id="menu-telao-txt">Modo Telão / Videowall COA</span></button>
             <button data-act="regras"><span class="m-ico">🎛️</span><span>Preferências de alertas e vozes</span></button>
             <button data-act="pip"><span class="m-ico">⧉</span><span>Mini-painel flutuante COA (2º plano no PC)</span></button>

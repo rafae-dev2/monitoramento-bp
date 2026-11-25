@@ -383,6 +383,18 @@
 
   if ($('btn-pip')) $('btn-pip').addEventListener('click', acionarPipCoa);
 
+  if ($('btn-mic-bar')) {
+    $('btn-mic-bar').addEventListener('click', () => {
+      if (!ALERTAS_ON) return;
+      if (!alertasLigados && session) ligarAlertas();
+      if (typeof MonitoramentoAlertas.ouvirComandoVoz === 'function') {
+        MonitoramentoAlertas.ouvirComandoVoz();
+      } else if (typeof MonitoramentoAlertas.abrirPainel === 'function') {
+        MonitoramentoAlertas.abrirPainel('comboio');
+      }
+    });
+  }
+
   const elClock = $('coa-clock');
   if (elClock) {
     const atualizarRelogioCoa = () => {
@@ -533,6 +545,18 @@
     if (act === 'frentes' && ALERTAS_ON) {
       if (!alertasLigados && session) ligarAlertas();
       MonitoramentoAlertas.abrirPainel('frentes');
+    }
+    if (act === 'comboio' && ALERTAS_ON) {
+      if (!alertasLigados && session) ligarAlertas();
+      MonitoramentoAlertas.abrirPainel('comboio');
+    }
+    if (act === 'alocoa' && ALERTAS_ON) {
+      if (!alertasLigados && session) ligarAlertas();
+      if (typeof MonitoramentoAlertas.abrirAssistenteCoa === 'function') {
+        MonitoramentoAlertas.abrirAssistenteCoa();
+      } else {
+        MonitoramentoAlertas.abrirPainel('comboio');
+      }
     }
     if (act === 'passagem' && ALERTAS_ON) {
       if (!alertasLigados && session) ligarAlertas();

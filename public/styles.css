@@ -479,6 +479,13 @@ button:focus-visible,
   color: #a7f3d0;
 }
 
+#actions #btn-mic-bar.mic-ouvindo {
+  background: rgba(245, 158, 11, 0.34);
+  border-color: rgba(250, 204, 21, 0.85);
+  color: #fef08a;
+  box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.24);
+}
+
 /* ========================= PALCO & OVERLAYS ========================= */
 
 #stage {
@@ -904,7 +911,8 @@ code {
 
 @media (max-width: 740px) {
   .coa-clock,
-  #btn-pip {
+  #btn-pip,
+  #btn-mic-bar {
     display: none;
   }
 }

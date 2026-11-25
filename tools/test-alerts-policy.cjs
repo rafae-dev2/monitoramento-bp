@@ -273,4 +273,64 @@ const boletim = policy.gerarBoletimPassagemTurno({
 assert.match(boletim.texto, /PASSAGEM DE TURNO COA/);
 assert.match(boletim.texto, /Colhedora 57838/);
 assert.match(boletim.texto, /DESPERDÍCIO DE DIESEL/);
-console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 passaram.');
+
+// Inteligência COA v4.0.0: falso apontamento, taxímetro R$, termômetro de moenda, Uber do Comboio, 30-30-30, bate-volta, preditiva, DDS e Alô COA.
+const incColh = policy.inconsistenciaApontamento({ tipo: 'COLHEDORA', operacaoConfirmada: true, operacao: '101 - Colheita Mecanizada', velocidade: 0, rpm: 800, motor: true });
+assert.ok(incColh && incColh.subtipo === 'colheitaParada');
+const incMov = policy.inconsistenciaApontamento({ tipo: 'TRATOR', operacaoConfirmada: true, operacao: '953 - Sem Apontamento', velocidade: 24, rpm: 1650, motor: true });
+assert.ok(incMov && incMov.subtipo === 'paradaEmMovimento');
+assert.equal(policy.inconsistenciaApontamento({ tipo: 'TRATOR', operacaoConfirmada: true, operacao: '905 - Aguardando Caminhão', velocidade: 85, rpm: 0, motor: false }), null);
+
+assert.equal(policy.custoHoraEquipamento({ tipo: 'COLHEDORA' }, {}).valorHora, 850);
+assert.equal(policy.caminhaoEmBateVolta({ tipo: 'CAMINHÃO CANAVIEIRO', operacaoConfirmada: true, operacao: '305 - Transporte de Cana' }), true);
+assert.equal(policy.caminhaoEmBateVolta({ tipo: 'CAMINHÃO BOMBEIRO', operacaoConfirmada: true, operacao: '305 - Transporte' }), false);
+
+const agoraRef = Date.now();
+const rec = policy.detectarFalhaRecorrente('C1', [
+  { ts: agoraRef - 10 * 60000, chave: 'C1|rpm', equipamento: '57838', regra: 'rpm', nomeAlarme: 'RPM MAXIMA' },
+  { ts: agoraRef - 40 * 60000, chave: 'C1|parada:aguardMecanico', equipamento: '57838', regra: 'paradaImprodutiva', nomeAlarme: 'Aguardando mecânico' },
+  { ts: agoraRef - 90 * 60000, chave: 'C1|motorCondicao', equipamento: '57838', regra: 'motorCondicao', nomeAlarme: 'Temperatura Motor' },
+], agoraRef, 240, 3);
+assert.ok(rec && rec.ocorrencias === 3);
+
+const moenda = policy.calcularTermometroMoenda(ctt, { metaMoagemTonHora: 400, tonHoraPorColhedora: 70 });
+assert.equal(moenda.entregaTonHora, 140);
+assert.equal(moenda.status, 'risco');
+
+const fila = policy.calcularFilaComboioApoio([
+  { id: 'CB1', numero: '9920', nome: 'Caminhão Comboio', tipo: 'CAMINHÃO COMBOIO', frente: 'Frente 1', geohash: '6u18n7m0', ativo: 'T' },
+  { id: 'OF1', numero: '9930', nome: 'Oficina Volante', tipo: 'OFICINA VOLANTE', frente: 'Frente 3', geohash: '6u18n7k0', ativo: 'T' },
+  { id: 'TR1', numero: '7001', nome: 'Transbordo BP', tipo: 'TRANSBORDO', frente: 'Frente 1', operacaoConfirmada: true, operacao: '940 - Aguardando Comboio', operacaoTs: agoraRef - 20 * 60000, geohash: '6u18n7m5', ativo: 'T' },
+  { id: 'CH1', numero: '57838', nome: 'Colhedora JD', tipo: 'COLHEDORA', frente: 'Frente 1', operacaoConfirmada: true, operacao: '940 - Aguardando Comboio', operacaoTs: agoraRef - 15 * 60000, geohash: '6u18n7m2', ativo: 'T' },
+], {}, agoraRef);
+assert.equal(fila.chamados.length, 2);
+assert.equal(fila.chamados[0].numero, '57838', 'Colhedora tem prioridade #1 sobre transbordo pelo peso produtivo/R$');
+assert.equal(fila.chamados[0].apoioNumero, '9920');
+assert.ok(fila.chamados[0].distanciaKm !== null && fila.chamados[0].distanciaKm >= 0);
+assert.match(fila.chamados[0].textoDespacho, /DESPACHO COMBOIO #1/);
+
+const r30 = policy.avaliarRiscoIncendio303030({ tempC: 34, umidadePct: 24, ventoKmH: 33, chuvaMm: 0 }, [{ id: 'B1', numero: '9911', frente: 'Frente 1', geohash: '6u18n7m0' }], policy.decodificarGeohash('6u18n7m5'), 'Frente 1');
+assert.equal(r30.bandeira, 'vermelha');
+assert.equal(r30.fatores303030, 3);
+assert.equal(r30.bombeiroProximo.numero, '9911');
+
+const dds = policy.gerarPlacarPositivoTurno({
+  resumoCtt: ctt,
+  frota: [
+    { id: 'C2', numero: '57839', frente: 'Frente 3', operador: 'Carlos Eduardo' },
+    { id: 'C1', numero: '57838', frente: 'Frente 1', operador: 'Infrator Teste' },
+  ],
+  hist: [{ ts: agoraRef - 5000, operador: 'Infrator Teste', regra: 'velocidade' }],
+  ociososMapa: { C2: { segAcumulados: 60 } },
+  agoraMs: agoraRef,
+});
+assert.ok(dds.frenteDestaque);
+assert.equal(dds.operadoresDestaque.length, 1);
+assert.equal(dds.operadoresDestaque[0].operador, 'Carlos Eduardo');
+
+assert.equal(policy.interpretarComandoCoa('fila de comboio').acao, 'comboio');
+assert.equal(policy.interpretarComandoCoa('onde está a 57838').frota, '57838');
+assert.equal(policy.interpretarComandoCoa('risco de moenda').acao, 'moenda');
+assert.equal(policy.interpretarComandoCoa('modo chuva frente 2').frente, 'Frente 2');
+
+console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 passaram.');

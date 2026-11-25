@@ -790,7 +790,7 @@ with sync_playwright() as pw:
     assert page.locator('#cfg-alertas').evaluate("el => el.classList.contains('hide')"), 'O X deve fechar as preferências'
     assert page.evaluate('document.activeElement.id === "btn-cfg"'), 'Ao fechar, o foco deve voltar ao controle de configurações visível'
     page.click('#btn-cfg')
-    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 16")
+    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 20")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
     assert page.locator('#cfg-categorias input[aria-label="Notificar: Frente dividida (validar FUT)"]').is_checked(), 'Frente dividida deve aparecer ligada por padrão nas preferências'
     assert page.locator('#cfg-gestao-frente').is_checked(), 'Atenção gestão deve ter opção mestre ligada por padrão'
@@ -822,7 +822,7 @@ with sync_playwright() as pw:
     print('OK: expansão de AG/COLH, prévia, substituição personalizada e persistência do glossário')
     page.fill('#cfg-busca-categoria', 'fila')
     vis = page.evaluate("[...document.querySelectorAll('#cfg-categorias > *')].filter(x => !x.classList.contains('hide')).length")
-    assert 1 <= vis < 16, f'busca de categorias deve filtrar ({vis})'
+    assert 1 <= vis < 20, f'busca de categorias deve filtrar ({vis})'
     page.fill('#cfg-busca-categoria', 'xyzinexistente')
     assert page.locator('#cfg-categorias-vazio').is_visible(), 'mensagem de nenhum alerta'
     page.fill('#cfg-busca-categoria', '')
@@ -1201,9 +1201,94 @@ with sync_playwright() as pw:
     }""")
     print('OK: Mesa de Comando COA v3.0.0 (CTT, balanceamento, frota muda, chuva, emergência, qualidade, tratativa, WhatsApp, passagem e telão) validada')
 
+    # Verificações Combo de Ouro COA v4.0.0 (todas as 8 funcionalidades estratégicas)
+    page.evaluate("""() => {
+      __test.reset();
+      __test.capturarFalas();
+      MonitoramentoAlertas.configurar({
+        ativo: true, voz: true, popup: true, som: false, vibrar: false,
+        auditarApontamento: true, minutosInconsistencia: 5, minutosBateVoltaMax: 50,
+        manutencaoPreditivaAtiva: true, metaMoagemTonHora: 420, tonHoraPorColhedora: 65,
+        custoHoraColhedora: 850, custoHoraTransbordo: 260, custoHoraCaminhao: 220, custoLitroDiesel: 6.2
+      });
+      const baseMs = Date.now();
+      const iso = new Date(baseMs).toISOString();
+      __test.aplicarTelemetria([
+        { cdEquipamento: 'CB-01', descEquipamento: '9920 - Caminhão Comboio Lubrif', descTpEquipamento: 'CAMINHÃO COMBOIO', descFrente: 'Frente 1', descOperacao: '210 - Disponível', vlVelocidade: 12, vlParametro4: 1300, vlEd1: '1', geohash: '6u18n7m0', vlTempoSemComunicacao: '0 DIA(S) 00:00:03', fgMonitoramentoAtivo: 'T', dtHrLocal: iso },
+        { cdEquipamento: 'OF-01', descEquipamento: '9930 - Oficina Volante Mecânica', descTpEquipamento: 'OFICINA VOLANTE', descFrente: 'Frente 2', descOperacao: '210 - Disponível', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', geohash: '6u18n7k0', vlTempoSemComunicacao: '0 DIA(S) 00:00:03', fgMonitoramentoAtivo: 'T', dtHrLocal: iso },
+        { cdEquipamento: 'BM-01', descEquipamento: '9911 - Caminhão Bombeiro Pipa', descTpEquipamento: 'CAMINHÃO BOMBEIRO', descFrente: 'Frente 1', descOperacao: '210 - Prontidão', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', geohash: '6u18n7m1', vlTempoSemComunicacao: '0 DIA(S) 00:00:03', fgMonitoramentoAtivo: 'T', dtHrLocal: iso },
+        { cdEquipamento: 'CH-10', descEquipamento: '57838 - Colhedora John Deere', descTpEquipamento: 'COLHEDORA', descFrente: 'Frente 1', descFuncionario: '101 - Carlos Eduardo', descOperacao: '940 - Aguardando Comboio', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', geohash: '6u18n7m4', vlTempoSemComunicacao: '0 DIA(S) 00:00:03', fgMonitoramentoAtivo: 'T', dtHrLocal: iso },
+        { cdEquipamento: 'TB-10', descEquipamento: '7010 - Transbordo BP', descTpEquipamento: 'TRANSBORDO', descFrente: 'Frente 2', descFuncionario: '102 - Marcos Paulo', descOperacao: '410 - Aguardando Mecânico', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', geohash: '6u18n7k3', vlTempoSemComunicacao: '0 DIA(S) 00:00:03', fgMonitoramentoAtivo: 'T', dtHrLocal: iso },
+        { cdEquipamento: 'CH-20', descEquipamento: '57839 - Colhedora Case', descTpEquipamento: 'COLHEDORA', descFrente: 'Frente 2', descFuncionario: '103 - Operador Apontamento', descOperacao: '101 - Colheita Mecanizada', vlVelocidade: 0, vlParametro4: 800, vlEd1: '1', geohash: '6u18n7k5', vlTempoSemComunicacao: '0 DIA(S) 00:00:03', fgMonitoramentoAtivo: 'T', dtHrLocal: iso },
+        { cdEquipamento: 'BV-10', descEquipamento: '4490 - Caminhão Canavieiro', descTpEquipamento: 'CAMINHÃO CANAVIEIRO', descFrente: 'Frente 1', descFuncionario: '104 - João Estrada', descOperacao: '305 - Transporte de Cana', vlVelocidade: 2, vlParametro4: 900, vlEd1: '1', geohash: '6u18n7m8', vlTempoSemComunicacao: '0 DIA(S) 00:00:03', fgMonitoramentoAtivo: 'T', dtHrLocal: iso },
+      ]);
+      __test.avaliarFrota(baseMs, 'lotes');
+
+      // Avança 56 minutos: dispara Falso Apontamento (CH-20), Bate-Volta (BV-10) e Risco de Moenda (0 colhendo de 2)
+      __test.avaliarFrota(baseMs + 56 * 60_000, 'tempo');
+
+      const ativosV4 = MonitoramentoAlertas.ativos();
+      if (!ativosV4.some(a => a.regra === 'inconsistenciaApontamento' && a.numero === '57839')) {
+        throw new Error('Falso apontamento da colhedora 57839 parada em Colheita deveria disparar');
+      }
+      if (!ativosV4.some(a => a.regra === 'bateVolta' && a.numero === '4490')) {
+        throw new Error('Caminhão 4490 em bate-volta > 50 min deveria disparar');
+      }
+      if (!ativosV4.some(a => a.regra === 'riscoMoenda')) {
+        throw new Error('Risco de moenda deveria disparar após > 15 min com entrega abaixo da meta');
+      }
+
+      // Manutenção preditiva: 3 eventos de RPM/motor em 4h na TB-10
+      for (let i = 1; i <= 3; i++) {
+        __test.espelharAlarmes([{ cdEquipamento: 'TB-10', cdId: 'RPM-PRED-' + i, cdTpAlarme: 4, descTpAlarme: 'RPM MAXIMA MOTOR', vlAlarme: 2250 + i, fgOnline: true }]);
+      }
+      __test.avaliarFrota(baseMs + 57 * 60_000, 'lotes');
+      if (!MonitoramentoAlertas.ativos().some(a => a.regra === 'manutencaoPreditiva' && a.numero === '7010')) {
+        throw new Error('Manutenção preditiva da frota 7010 com 3 falhas deveria disparar');
+      }
+
+      // Uber do Comboio e Oficina Volante + Despacho WhatsApp
+      MonitoramentoAlertas.abrirPainel('comboio');
+      if (document.getElementById('lista-comboio').classList.contains('hide')) throw new Error('Aba Comboio não abriu');
+      const fila = MonitoramentoAlertas.filaComboio();
+      if (fila.chamados.length < 2 || fila.chamados[0].numero !== '57838') {
+        throw new Error('Colhedora 57838 deveria ser #1 na fila inteligente de comboio');
+      }
+      const txtDesp = MonitoramentoAlertas.despacharApoioWhatsApp(fila.chamados[0]);
+      if (!txtDesp.includes('DESPACHO COMBOIO #1') || !txtDesp.includes('9920')) {
+        throw new Error('Texto de despacho WhatsApp inválido: ' + txtDesp);
+      }
+
+      // Radar Climático 30-30-30 + Bombeiro mais próximo
+      const r30 = MonitoramentoAlertas.definirClimaManual({ tempC: 35, umidadePct: 22, ventoKmH: 34, chuvaMm: 0 });
+      if (r30.bandeira !== 'vermelha' || !r30.bombeiroProximo || r30.bombeiroProximo.numero !== '9911') {
+        throw new Error('Regra 30-30-30 deveria ativar bandeira vermelha e localizar bombeiro 9911');
+      }
+      if (!document.querySelector('#lista-comboio .radar-303030.bandeira-vermelha')) {
+        throw new Error('Cartão visual 30-30-30 não refletiu bandeira vermelha');
+      }
+
+      // Taxímetro R$, Termômetro de Moenda, Alô COA e Placar Positivo DDS
+      const custo = MonitoramentoAlertas.custoTurno();
+      if (!(custo.totalRs > 0)) throw new Error('Taxímetro financeiro deveria calcular perda > R$ 0');
+      const cmdMoenda = MonitoramentoAlertas.executarComandoCoa('risco de moenda');
+      if (!cmdMoenda.resposta.includes('toneladas por hora')) throw new Error('Alô COA não respondeu comando de moenda');
+      if (!document.querySelector('#lista-frentes .moenda-card')) throw new Error('Termômetro de moenda não renderizou na aba Frentes');
+      const placar = MonitoramentoAlertas.placarPositivo();
+      if (!placar.operadoresDestaque.some(o => o.operador === 'Carlos Eduardo')) {
+        throw new Error('Placar Positivo DDS deveria destacar operador sem infração');
+      }
+      const bolV4 = MonitoramentoAlertas.gerarPassagemTurno();
+      if (!bolV4.texto.includes('DESTAQUES POSITIVOS PARA O DDS')) {
+        throw new Error('Boletim de passagem de turno deveria incluir seção de DDS');
+      }
+      __test.restaurarFalas();
+    }""")
+    print('OK: Combo de Ouro COA v4.0.0 (Falso Apontamento, Taxímetro R$, Moenda t/h, Alô COA, Uber do Comboio, Radar 30-30-30, Bate-Volta + Preditiva e Placar DDS) validado')
+
     assert not errors, errors
     assert not any(m=='POST' for m,u in requests), 'Teste tentou POST'
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+15} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+16} grupos de verificações.')

@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '3.0.0';
+  const VERSAO = '4.0.0';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -39,6 +39,8 @@
   const KEY_TRATATIVAS = 'bperes.coa.tratativas.v1';
   const KEY_CHUVAS = 'bperes.coa.chuvas.v1';
   const KEY_OCIOSIDADE = 'bperes.coa.ocioso-turno.v1';
+  const KEY_FINANCEIRO = 'bperes.coa.custo-turno.v1';
+  const KEY_CLIMA = 'bperes.coa.clima.v1';
   const KEY_TELAO = 'bperes.visual.telao.v1';
   const KEY_AUDIT_QUEUE = 'bperes.alertas.audit-queue.v1';
   const KEY_PUSH_DEVICE = 'bperes.push.deviceId.v1';
@@ -142,6 +144,10 @@
     gestaoFrente: { id: 'gestaoFrente', nome: 'Gestão da frente', icone: '🚩', cor: '#f59e0b', severidade: 3 },
     telemetriaMuda: { id: 'telemetriaMuda', nome: 'Frota muda (sem telemetria)', icone: '📡', cor: '#f59e0b', severidade: 3 },
     qualidadeColheita: { id: 'qualidadeColheita', nome: 'Qualidade de colheita (velocidade)', icone: '🌾', cor: '#eab308', severidade: 2 },
+    inconsistenciaApontamento: { id: 'inconsistenciaApontamento', nome: 'Falso apontamento (inconsistência)', icone: '🕵️', cor: '#f97316', severidade: 2 },
+    riscoMoenda: { id: 'riscoMoenda', nome: 'Risco de moenda (entrega abaixo da meta)', icone: '🏭', cor: '#ef4444', severidade: 3 },
+    bateVolta: { id: 'bateVolta', nome: 'Bate-volta excedido (caminhão)', icone: '🛣️', cor: '#f59e0b', severidade: 2 },
+    manutencaoPreditiva: { id: 'manutencaoPreditiva', nome: 'Manutenção preditiva (falha recorrente)', icone: '🔧', cor: '#ef4444', severidade: 3 },
     generico: { id: 'generico', nome: 'Alarme do portal', icone: '⚠️', cor: '#94a3b8', severidade: 1 },
   };
 
@@ -169,6 +175,17 @@
     minutosFrotaMuda: 25, // minutos sem comunicação de telemetria para alertar frota muda (0 = desliga)
     velMaxColheita: 7.5, // km/h máximo técnico em colheita (0 = desliga)
     slaAlertaMin: 10, // meta de SLA do COA em minutos para destaque no cartão
+    auditarApontamento: true, // auditoria automática de falso apontamento (operação vs. telemetria)
+    minutosInconsistencia: 8, // minutos em inconsistência de apontamento antes de alertar (0 = desliga)
+    minutosBateVoltaMax: 55, // minutos máximos em transporte/viagem antes de alertar caminhão retido (0 = desliga)
+    manutencaoPreditivaAtiva: true, // alerta falha mecânica/RPM recorrente (>= 3 em 4h)
+    metaMoagemTonHora: 420, // t/h meta da moenda da usina (0 = desliga)
+    tonHoraPorColhedora: 65, // produtividade média estimada por colhedora colhendo (t/h)
+    custoHoraColhedora: 850, // R$/h parada improdutiva colhedora
+    custoHoraTransbordo: 260, // R$/h parada improdutiva transbordo/trator
+    custoHoraCaminhao: 220, // R$/h parada improdutiva caminhão canavieiro
+    custoHoraApoio: 180, // R$/h veículo de apoio
+    custoLitroDiesel: 6.2, // R$/L diesel agrícola
     paradasLimites: {}, // id da parada → minutos de tolerância (0 = não alertar)
     minutosSemApontamento: 5, // tolerância antes de alertar operação “Sem Apontamento”
     minutosTurno: 4, // pedido do usuário (o portal usa 3)
@@ -214,9 +231,14 @@
   let tratativas = carregar(KEY_TRATATIVAS, {});
   let chuvas = carregar(KEY_CHUVAS, {});
   let ociosidadeTurno = carregar(KEY_OCIOSIDADE, { turnoChave: '', itens: {} });
+  let custoImprodutivoTurno = carregar(KEY_FINANCEIRO, { turnoChave: '', paradoRs: 0, porClasse: {} });
+  let climaCoa = carregar(KEY_CLIMA, { tempC: 29, umidadePct: 44, ventoKmH: 16, chuvaMm: 0, atualizadoEm: 0, origem: 'manual' });
   let telaoAtivo = false;
   let emergenciaAtiva = null;
   let ultimoAcumuloOciosoTs = 0;
+  let ultimoAcumuloCustoTs = 0;
+  let ultimaRespostaAloCoa = '';
+  let reconhecedorVozAtivo = null;
   let ultimoResumoCtt = { frentes: [], sugestoesBalanceamento: [], frotasMudas: [], totais: {} };
   const TAGS_TRATATIVA_COA = ['Cobrado no rádio', 'Mecânica acionada', 'Comboio acionado', 'Líder ciente', 'Chuva/Clima', 'Falso alarme'];
   let ctx = { selecao: new Set(Array.isArray(cfg.selecaoMapa) ? cfg.selecaoMapa.map(String) : []), props: null };
@@ -2040,6 +2062,224 @@
     });
   }
 
+  function acumularCustosTurno(ts = agora()) {
+    const turno = policy.turnoAtualCoa(ts);
+    if (!custoImprodutivoTurno || custoImprodutivoTurno.turnoChave !== turno.chave) {
+      custoImprodutivoTurno = { turnoChave: turno.chave, paradoRs: 0, porClasse: {} };
+    }
+    const deltaSeg = ultimoAcumuloCustoTs > 0 ? Math.min(90, Math.max(0, Math.round((ts - ultimoAcumuloCustoTs) / 1000))) : 0;
+    ultimoAcumuloCustoTs = ts;
+    if (deltaSeg <= 0) return;
+    let somou = false;
+    for (const e of frota.values()) {
+      if (!dentroDoEscopo(e) || e.operacaoConfirmada !== true) continue;
+      if (frenteEmChuva(e.frente || e.frenteInferida || e.grupoEquipamento)) continue;
+      const improdutivo = !!policy.paradaImprodutiva(e) || policy.aguardandoCaminhao(e) || policy.semApontamento(e);
+      if (!improdutivo) continue;
+      const info = policy.custoHoraEquipamento(e, cfg);
+      const inc = (deltaSeg / 3600) * info.valorHora;
+      custoImprodutivoTurno.paradoRs = Math.round((Number(custoImprodutivoTurno.paradoRs || 0) + inc) * 100) / 100;
+      custoImprodutivoTurno.porClasse[info.classeCusto] = Math.round(((custoImprodutivoTurno.porClasse[info.classeCusto] || 0) + inc) * 100) / 100;
+      somou = true;
+    }
+    if (somou) salvar(KEY_FINANCEIRO, custoImprodutivoTurno);
+  }
+
+  function custoTurno() {
+    const segOciosoTotal = Object.values((ociosidadeTurno && ociosidadeTurno.itens) || {})
+      .reduce((s, o) => s + (Number(o && o.segAcumulados) || 0), 0);
+    const litrosOcioso = Math.round((segOciosoTotal / 3600) * 4 * 10) / 10;
+    const precoDiesel = Math.max(1, num(cfg.custoLitroDiesel) || 6.2);
+    const dieselRs = Math.round(litrosOcioso * precoDiesel);
+    const paradoBase = Math.round(Number((custoImprodutivoTurno && custoImprodutivoTurno.paradoRs) || 0));
+    // Também reflete impacto vivo das paradas ativas ainda abertas caso o turno tenha acabado de abrir
+    let abertoRs = 0;
+    const ts = agora();
+    for (const a of ativos.values()) {
+      if (a.regra === 'paradaImprodutiva' || a.regra === 'aguardandoCaminhao' || a.regra === 'aguardandoBasculamento' || a.regra === 'semApontamento') {
+        const min = Math.max(0, (ts - (a.inicio || a.ts || ts)) / 60_000);
+        const info = policy.custoHoraEquipamento(a.e || {}, cfg);
+        abertoRs += Math.round(min * info.valorMinuto);
+      }
+    }
+    const paradoRs = Math.max(paradoBase, abertoRs);
+    return {
+      paradoRs,
+      dieselRs,
+      litrosOcioso,
+      totalRs: paradoRs + dieselRs,
+      porClasse: (custoImprodutivoTurno && custoImprodutivoTurno.porClasse) || {},
+    };
+  }
+
+  function termometroMoenda() {
+    const res = ultimoResumoCtt && ultimoResumoCtt.totais ? ultimoResumoCtt : resumoFrentes();
+    return policy.calcularTermometroMoenda(res, cfg);
+  }
+
+  function filaComboio() {
+    const lista = [...frota.values()].filter((e) => dentroDoEscopo(e, { ignorarAtraso: true }));
+    return policy.calcularFilaComboioApoio(lista, cfg, agora());
+  }
+
+  function placarPositivo() {
+    const res = ultimoResumoCtt && ultimoResumoCtt.frentes ? ultimoResumoCtt : resumoFrentes();
+    const lista = [...frota.values()].filter((e) => dentroDoEscopo(e, { ignorarAtraso: true }));
+    return policy.gerarPlacarPositivoTurno({
+      resumoCtt: res,
+      frota: lista,
+      hist,
+      ociososMapa: (ociosidadeTurno && ociosidadeTurno.itens) || {},
+      unidade: ctx.unidade || 'Usina Branco Peres',
+      agoraMs: agora(),
+    });
+  }
+
+  function radarIncendio() {
+    const fila = filaComboio();
+    const amostraPos = [...frota.values()].map((e) => policy.decodificarGeohash(e.geohash)).find(Boolean) || null;
+    const frenteRef = (ultimoResumoCtt && ultimoResumoCtt.frentes && ultimoResumoCtt.frentes[0] && ultimoResumoCtt.frentes[0].frente) || '';
+    return Object.assign(
+      policy.avaliarRiscoIncendio303030(climaCoa, fila.recursos.bombeiros, amostraPos, frenteRef),
+      { origem: (climaCoa && climaCoa.origem) || 'manual', atualizadoEm: (climaCoa && climaCoa.atualizadoEm) || 0 }
+    );
+  }
+
+  function definirClimaManual(patch) {
+    if (!patch || typeof patch !== 'object') return radarIncendio();
+    climaCoa = Object.assign({}, climaCoa, {
+      tempC: patch.tempC != null ? Number(patch.tempC) : climaCoa.tempC,
+      umidadePct: patch.umidadePct != null ? Number(patch.umidadePct) : climaCoa.umidadePct,
+      ventoKmH: patch.ventoKmH != null ? Number(patch.ventoKmH) : climaCoa.ventoKmH,
+      chuvaMm: patch.chuvaMm != null ? Number(patch.chuvaMm) : (climaCoa.chuvaMm || 0),
+      atualizadoEm: agora(),
+      origem: patch.origem || 'manual',
+    });
+    salvar(KEY_CLIMA, climaCoa);
+    const aval = radarIncendio();
+    if (aval.bandeira === 'vermelha' && cfg.voz && agora() >= (Number(cfg.silencioAte) || 0)) {
+      falar(`Atenção C O A: regra trinta trinta trinta atingida. Risco extremo de incêndio com ${aval.tempC} graus, umidade ${aval.umidadePct} por cento e vento de ${aval.ventoKmH} quilômetros por hora.`, { oficial: true });
+    }
+    if (el.comboio && !el.comboio.classList.contains('hide')) renderComboio();
+    renderTelaoBar();
+    return aval;
+  }
+
+  async function atualizarClimaOnline() {
+    const pos = [...frota.values()].map((e) => policy.decodificarGeohash(e.geohash)).find(Boolean) || { lat: -21.25, lon: -50.65 };
+    try {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${pos.lat.toFixed(4)}&longitude=${pos.lon.toFixed(4)}&current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m`;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const j = await res.json();
+      const cur = (j && j.current) || {};
+      const aval = definirClimaManual({
+        tempC: Number(cur.temperature_2m ?? climaCoa.tempC),
+        umidadePct: Number(cur.relative_humidity_2m ?? climaCoa.umidadePct),
+        ventoKmH: Number(cur.wind_speed_10m ?? climaCoa.ventoKmH),
+        chuvaMm: Number(cur.precipitation ?? 0),
+        origem: 'meteorologia GPS',
+      });
+      mostrarAviso(`Clima atualizado (${aval.tempC}°C · ${aval.umidadePct}% · vento ${aval.ventoKmH} km/h).`, 'info');
+      return aval;
+    } catch {
+      mostrarAviso('Sem acesso externo de meteorologia agora — ajuste os valores manualmente no cartão 30-30-30.', 'info');
+      return radarIncendio();
+    }
+  }
+
+  function regraInconsistenciaApontamento(e, ts) {
+    if (cfg.auditarApontamento === false) return;
+    const min = Math.max(0, num(cfg.minutosInconsistencia) || 0);
+    if (!min) return;
+    const det = policy.inconsistenciaApontamento(e);
+    const liga = !!det;
+    const st = marcar(e.id, 'inconsistenciaApontamento', liga, ts, det ? det.velocidade : null);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!liga || !st.firing) return;
+    const durou = (ts - inicioReal(st, e)) / 60_000;
+    if (durou < min) return;
+    if (!podeDisparar(st, ts)) return;
+    emitir({
+      chave: st.chave,
+      regra: 'inconsistenciaApontamento',
+      e,
+      valor: Math.round(durou),
+      limite: min,
+      texto: `inconsistência de apontamento há ${minutosTxt(durou)}: ${det.motivo} · frente/grupo: ${e.frente || 'não informada'}`,
+      detalhe: `Auditoria automática COA · Operação SGPA: ${det.operacao} · validar apontamento no computador de bordo`,
+      inicio: inicioReal(st, e),
+    });
+  }
+
+  function regraBateVolta(e, ts) {
+    const min = Math.max(0, num(cfg.minutosBateVoltaMax) || 0);
+    if (!min) return;
+    const liga = policy.caminhaoEmBateVolta(e);
+    const st = marcar(e.id, 'bateVolta', liga, ts, null);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!liga || !st.firing) return;
+    const durou = (ts - inicioReal(st, e)) / 60_000;
+    if (durou < min) return;
+    if (!podeDisparar(st, ts)) return;
+    emitir({
+      chave: st.chave,
+      regra: 'bateVolta',
+      e,
+      valor: Math.round(durou),
+      limite: min,
+      texto: `em viagem/bate-volta há ${minutosTxt(durou)} acima do ciclo de ${minutosTxt(min)} · frente/grupo: ${e.frente || 'não informada'}`,
+      detalhe: `Monitor de ciclo rodoviário · operação ${e.operacao || 'Transporte'}${e.local ? ' · Local: ' + e.local : ''} · verificar retenção ou quebra na estrada`,
+      inicio: inicioReal(st, e),
+    });
+  }
+
+  function regraManutencaoPreditiva(e, ts) {
+    if (cfg.manutencaoPreditivaAtiva === false) return;
+    const rec = policy.detectarFalhaRecorrente(e.id, hist, ts, 240, 3);
+    const liga = !!rec;
+    const st = marcar(e.id, 'manutencaoPreditiva', liga, ts, rec ? rec.ocorrencias : null);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!liga || !st.firing) return;
+    if (!podeDisparar(st, ts)) return;
+    emitir({
+      chave: st.chave,
+      regra: 'manutencaoPreditiva',
+      e,
+      valor: rec.ocorrencias,
+      texto: `${rec.ocorrencias} alertas mecânicos/motor nas últimas 4h (último: ${rec.ultimoMotivo}) · frente/grupo: ${e.frente || 'não informada'}`,
+      detalhe: `Manutenção preditiva COA · recomendar inspeção preventiva à oficina volante antes de quebra grave`,
+      inicio: st.since,
+    });
+  }
+
+  function regraRiscoMoenda(ts) {
+    if (cfg.gestaoFrenteAtiva === false) return;
+    const meta = Math.max(0, num(cfg.metaMoagemTonHora) || 0);
+    if (!meta) return;
+    const res = ultimoResumoCtt || { frentes: [], totais: {} };
+    const tot = res.totais || {};
+    const todasEmChuva = res.frentes.length > 0 && Object.keys(chuvas || {}).length >= res.frentes.length;
+    const term = policy.calcularTermometroMoenda(res, cfg);
+    const liga = (tot.colhedoras || 0) >= 2 && !todasEmChuva && term.status === 'risco';
+    const pe = { id: 'usina:moenda', numero: 'Usina', nome: 'Alimentação de Moenda', tipo: 'Indústria / CTT', frente: 'Moenda' };
+    const st = marcar(pe.id, 'riscoMoenda', liga, ts, term.entregaTonHora);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!liga || !st.firing) return;
+    if ((ts - st.since) / 60_000 < 15) return;
+    if (!podeDisparar(st, ts)) return;
+    emitir({
+      chave: st.chave,
+      regra: 'riscoMoenda',
+      e: pe,
+      valor: term.entregaTonHora,
+      limite: term.metaTonHora,
+      texto: `entrega estimada em ${term.entregaTonHora} t/h (${term.pctMeta}% da meta de ${term.metaTonHora} t/h) — risco de falta de cana na moenda`,
+      detalhe: `${term.colhedorasColhendo}/${term.colhedorasTotal} colhedoras em colheita · déficit estimado de ${term.deficitTonHora} t/h`,
+      inicio: st.since,
+    });
+  }
+
   function avaliarFrota(ts, modo) {
     const lotes = modo !== 'tempo';
     const modoAnterior = avaliacaoSoTempo;
@@ -2068,7 +2308,10 @@
           regraRpm(e, ts);
           regraEmergencia(e, ts);
           regraQualidadeColheita(e, ts);
+          regraManutencaoPreditiva(e, ts);
         }
+        regraInconsistenciaApontamento(e, ts);
+        regraBateVolta(e, ts);
         regraFrenteDividida(e, ts);
         regraAguardandoCaminhao(e, ts);
         regraSemApontamento(e, ts);
@@ -2080,9 +2323,12 @@
       observacaoEmAvaliacao = lotes ? `frente:rodada:${rodada}` : null;
       regrasFrente(ts);
       acumularOciosidadeTurno(ts);
+      acumularCustosTurno(ts);
       resumoFrentes();
+      regraRiscoMoenda(ts);
       estado.monitorados = cont;
       if (el.frentes && !el.frentes.classList.contains('hide')) renderFrentes();
+      if (el.comboio && !el.comboio.classList.contains('hide')) renderComboio();
     } finally {
       avaliacaoSoTempo = modoAnterior;
       observacaoEmAvaliacao = observacaoAnterior;
@@ -3462,7 +3708,9 @@
     return !!a && a.fonte === 'app' && (
       a.regra === 'semApontamento' || a.regra === 'refeicao' || a.regra === 'paradaImprodutiva' ||
       a.regra === 'gestaoFrente' || a.regra === 'aguardandoBasculamento' || a.regra === 'frenteDividida' ||
-      a.regra === 'emergencia' || a.regra === 'telemetriaMuda' || a.regra === 'qualidadeColheita'
+      a.regra === 'emergencia' || a.regra === 'telemetriaMuda' || a.regra === 'qualidadeColheita' ||
+      a.regra === 'inconsistenciaApontamento' || a.regra === 'riscoMoenda' ||
+      a.regra === 'bateVolta' || a.regra === 'manutencaoPreditiva'
     );
   }
   function canalSistema(a) {
@@ -3672,6 +3920,7 @@
       <div class="abas">
         <button class="aba ativa" data-aba="ativos">Ativos <span id="cont-ativos" class="pill">0</span></button>
         <button class="aba" data-aba="frentes">Frentes <span id="cont-frentes" class="pill">0</span></button>
+        <button class="aba" data-aba="comboio">Comboio <span id="cont-comboio" class="pill">0</span></button>
         <button class="aba" data-aba="historico">Histórico <span id="cont-hist" class="pill">0</span></button>
       </div>
       <div class="atalhos">
@@ -3683,7 +3932,7 @@
       </div>
     </div>
     <div class="busca-central" role="search">
-      <input id="alertas-busca" type="search" aria-label="Buscar por frota, alerta ou operador" aria-controls="lista-ativos lista-frentes lista-historico" placeholder="Frota, frente, alerta ou operador" autocomplete="off">
+      <input id="alertas-busca" type="search" aria-label="Buscar por frota, alerta ou operador" aria-controls="lista-ativos lista-frentes lista-comboio lista-historico" placeholder="Frota, frente, alerta ou operador" autocomplete="off">
       <button id="alertas-busca-limpar" class="icone hide" type="button" title="Limpar busca" aria-label="Limpar busca">✕</button>
     </div>
     <div class="linha-status">
@@ -3694,6 +3943,7 @@
     </div>
     <div id="lista-ativos" class="lista"></div>
     <div id="lista-frentes" class="lista hide"></div>
+    <div id="lista-comboio" class="lista hide"></div>
     <div id="lista-historico" class="lista hide"></div>
     <footer>
       <button id="btn-limpar">Limpar ativos</button>
@@ -3847,6 +4097,22 @@
       <label class="campo"><span>Qualidade colheita: vel. máx. (km/h)</span><input id="cfg-vel-colheita" type="number" min="0" step="0.5" inputmode="decimal"></label>
       <label class="campo"><span>Meta SLA de atendimento COA (min)</span><input id="cfg-sla-min" type="number" min="1" step="1" inputmode="numeric"></label>
     </div>
+    <h3 class="secao-alertas">Inteligência v4.0: Moenda, Custos R$, Comboio e Auditoria</h3>
+    <p class="fine">Alimenta o Termômetro de Moenda (t/h), o Taxímetro Financeiro do Turno (R$), a fila inteligente do Uber do Comboio/Oficina e a auditoria automática de falso apontamento.</p>
+    <div class="switches">
+      <label class="chk"><input id="cfg-auditar-apontamento" type="checkbox"><span>Auditar falso apontamento (operação SGPA incoerente com velocidade/motor)</span></label>
+      <label class="chk"><input id="cfg-manut-preditiva" type="checkbox"><span>Manutenção preditiva (avisar ao atingir 3 alertas mecânicos/RPM em 4h)</span></label>
+    </div>
+    <div class="grade">
+      <label class="campo"><span>Falso apontamento: tolerância (min)</span><input id="cfg-inconsistencia-min" type="number" min="0" step="1" inputmode="numeric"></label>
+      <label class="campo"><span>Bate-volta máx. caminhão (min)</span><input id="cfg-batevolta-min" type="number" min="0" step="5" inputmode="numeric"></label>
+      <label class="campo"><span>Meta de moagem da usina (t/h)</span><input id="cfg-meta-moenda" type="number" min="0" step="10" inputmode="numeric"></label>
+      <label class="campo"><span>Produtividade p/ colhedora (t/h)</span><input id="cfg-ton-colh" type="number" min="10" step="5" inputmode="numeric"></label>
+      <label class="campo"><span>Custo parada Colhedora (R$/h)</span><input id="cfg-custo-colh" type="number" min="0" step="10" inputmode="numeric"></label>
+      <label class="campo"><span>Custo parada Transbordo (R$/h)</span><input id="cfg-custo-tb" type="number" min="0" step="10" inputmode="numeric"></label>
+      <label class="campo"><span>Custo parada Caminhão (R$/h)</span><input id="cfg-custo-cam" type="number" min="0" step="10" inputmode="numeric"></label>
+      <label class="campo"><span>Preço do Diesel (R$/L)</span><input id="cfg-custo-diesel" type="number" min="1" step="0.1" inputmode="decimal"></label>
+    </div>
     <h3 class="secao-alertas">Pronúncia dos termos (glossário)</h3>
     <p class="fine">Ensine a voz a falar abreviações do SGPA. Uma regra por linha, no formato <b>termo=como falar</b>. O glossário já transforma <b>AG colhedora parada rápida</b> em <b>Aguardando colhedora parada rápida</b>. Exemplos: <code>AG=Aguardando</code>, <code>COLH=colhedora</code>. Deixar vazio depois do = faz a voz omitir o termo (ex.: <code>HR=</code>). Vale para todos os alertas falados; maiúsculas e acentos não importam. Depois, toque em Salvar preferências.</p>
     <textarea id="cfg-glossario" aria-label="Glossário de pronúncia" rows="6" spellcheck="false" autocomplete="off" placeholder="AG=Aguardando&#10;COLH=colhedora&#10;HR="></textarea>
@@ -3920,11 +4186,13 @@
       escopo: $('alertas-escopo'),
       ativos: $('lista-ativos'),
       frentes: $('lista-frentes'),
+      comboio: $('lista-comboio'),
       historico: $('lista-historico'),
       busca: $('alertas-busca'),
       buscaLimpar: $('alertas-busca-limpar'),
       contAtivos: $('cont-ativos'),
       contFrentes: $('cont-frentes'),
+      contComboio: $('cont-comboio'),
       contHist: $('cont-hist'),
       dot: $('dot-ciclo'),
       toasts: $('toasts'),
@@ -3949,6 +4217,7 @@
       el.buscaLimpar.classList.toggle('hide', !norm(buscaCentral));
       renderAtivos();
       if (el.frentes && !el.frentes.classList.contains('hide')) renderFrentes();
+      if (el.comboio && !el.comboio.classList.contains('hide')) renderComboio();
     });
     el.buscaLimpar.onclick = () => {
       el.busca.value = '';
@@ -3956,6 +4225,7 @@
       el.buscaLimpar.classList.add('hide');
       renderAtivos();
       if (el.frentes && !el.frentes.classList.contains('hide')) renderFrentes();
+      if (el.comboio && !el.comboio.classList.contains('hide')) renderComboio();
       el.busca.focus();
     };
     $('alertas-fechar').onclick = fecharPainel;
@@ -4107,12 +4377,14 @@
 
   function selecionarAbaCentral(aba) {
     if (!el.painel) return;
-    const alvo = aba === 'frentes' || aba === 'historico' ? aba : 'ativos';
+    const alvo = aba === 'frentes' || aba === 'comboio' || aba === 'historico' ? aba : 'ativos';
     for (const x of el.painel.querySelectorAll('.aba')) x.classList.toggle('ativa', x.dataset.aba === alvo);
     if (el.ativos) el.ativos.classList.toggle('hide', alvo !== 'ativos');
     if (el.frentes) el.frentes.classList.toggle('hide', alvo !== 'frentes');
+    if (el.comboio) el.comboio.classList.toggle('hide', alvo !== 'comboio');
     if (el.historico) el.historico.classList.toggle('hide', alvo !== 'historico');
     if (alvo === 'frentes') renderFrentes();
+    else if (alvo === 'comboio') renderComboio();
     else renderAtivos();
   }
 
@@ -4123,11 +4395,339 @@
     else {
       renderAtivos();
       if (el.frentes && !el.frentes.classList.contains('hide')) renderFrentes();
+      if (el.comboio && !el.comboio.classList.contains('hide')) renderComboio();
     }
     renderCabecalho();
   }
   function fecharPainel() {
     el.painel.classList.add('hide');
+  }
+
+  function despacharApoioWhatsApp(item) {
+    if (!item || !item.textoDespacho) return '';
+    const url = 'https://wa.me/?text=' + encodeURIComponent(item.textoDespacho);
+    copiarTextoArea(item.textoDespacho, `Despacho #${item.ordem} (Frota ${item.numero}) copiado!`, url);
+    return item.textoDespacho;
+  }
+
+  function copiarDdsWhatsApp() {
+    const p = placarPositivo();
+    const url = 'https://wa.me/?text=' + encodeURIComponent(p.textoDds);
+    copiarTextoArea(p.textoDds, 'Placar Positivo do Turno (DDS) copiado!', url);
+    return p.textoDds;
+  }
+
+  function executarComandoCoa(frase) {
+    const cmd = policy.interpretarComandoCoa(frase);
+    let resposta = '';
+    if (cmd.acao === 'localizar') {
+      const alvoNum = String(cmd.frota || '').trim();
+      const eq = [...frota.values()].find((e) => String(e.numero) === alvoNum || String(e.id) === alvoNum || String(e.numero || '').endsWith(alvoNum));
+      if (eq) {
+        const cls = classeFala(eq.nome, eq.tipo, eq.frente);
+        const velTxt = eq.velocidade != null ? `${Math.round(eq.velocidade)} km/h` : 'velocidade n/d';
+        resposta = `${cls} ${eq.numero} na ${eq.frente || eq.grupoEquipamento || 'unidade'}, operação ${eq.operacao || 'não informada'}, a ${velTxt}${eq.operador ? ', operador ' + eq.operador : ''}.`;
+        abrirNoMapa({ e: eq, numero: eq.numero, classe: cls });
+      } else {
+        resposta = `Frota ${alvoNum} ainda não consta na leitura atual da telemetria.`;
+      }
+    } else if (cmd.acao === 'comboio') {
+      abrirPainel('comboio');
+      const fila = filaComboio();
+      if (!fila.chamados.length) {
+        resposta = `Fila de apoio livre: nenhuma máquina aguardando comboio ou oficina. ${fila.recursos.comboios.length} comboio(s) e ${fila.recursos.oficinas.length} oficina(s) online.`;
+      } else {
+        const top = fila.chamados[0];
+        resposta = `Fila de apoio com ${fila.chamados.length} chamado(s) (~R$ ${fila.resumo.custoFilaRs}). Prioridade 1: Frota ${top.numero} na ${top.frente}, ${top.motivo} há ${top.minutosEspera} minutos${top.apoioMaisProximo ? ', apoio ' + top.apoioNumero + (top.distanciaKm !== null ? ' a ' + top.distanciaKm + ' km' : '') : ''}.`;
+      }
+    } else if (cmd.acao === 'moenda') {
+      abrirPainel('frentes');
+      const term = termometroMoenda();
+      const fin = custoTurno();
+      resposta = `Moenda: entrega estimada em ${term.entregaTonHora} toneladas por hora (${term.pctMeta}% da meta de ${term.metaTonHora} t/h). Custo acumulado no turno: R$ ${fin.totalRs.toLocaleString('pt-BR')}.`;
+    } else if (cmd.acao === 'frentes') {
+      abrirPainel('frentes');
+      const res = resumoFrentes();
+      const t = res.totais || {};
+      resposta = `Panorama CTT: ${t.colhedorasColhendo || 0} de ${t.colhedoras || 0} colhedoras colhendo, ${t.transbordosAtivos || 0} transbordos ativos, ${t.caminhoesFila || 0} caminhões em fila e ${ativos.size} alerta(s) na Central.`;
+    } else if (cmd.acao === 'reconhecer') {
+      const ts = agora();
+      const pendente = [...ativos.values()]
+        .filter((a) => !(acks[a.chave] && ts - acks[a.chave] < 2 * 3600_000))
+        .sort((a, b) => (b.severidade || 0) - (a.severidade || 0) || (a.inicio || a.ts) - (b.inicio || b.ts))[0];
+      if (pendente) {
+        podarAcks(acks);
+        acks[pendente.chave] = ts;
+        salvar(KEY_ACK, acks);
+        if (emergenciaAtiva && emergenciaAtiva.chave === pendente.chave) fecharBannerEmergencia();
+        renderAtivos();
+        renderCabecalho();
+        resposta = `Confirmado: ${pendente.classe} ${pendente.numero} (${pendente.nome}) marcado como ciente no COA.`;
+      } else {
+        resposta = 'Todos os alertas ativos já estão reconhecidos no momento.';
+      }
+    } else if (cmd.acao === 'chuva') {
+      const estadoChuva = alternarChuvaFrente(cmd.frente || 'Frente 1', 'Comando Alô COA');
+      resposta = estadoChuva
+        ? `Modo Chuva ativado na ${estadoChuva.frente}. Alertas de segurança continuam ligados.`
+        : `Modo Chuva encerrado na ${cmd.frente || 'Frente 1'}.`;
+    } else if (cmd.acao === 'passagem') {
+      abrirPassagemTurno();
+      resposta = 'Boletim de passagem de turno gerado e pronto para copiar ou enviar.';
+    } else if (cmd.acao === 'dds') {
+      abrirPainel('comboio');
+      const dds = placarPositivo();
+      resposta = dds.resumoCurto ? dds.resumoCurto.replace(/\n/g, ' · ') : 'Placar DDS aguardando consolidação das frentes no turno.';
+    } else {
+      resposta = 'Exemplos Alô COA: "fila de comboio", "risco de moenda", "resumo das frentes", "onde está a 57838", "reconhecer" ou "placar dds".';
+    }
+    ultimaRespostaAloCoa = resposta;
+    const boxResp = document.getElementById('alo-coa-resposta');
+    if (boxResp) {
+      boxResp.textContent = '🤖 ' + resposta;
+      boxResp.classList.remove('hide');
+    }
+    if (cfg.voz && cmd.acao !== 'desconhecido') falar(resposta, { oficial: true });
+    return { comando: cmd, resposta };
+  }
+
+  function abrirAssistenteCoa() {
+    abrirPainel('comboio');
+    setTimeout(() => {
+      const inp = document.getElementById('alo-coa-input');
+      if (inp) inp.focus();
+    }, 60);
+  }
+
+  function atualizarEstadoBotoesMic(ouvindo) {
+    for (const id of ['btn-mic-bar', 'alo-coa-mic']) {
+      const b = document.getElementById(id);
+      if (b) {
+        b.classList.toggle('mic-ouvindo', !!ouvindo);
+        b.setAttribute('aria-pressed', ouvindo ? 'true' : 'false');
+      }
+    }
+  }
+
+  function ouvirComandoVoz() {
+    if (reconhecedorVozAtivo) {
+      try { reconhecedorVozAtivo.stop(); } catch { /* ignora */ }
+      reconhecedorVozAtivo = null;
+      atualizarEstadoBotoesMic(false);
+      return false;
+    }
+    const SR = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (!SR) {
+      abrirAssistenteCoa();
+      mostrarAviso('Digite ou use o microfone do teclado no campo Alô COA.', 'info');
+      return false;
+    }
+    try {
+      const rec = new SR();
+      rec.lang = 'pt-BR';
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      reconhecedorVozAtivo = rec;
+      atualizarEstadoBotoesMic(true);
+      mostrarAviso('🎙️ Alô COA ouvindo… diga p. ex. "fila de comboio" ou "risco de moenda".', 'info');
+      rec.onresult = (ev) => {
+        const transcrito = ev && ev.results && ev.results[0] && ev.results[0][0] ? String(ev.results[0][0].transcript || '').trim() : '';
+        const inp = document.getElementById('alo-coa-input');
+        if (inp && transcrito) inp.value = transcrito;
+        if (transcrito) executarComandoCoa(transcrito);
+      };
+      rec.onerror = () => {
+        atualizarEstadoBotoesMic(false);
+        reconhecedorVozAtivo = null;
+        abrirAssistenteCoa();
+      };
+      rec.onend = () => {
+        atualizarEstadoBotoesMic(false);
+        reconhecedorVozAtivo = null;
+      };
+      rec.start();
+      return true;
+    } catch {
+      atualizarEstadoBotoesMic(false);
+      reconhecedorVozAtivo = null;
+      abrirAssistenteCoa();
+      return false;
+    }
+  }
+
+  function renderComboio() {
+    if (!el.comboio) return;
+    const fila = filaComboio();
+    const radar = radarIncendio();
+    const dds = placarPositivo();
+    if (el.contComboio) el.contComboio.textContent = String(fila.resumo.totalFila);
+    const chamadosFiltrados = fila.chamados.filter((c) =>
+      correspondeBuscaCentral([c.numero, c.nome, c.frente, c.motivo, c.operador, c.apoioMaisProximo, c.categoriaApoio])
+    );
+
+    const html = [];
+    // 1) Assistente Alô COA (voz e comando rápido)
+    html.push(`
+      <div class="alo-coa-box">
+        <div class="alo-coa-head">
+          <strong>🎙️ Alô COA · Assistente Mãos-Livres</strong>
+          <span class="fine">Voz ou texto</span>
+        </div>
+        <form id="alo-coa-form" class="alo-coa-form">
+          <input id="alo-coa-input" type="text" placeholder="Ex.: fila de comboio, onde está a 57838, risco de moenda…" autocomplete="off">
+          <button id="alo-coa-mic" type="button" title="Falar comando por microfone" aria-label="Falar comando">🎙️</button>
+          <button id="alo-coa-enviar" type="submit" class="primary">OK</button>
+        </form>
+        <div class="alo-coa-chips">
+          <button type="button" data-coa-cmd="fila de comboio">⛽ Fila Comboio</button>
+          <button type="button" data-coa-cmd="risco de moenda">🏭 Moenda &amp; R$</button>
+          <button type="button" data-coa-cmd="resumo das frentes">🚜 Resumo CTT</button>
+          <button type="button" data-coa-cmd="reconhecer">✓ Ciente Crítico</button>
+          <button type="button" data-coa-cmd="placar dds">🏆 Placar DDS</button>
+        </div>
+        <div id="alo-coa-resposta" class="alo-coa-resp ${ultimaRespostaAloCoa ? '' : 'hide'}">${ultimaRespostaAloCoa ? '🤖 ' + esc(ultimaRespostaAloCoa) : ''}</div>
+      </div>
+    `);
+
+    // 2) Uber do Comboio e Oficina Volante
+    html.push(`
+      <div class="comboio-sec">
+        <div class="comboio-head">
+          <div>
+            <h4>⛽ Uber do Comboio &amp; Oficina Volante</h4>
+            <span class="fine">Prioridade automática por criticidade × espera × custo R$/min</span>
+          </div>
+        </div>
+        <div class="comboio-pills">
+          <span class="cpill">⛽ Comboios <b>${fila.recursos.comboios.length}</b></span>
+          <span class="cpill">🔧 Oficinas <b>${fila.recursos.oficinas.length}</b></span>
+          <span class="cpill">🚒 Bombeiros <b>${fila.recursos.bombeiros.length}</b></span>
+          <span class="cpill ${fila.resumo.totalFila > 0 ? 'warn' : ''}">⏳ Fila <b>${fila.resumo.totalFila}</b></span>
+          <span class="cpill ${fila.resumo.custoFilaRs > 0 ? 'crit' : ''}">💸 Espera <b>R$ ${fila.resumo.custoFilaRs.toLocaleString('pt-BR')}</b></span>
+        </div>
+    `);
+
+    if (!chamadosFiltrados.length) {
+      html.push(`<div class="vazio comboio-vazio">Nenhuma máquina aguardando comboio, oficina ou pipa agora.<br><span class="fine">Assim que qualquer colhedora, transbordo ou caminhão apontar espera de abastecimento ou manutenção, o ranking #1 aparece aqui com distância em km.</span></div>`);
+    } else {
+      for (const item of chamadosFiltrados) {
+        const ico = item.categoriaApoio === 'comboio' ? '⛽' : item.categoriaApoio === 'oficina' ? '🔧' : '🚒';
+        const distTxt = item.apoioMaisProximo
+          ? `${ico} Apoio rec.: <b>${esc(item.apoioMaisProximo)}</b>${item.distanciaKm !== null ? ` · <b>${item.distanciaKm} km</b>` : ''}`
+          : `${ico} Sem veículo de apoio com GPS lido — acionar volante no rádio`;
+        html.push(`
+          <div class="comboio-card cat-${esc(item.categoriaApoio)}" data-comboio-id="${esc(item.id)}">
+            <div class="comboio-top">
+              <span class="comboio-rank">#${item.ordem}</span>
+              <strong class="comboio-eq">${ico} Frota ${esc(item.numero)}</strong>
+              <span class="a-chip">${esc(item.frente)}</span>
+              <span class="comboio-rs">~R$ ${item.custoRs.toLocaleString('pt-BR')}</span>
+            </div>
+            <p class="comboio-motivo">${esc(item.motivo)} há <b>${item.minutosEspera} min</b> · <small>${esc(item.nome)} (R$ ${item.valorHora}/h)</small></p>
+            <p class="comboio-apoio">${distTxt}${item.local ? ` · Talhão ${esc(item.local)}` : ''}</p>
+            <div class="comboio-acoes">
+              <button type="button" class="primary" data-comboio-whats="${item.ordem}">📲 Despachar WhatsApp</button>
+              <button type="button" data-comboio-mapa="${esc(item.id)}">📍 Ver no mapa</button>
+            </div>
+          </div>
+        `);
+      }
+    }
+    html.push('</div>');
+
+    // 3) Radar Climático & Regra 30-30-30 de Risco de Incêndio
+    const bombTxt = radar.bombeiroProximo
+      ? `🚒 Bombeiro/Pipa mais próximo: <b>Frota ${esc(radar.bombeiroProximo.numero)}</b>${radar.bombeiroProximo.frente ? ' (' + esc(radar.bombeiroProximo.frente) + ')' : ''}${radar.bombeiroProximo.km !== null ? ` a <b>${radar.bombeiroProximo.km} km</b>` : ''}`
+      : '🚒 Nenhum caminhão bombeiro/pipa identificado na telemetria atual';
+    html.push(`
+      <div class="radar-303030 bandeira-${esc(radar.bandeira)}">
+        <div class="radar-head">
+          <strong>🔥 Radar 30-30-30 · Risco de Incêndio</strong>
+          <span class="radar-badge bandeira-${esc(radar.bandeira)}">${esc(radar.nivel)}</span>
+        </div>
+        <div class="radar-metricas">
+          <div class="rmet ${radar.tempC >= 30 ? 'alerta' : ''}"><span>🌡️ Temp.</span><b>${radar.tempC}°C</b><small>${radar.tempC >= 30 ? '≥ 30°C ⚠️' : '&lt; 30°C'}</small></div>
+          <div class="rmet ${radar.umidadePct <= 30 ? 'alerta' : ''}"><span>💧 Umidade</span><b>${radar.umidadePct}%</b><small>${radar.umidadePct <= 30 ? '≤ 30% ⚠️' : '&gt; 30%'}</small></div>
+          <div class="rmet ${radar.ventoKmH >= 30 ? 'alerta' : ''}"><span>💨 Vento</span><b>${radar.ventoKmH} km/h</b><small>${radar.ventoKmH >= 30 ? '≥ 30 km/h ⚠️' : '&lt; 30 km/h'}</small></div>
+        </div>
+        <p class="radar-bombeiro">${bombTxt}</p>
+        <div class="radar-inputs">
+          <label><span>°C</span><input id="clima-temp" type="number" step="1" value="${radar.tempC}"></label>
+          <label><span>% Umid</span><input id="clima-umid" type="number" min="5" max="100" step="1" value="${radar.umidadePct}"></label>
+          <label><span>km/h</span><input id="clima-vento" type="number" min="0" step="1" value="${radar.ventoKmH}"></label>
+          <button type="button" id="clima-aplicar">Aplicar</button>
+          <button type="button" id="clima-gps" title="Consultar meteorologia atual pelas coordenadas da frente">🌐 GPS</button>
+        </div>
+      </div>
+    `);
+
+    // 4) Placar Positivo do Turno (Gamificação DDS)
+    html.push(`
+      <div class="dds-card">
+        <div class="dds-head">
+          <strong>🏆 Placar Positivo do Turno (DDS)</strong>
+          <button type="button" id="btn-copiar-dds">💬 Copiar p/ DDS</button>
+        </div>
+        ${dds.frenteDestaque
+          ? `<p class="dds-frente">🥇 <b>${esc(dds.frenteDestaque.frente)}</b> — ${dds.frenteDestaque.colhColhendo}/${dds.frenteDestaque.colhTotal} colhedoras ativas · fila ${dds.frenteDestaque.camFila} · nota <b>${dds.frenteDestaque.nota}/100</b></p>`
+          : '<p class="fine">Aguardando leitura das frentes para eleger a Frente Destaque do turno.</p>'}
+        ${dds.operadoresDestaque.length
+          ? '<div class="dds-ops">' + dds.operadoresDestaque.map((op, i) =>
+              `<div class="dds-op"><span>${i === 0 ? '⭐' : '👏'} <b>${esc(op.operador)}</b> · Frota ${esc(op.frota)}</span><b>${op.score} pts · 0 infração</b></div>`
+            ).join('') + '</div>'
+          : '<p class="fine">Operadores exemplares (zero excesso de velocidade/RPM/falso apontamento) aparecerão aqui.</p>'}
+      </div>
+    `);
+
+    el.comboio.innerHTML = html.join('');
+
+    const formAlo = document.getElementById('alo-coa-form');
+    if (formAlo) {
+      formAlo.onsubmit = (ev) => {
+        ev.preventDefault();
+        const inp = document.getElementById('alo-coa-input');
+        if (inp && inp.value.trim()) executarComandoCoa(inp.value.trim());
+      };
+    }
+    const btnMic = document.getElementById('alo-coa-mic');
+    if (btnMic) btnMic.onclick = () => ouvirComandoVoz();
+    el.comboio.querySelectorAll('[data-coa-cmd]').forEach((b) => {
+      b.onclick = () => {
+        const c = b.dataset.coaCmd || '';
+        const inp = document.getElementById('alo-coa-input');
+        if (inp) inp.value = c;
+        executarComandoCoa(c);
+      };
+    });
+    el.comboio.querySelectorAll('[data-comboio-whats]').forEach((b) => {
+      b.onclick = () => {
+        const ord = Number(b.dataset.comboioWhats);
+        const item = fila.chamados.find((x) => x.ordem === ord);
+        if (item) despacharApoioWhatsApp(item);
+      };
+    });
+    el.comboio.querySelectorAll('[data-comboio-mapa]').forEach((b) => {
+      b.onclick = () => abrirNoMapa({ cdEquipamento: b.dataset.comboioMapa, numero: b.dataset.comboioMapa, classe: 'Frota' });
+    });
+    const btnAplicarClima = document.getElementById('clima-aplicar');
+    if (btnAplicarClima) {
+      btnAplicarClima.onclick = () => {
+        const tVal = Number((document.getElementById('clima-temp') || {}).value);
+        const uVal = Number((document.getElementById('clima-umid') || {}).value);
+        const vVal = Number((document.getElementById('clima-vento') || {}).value);
+        definirClimaManual({
+          tempC: Number.isFinite(tVal) ? tVal : climaCoa.tempC,
+          umidadePct: Number.isFinite(uVal) ? uVal : climaCoa.umidadePct,
+          ventoKmH: Number.isFinite(vVal) ? vVal : climaCoa.ventoKmH,
+          chuvaMm: 0,
+          origem: 'manual COA',
+        });
+      };
+    }
+    const btnClimaGps = document.getElementById('clima-gps');
+    if (btnClimaGps) btnClimaGps.onclick = () => atualizarClimaOnline();
+    const btnDds = document.getElementById('btn-copiar-dds');
+    if (btnDds) btnDds.onclick = () => copiarDdsWhatsApp();
   }
 
   function copiarTextoArea(texto, msgSucesso, linkWhats) {
@@ -4221,13 +4821,17 @@
     if (!el.telaoKpis) return;
     const res = ultimoResumoCtt && ultimoResumoCtt.totais ? ultimoResumoCtt : resumoFrentes();
     const t = res.totais || {};
+    const term = policy.calcularTermometroMoenda(res, cfg);
+    const fin = custoTurno();
     const criticos = [...ativos.values()].filter((a) => (a.severidade || 0) >= 3 && !(acks[a.chave] && agora() - acks[a.chave] < 2 * 3600_000)).length;
     const st = estadoConexaoCoa();
     const chuvasAtivas = Object.keys(chuvas || {}).length;
     el.telaoKpis.innerHTML =
+      (term.ativo ? `<span class="tkpi ${term.status === 'risco' ? 'critico-kpi' : term.status === 'atencao' ? 'alerta-kpi' : ''}">🏭 Moenda <b>${term.entregaTonHora}/${term.metaTonHora} t/h</b></span>` : '') +
       `<span class="tkpi">🚜 Colhedoras <b>${t.colhedorasColhendo || 0}/${t.colhedoras || 0}</b></span>` +
       `<span class="tkpi ${t.caminhoesFila >= (num(cfg.filaMaxFrente) || 4) ? 'alerta-kpi' : ''}">🚛 Fila <b>${t.caminhoesFila || 0}</b></span>` +
       `<span class="tkpi ${criticos > 0 ? 'critico-kpi' : ''}">🚨 Críticos s/ ciência <b>${criticos}</b></span>` +
+      (fin.totalRs > 0 ? `<span class="tkpi alerta-kpi">💸 Perda turno <b>R$ ${fin.totalRs.toLocaleString('pt-BR')}</b></span>` : '') +
       `<span class="tkpi ${(t.mudas || 0) > 0 ? 'alerta-kpi' : ''}">📡 Mudas <b>${t.mudas || 0}</b></span>` +
       (chuvasAtivas ? `<span class="tkpi">🌧️ Chuva <b>${chuvasAtivas}</b></span>` : '') +
       `<span class="tkpi">SGPA <b>${esc(st.rotulo)}</b></span>`;
@@ -4236,6 +4840,8 @@
   function gerarPassagemTurno() {
     const res = resumoFrentes();
     const listaOciosos = Object.values((ociosidadeTurno && ociosidadeTurno.itens) || {});
+    const fin = custoTurno();
+    const dds = placarPositivo();
     return policy.gerarBoletimPassagemTurno({
       ativos: [...ativos.values()],
       hist,
@@ -4243,6 +4849,8 @@
       chuvas,
       resumoCtt: res,
       ociosidadeTurno: listaOciosos,
+      custoTotalTurnoRs: fin.totalRs,
+      placarPositivo: dds,
       unidade: ctx.unidade || 'Usina Branco Peres',
       usuario: ctx.usuario || '',
       agoraMs: agora(),
@@ -4252,13 +4860,14 @@
   function abrirPassagemTurno() {
     if (!el.modalPassagem) montar();
     const boletim = gerarPassagemTurno();
+    const fin = custoTurno();
     if (el.passagemMeta) el.passagemMeta.textContent = `${boletim.turno.data} · ${boletim.turno.nome} · ${boletim.totalEventosTurno} evento(s) registrados no turno`;
     if (el.passagemKpis) {
       el.passagemKpis.innerHTML =
         `<span class="pkpi"><b>${boletim.pendentesTotal}</b> pendências abertas</span>` +
         `<span class="pkpi ${boletim.criticosAbertos ? 'crit' : ''}"><b>${boletim.criticosAbertos}</b> críticos</span>` +
         `<span class="pkpi"><b>${boletim.totalEventosTurno}</b> alertas no turno</span>` +
-        `<span class="pkpi"><b>${boletim.topOciosidade.length}</b> máquinas c/ ocioso</span>`;
+        `<span class="pkpi ${fin.totalRs > 0 ? 'crit' : ''}"><b>R$ ${fin.totalRs.toLocaleString('pt-BR')}</b> custo improdutivo</span>`;
     }
     if (el.passagemTexto) el.passagemTexto.value = boletim.texto;
     if (el.passagemWhats) el.passagemWhats.href = 'https://wa.me/?text=' + encodeURIComponent(boletim.texto);
@@ -4309,9 +4918,33 @@
   function renderFrentes() {
     if (!el.frentes) return;
     const res = resumoFrentes();
+    const term = policy.calcularTermometroMoenda(res, cfg);
+    const fin = custoTurno();
     if (el.contFrentes) el.contFrentes.textContent = String(res.frentes.length);
     const frentesFiltradas = res.frentes.filter((f) => correspondeBuscaCentral([f.frente, f.semaforo, f.chuva && f.chuva.motivo]));
     const htmlPartes = [];
+
+    if (term.ativo) {
+      const barWidth = Math.max(6, Math.min(100, term.pctMeta));
+      const statusRotulo = term.status === 'seguro' ? 'RITMO PLENO' : term.status === 'atencao' ? 'ATENÇÃO MOENDA' : term.status === 'risco' ? 'RISCO DE FALTA DE CANA' : 'AGUARDANDO FROTA';
+      htmlPartes.push(`
+        <div class="moenda-card moenda-${esc(term.status)}">
+          <div class="moenda-top">
+            <strong>🏭 Termômetro de Moenda</strong>
+            <span class="moenda-badge moenda-${esc(term.status)}">${statusRotulo}</span>
+          </div>
+          <div class="moenda-nums">
+            <b>${term.entregaTonHora} t/h</b>
+            <span>meta ${term.metaTonHora} t/h (${term.pctMeta}%)${term.deficitTonHora > 0 && term.colhedorasTotal > 0 ? ` · déficit ${term.deficitTonHora} t/h` : ''}</span>
+          </div>
+          <div class="moenda-bar"><span style="width:${barWidth}%"></span></div>
+          <div class="taximetro-bar">
+            <span>💸 Taxímetro de perdas no turno: <b>R$ ${fin.totalRs.toLocaleString('pt-BR')}</b></span>
+            <small>Paradas: R$ ${fin.paradoRs.toLocaleString('pt-BR')} · Diesel ocioso: R$ ${fin.dieselRs.toLocaleString('pt-BR')} (${fin.litrosOcioso} L)</small>
+          </div>
+        </div>
+      `);
+    }
 
     if (res.sugestoesBalanceamento.length) {
       htmlPartes.push(
@@ -4462,6 +5095,9 @@
     if (el.contFrentes && ultimoResumoCtt && Array.isArray(ultimoResumoCtt.frentes)) {
       el.contFrentes.textContent = String(ultimoResumoCtt.frentes.length);
     }
+    if (el.contComboio) {
+      el.contComboio.textContent = String(filaComboio().resumo.totalFila);
+    }
     const s = Math.max(0, Math.round((proximo - agora()) / 1000));
     if (el.proximo) el.proximo.textContent = estado.ligado ? `próxima leitura em ${s}s` : 'central desligada';
     if (el.status) {
@@ -4513,6 +5149,9 @@
     const inicioSla = a.inicio || a.ts;
     const sla = classeSla(inicioSla, a.severidade || 1);
     const mostrarPainelTratativa = contexto === 'central' && comAccoes && reconhecido;
+    const ehParadaCusto = a.regra === 'paradaImprodutiva' || a.regra === 'aguardandoCaminhao' || a.regra === 'aguardandoBasculamento' || a.regra === 'semApontamento' || a.regra === 'inconsistenciaApontamento';
+    const minAberto = Math.max(0, Math.round((agora() - inicioSla) / 60_000));
+    const custoAlertaRs = ehParadaCusto && minAberto >= 2 ? Math.round(minAberto * policy.custoHoraEquipamento(a.e || {}, cfg).valorMinuto) : 0;
     d.innerHTML = `
       <div class="a-top">
         <span class="a-icone">${a.icone}</span>
@@ -4522,6 +5161,7 @@
         ${a.fonte === 'teste' ? '<span class="a-chip cinza">AMOSTRA MANUAL</span>' : ''}
         ${a.emChuva ? `<span class="a-chip cinza">🌧️ Chuva</span>` : ''}
         ${a.paradaId === 'aguardandoCarregamento' && a.e && a.e.frenteInferida ? `<span class="a-chip">Frente inferida: ${esc(a.e.frenteInferida)}</span>` : ''}
+        ${custoAlertaRs > 0 ? `<span class="a-chip custo">💸 ~R$ ${custoAlertaRs.toLocaleString('pt-BR')}</span>` : ''}
         ${!a.notificar ? '<span class="a-chip cinza">sem notificação do sistema</span>' : ''}
         ${a.contagem > 1 ? `<span class="a-chip cinza">×${a.contagem}</span>` : ''}
         ${trat && trat.tag ? `<span class="a-chip verde">📝 ${esc(trat.tag)}</span>` : ''}
@@ -4813,6 +5453,10 @@
     emergencia: 'Prioridade máxima: apontamento ou alarme de incêndio/fogo ou caminhão bombeiro em deslocamento rápido. Fura a fila de voz, dispara sirene e abre banner vermelho no topo.',
     telemetriaMuda: 'Frota monitorada sem comunicação de telemetria acima do limiar configurado (ponto cego de bordo/GPS). Fala e exibe último ponto conhecido.',
     qualidadeColheita: 'Colhedora operando em colheita acima da velocidade técnica configurada (risco de perda de cana e impureza mineral/vegetal).',
+    inconsistenciaApontamento: 'Auditoria automática COA: máquina apontando Colheita parada (0 km/h) ou apontando Parada/Refeição/Sem Apontamento enquanto desloca em velocidade.',
+    riscoMoenda: 'Alerta estratégico quando o ritmo estimado de entrega das colhedoras fica abaixo de 70% da meta de moagem da usina por mais de 15 min.',
+    bateVolta: 'Caminhão canavieiro em viagem/transporte acima do tempo máximo de bate-volta configurado (possível retenção ou quebra na estrada).',
+    manutencaoPreditiva: 'Equipamento com 3 ou mais alertas mecânicos/RPM/motor em janela de 4 horas — sugere inspeção preventiva antes de quebra grave.',
     generico: 'Demais tipos oficiais, com o nome original do SGPA.',
   };
   let limiteTipos = 80;
@@ -5182,6 +5826,14 @@
       'cfg-frota-muda': cfg.minutosFrotaMuda != null ? cfg.minutosFrotaMuda : 25,
       'cfg-vel-colheita': cfg.velMaxColheita != null ? cfg.velMaxColheita : 7.5,
       'cfg-sla-min': cfg.slaAlertaMin != null ? cfg.slaAlertaMin : 10,
+      'cfg-inconsistencia-min': cfg.minutosInconsistencia != null ? cfg.minutosInconsistencia : 8,
+      'cfg-batevolta-min': cfg.minutosBateVoltaMax != null ? cfg.minutosBateVoltaMax : 55,
+      'cfg-meta-moenda': cfg.metaMoagemTonHora != null ? cfg.metaMoagemTonHora : 420,
+      'cfg-ton-colh': cfg.tonHoraPorColhedora != null ? cfg.tonHoraPorColhedora : 65,
+      'cfg-custo-colh': cfg.custoHoraColhedora != null ? cfg.custoHoraColhedora : 850,
+      'cfg-custo-tb': cfg.custoHoraTransbordo != null ? cfg.custoHoraTransbordo : 260,
+      'cfg-custo-cam': cfg.custoHoraCaminhao != null ? cfg.custoHoraCaminhao : 220,
+      'cfg-custo-diesel': cfg.custoLitroDiesel != null ? cfg.custoLitroDiesel : 6.2,
       'cfg-turno': cfg.minutosTurno,
       'cfg-cooldown': cfg.cooldownMin,
       'cfg-maxvoz': cfg.maxPorCiclo,
@@ -5204,6 +5856,8 @@
     const checks = {
       'cfg-liga': cfg.ativo,
       'cfg-gestao-frente': cfg.gestaoFrenteAtiva !== false,
+      'cfg-auditar-apontamento': cfg.auditarApontamento !== false,
+      'cfg-manut-preditiva': cfg.manutencaoPreditivaAtiva !== false,
       'cfg-local': cfg.calcularLocal,
       'cfg-serv': cfg.espelharServidor,
       'cfg-stream': cfg.usarStream,
@@ -5288,6 +5942,8 @@
       vibrar: $('cfg-vib').checked,
       repetirVoz: $('cfg-repete').checked,
       gestaoFrenteAtiva: $('cfg-gestao-frente').checked,
+      auditarApontamento: $('cfg-auditar-apontamento') ? $('cfg-auditar-apontamento').checked : cfg.auditarApontamento !== false,
+      manutencaoPreditivaAtiva: $('cfg-manut-preditiva') ? $('cfg-manut-preditiva').checked : cfg.manutencaoPreditivaAtiva !== false,
       sentinelaSegundoPlano: $('cfg-sentinela') ? $('cfg-sentinela').checked : cfg.sentinelaSegundoPlano !== false,
       manterTelaAtiva: $('cfg-wakelock') ? $('cfg-wakelock').checked : cfg.manterTelaAtiva !== false,
       alertaQuedaSgpa: $('cfg-queda-sgpa') ? $('cfg-queda-sgpa').checked : cfg.alertaQuedaSgpa !== false,
@@ -5307,6 +5963,14 @@
       minutosFrotaMuda: n('cfg-frota-muda', 25),
       velMaxColheita: n('cfg-vel-colheita', 7.5),
       slaAlertaMin: Math.max(1, n('cfg-sla-min', 10)),
+      minutosInconsistencia: Math.max(0, n('cfg-inconsistencia-min', 8)),
+      minutosBateVoltaMax: Math.max(0, n('cfg-batevolta-min', 55)),
+      metaMoagemTonHora: Math.max(0, n('cfg-meta-moenda', 420)),
+      tonHoraPorColhedora: Math.max(10, n('cfg-ton-colh', 65)),
+      custoHoraColhedora: Math.max(0, n('cfg-custo-colh', 850)),
+      custoHoraTransbordo: Math.max(0, n('cfg-custo-tb', 260)),
+      custoHoraCaminhao: Math.max(0, n('cfg-custo-cam', 220)),
+      custoLitroDiesel: Math.max(1, n('cfg-custo-diesel', 6.2)),
       minutosTurno: n('cfg-turno', 4),
       cooldownMin: n('cfg-cooldown', 10),
       maxPorCiclo: n('cfg-maxvoz', 4),
@@ -5643,6 +6307,16 @@
     alternarTelao,
     alternarChuvaFrente,
     resumoFrentes,
+    filaComboio,
+    despacharApoioWhatsApp,
+    termometroMoenda,
+    custoTurno,
+    placarPositivo,
+    radarIncendio,
+    definirClimaManual,
+    executarComandoCoa,
+    abrirAssistenteCoa,
+    ouvirComandoVoz,
     registrarTratativa,
     cobrarNoWhatsApp,
     gerarPassagemTurno,

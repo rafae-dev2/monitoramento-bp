@@ -53,4 +53,4 @@
   [headers.values]
     Referrer-Policy = "strict-origin-when-cross-origin"
     X-Content-Type-Options = "nosniff"
-    Permissions-Policy = "geolocation=(), camera=(), microphone=(), interest-cohort=()"
+    Permissions-Policy = "geolocation=(), camera=(), microphone=(self), interest-cohort=()"

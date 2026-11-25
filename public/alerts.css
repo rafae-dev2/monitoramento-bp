@@ -150,9 +150,11 @@
 
 .abas {
   display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
   gap: 4px;
   padding: 3px;
-  border-radius: 999px;
+  border-radius: 16px;
   background: rgba(6, 11, 16, 0.72);
   border: 1px solid var(--line);
   min-width: 0;
@@ -163,8 +165,8 @@
   background: transparent;
   color: var(--muted);
   border-radius: 999px;
-  padding: 5px 11px;
-  font-size: 12px;
+  padding: 5px 9px;
+  font-size: 11.5px;
   font-weight: 600;
   box-shadow: none;
 }
@@ -2346,10 +2348,630 @@ html[data-acabamento='solido'] #modal-passagem {
 
 @media (max-width: 420px) {
   .aba {
-    padding: 5px 8px;
+    padding: 5px 7px;
     font-size: 11px;
   }
   .ctt-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* =====================================================================
+   COMBO DE OURO COA v4.0 — Termômetro de Moenda, Taxímetro R$,
+   Alô COA (Voz/Texto), Uber do Comboio/Oficina, Radar 30-30-30 & DDS
+   ===================================================================== */
+
+.a-chip.custo {
+  background: rgba(120, 53, 15, 0.84);
+  border-color: rgba(251, 191, 36, 0.62);
+  color: #fef08a;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* -------------------- Termômetro de Moenda & Taxímetro -------------------- */
+
+.moenda-card {
+  border-radius: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-left: 4px solid var(--ok);
+  background: rgba(9, 18, 28, 0.88);
+  padding: 11px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 8px 22px rgba(0, 0, 0, 0.38);
+}
+
+.moenda-card.moenda-atencao {
+  border-left-color: var(--warn);
+}
+
+.moenda-card.moenda-risco {
+  border-left-color: var(--danger);
+  background: linear-gradient(155deg, rgba(46, 12, 16, 0.9) 0%, rgba(14, 10, 15, 0.92) 100%);
+}
+
+.moenda-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.moenda-top strong {
+  font-size: 13px;
+  color: #ffffff;
+}
+
+.moenda-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  background: rgba(15, 23, 34, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: #e2e8f0;
+}
+
+.moenda-badge.moenda-seguro {
+  background: rgba(6, 78, 59, 0.78);
+  border-color: rgba(52, 211, 153, 0.58);
+  color: #d1fae5;
+}
+
+.moenda-badge.moenda-atencao {
+  background: rgba(120, 53, 15, 0.82);
+  border-color: rgba(251, 191, 36, 0.62);
+  color: #fef08a;
+}
+
+.moenda-badge.moenda-risco {
+  background: rgba(153, 27, 27, 0.9);
+  border-color: rgba(248, 113, 113, 0.75);
+  color: #ffffff;
+}
+
+.moenda-nums {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.moenda-nums b {
+  font-size: 20px;
+  font-weight: 800;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.moenda-nums span {
+  font-size: 11.5px;
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
+}
+
+.moenda-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.moenda-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #10b981 0%, #34d399 100%);
+  transition: width 0.25s ease;
+}
+
+.moenda-card.moenda-atencao .moenda-bar span {
+  background: linear-gradient(90deg, #f59e0b 0%, #facc15 100%);
+}
+
+.moenda-card.moenda-risco .moenda-bar span {
+  background: linear-gradient(90deg, #dc2626 0%, #f97316 100%);
+}
+
+.taximetro-bar {
+  margin-top: 2px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: #fef9c3;
+  font-variant-numeric: tabular-nums;
+}
+
+.taximetro-bar b {
+  color: #fde047;
+  font-weight: 800;
+}
+
+.taximetro-bar small {
+  font-size: 10.5px;
+  color: #cbd5e1;
+}
+
+/* -------------------- Alô COA (Assistente Mãos-Livres) -------------------- */
+
+.alo-coa-box {
+  border-radius: 13px;
+  border: 1px solid rgba(52, 211, 153, 0.34);
+  background: linear-gradient(155deg, rgba(6, 36, 26, 0.84) 0%, rgba(8, 17, 26, 0.9) 100%);
+  padding: 10px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.alo-coa-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.alo-coa-head strong {
+  font-size: 12.5px;
+  color: #ecfdf5;
+}
+
+.alo-coa-form {
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+}
+
+.alo-coa-form input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.45);
+  color: #ffffff;
+  font: inherit;
+  font-size: 12px;
+}
+
+.alo-coa-form button {
+  flex: none;
+  padding: 6px 10px;
+  min-height: 34px;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+#alo-coa-mic.mic-ouvindo {
+  background: rgba(245, 158, 11, 0.4);
+  border-color: #facc15;
+  color: #fef08a;
+}
+
+.alo-coa-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.alo-coa-chips button {
+  padding: 4px 8px;
+  min-height: 26px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: rgba(12, 22, 33, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #e2e8f0;
+  box-shadow: none;
+}
+
+.alo-coa-chips button:hover {
+  border-color: rgba(110, 231, 183, 0.55);
+  color: #ffffff;
+}
+
+.alo-coa-resp {
+  padding: 7px 9px;
+  border-radius: 9px;
+  background: rgba(3, 12, 18, 0.82);
+  border: 1px solid rgba(110, 231, 183, 0.36);
+  color: #ecfdf5;
+  font-size: 11.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* -------------------- Uber do Comboio & Oficina Volante -------------------- */
+
+.comboio-sec {
+  border-radius: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(8, 15, 24, 0.86);
+  padding: 10px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.comboio-head h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+  color: #fde047;
+}
+
+.comboio-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.cpill {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 11px;
+  color: #dbe7f3;
+  font-variant-numeric: tabular-nums;
+}
+
+.cpill b {
+  color: #ffffff;
+}
+
+.cpill.warn {
+  background: rgba(120, 53, 15, 0.72);
+  border-color: rgba(251, 191, 36, 0.55);
+  color: #fef08a;
+}
+
+.cpill.crit {
+  background: rgba(127, 29, 29, 0.8);
+  border-color: rgba(248, 113, 113, 0.65);
+  color: #fee2e2;
+}
+
+.comboio-card {
+  border-radius: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-left: 4px solid #f59e0b;
+  background: rgba(12, 21, 32, 0.88);
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.comboio-card.cat-oficina {
+  border-left-color: #f97316;
+}
+
+.comboio-card.cat-bombeiro {
+  border-left-color: #38bdf8;
+}
+
+.comboio-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.comboio-rank {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--bp-ouro);
+  color: #1c1402;
+  font-size: 11px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.comboio-eq {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.comboio-rs {
+  margin-left: auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(127, 29, 29, 0.76);
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  color: #fee2e2;
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.comboio-motivo {
+  margin: 0;
+  font-size: 12px;
+  color: #f8fafc;
+}
+
+.comboio-motivo small {
+  color: #cbd5e1;
+}
+
+.comboio-apoio {
+  margin: 0;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(6, 46, 34, 0.62);
+  border: 1px solid rgba(52, 211, 153, 0.34);
+  font-size: 11.5px;
+  color: #ecfdf5;
+}
+
+.comboio-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.comboio-acoes button {
+  flex: 1 1 120px;
+  min-height: 32px;
+  padding: 5px 9px;
+  justify-content: center;
+  font-size: 11.5px;
+  font-weight: 700;
+  border-radius: 8px;
+}
+
+/* -------------------- Radar Climático 30-30-30 -------------------- */
+
+.radar-303030 {
+  border-radius: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-left: 4px solid var(--ok);
+  background: rgba(9, 17, 26, 0.86);
+  padding: 10px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.radar-303030.bandeira-amarela {
+  border-left-color: #eab308;
+}
+
+.radar-303030.bandeira-laranja {
+  border-left-color: #f97316;
+  background: rgba(28, 15, 9, 0.88);
+}
+
+.radar-303030.bandeira-vermelha {
+  border-left-color: #ef4444;
+  border-color: rgba(248, 113, 113, 0.58);
+  background: linear-gradient(155deg, rgba(64, 12, 16, 0.92) 0%, rgba(20, 9, 13, 0.94) 100%);
+}
+
+.radar-303030.bandeira-azul {
+  border-left-color: #38bdf8;
+}
+
+.radar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.radar-head strong {
+  font-size: 12.5px;
+  color: #ffffff;
+}
+
+.radar-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  background: rgba(6, 78, 59, 0.78);
+  border: 1px solid rgba(52, 211, 153, 0.55);
+  color: #d1fae5;
+}
+
+.radar-badge.bandeira-amarela {
+  background: rgba(113, 63, 18, 0.82);
+  border-color: rgba(250, 204, 21, 0.58);
+  color: #fef08a;
+}
+
+.radar-badge.bandeira-laranja {
+  background: rgba(124, 45, 18, 0.86);
+  border-color: rgba(251, 146, 60, 0.68);
+  color: #ffedd5;
+}
+
+.radar-badge.bandeira-vermelha {
+  background: #dc2626;
+  border-color: #fca5a5;
+  color: #ffffff;
+}
+
+.radar-badge.bandeira-azul {
+  background: rgba(12, 74, 110, 0.82);
+  border-color: rgba(56, 189, 248, 0.58);
+  color: #e0f2fe;
+}
+
+.radar-metricas {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.rmet {
+  padding: 6px 7px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.rmet.alerta {
+  background: rgba(127, 29, 29, 0.58);
+  border-color: rgba(248, 113, 113, 0.58);
+}
+
+.rmet span {
+  font-size: 10px;
+  color: #cbd5e1;
+}
+
+.rmet b {
+  font-size: 13px;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
+.rmet small {
+  font-size: 9.5px;
+  color: #cbd5e1;
+}
+
+.radar-bombeiro {
+  margin: 0;
+  font-size: 11.5px;
+  color: #f8fafc;
+}
+
+.radar-inputs {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.radar-inputs label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  color: #cbd5e1;
+  flex: 1 1 62px;
+  min-width: 54px;
+}
+
+.radar-inputs input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 5px 6px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.45);
+  color: #ffffff;
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.radar-inputs button {
+  padding: 6px 9px;
+  min-height: 30px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 7px;
+}
+
+/* -------------------- Placar Positivo do Turno (DDS) -------------------- */
+
+.dds-card {
+  border-radius: 13px;
+  border: 1px solid rgba(250, 204, 21, 0.36);
+  border-left: 4px solid var(--bp-ouro);
+  background: linear-gradient(155deg, rgba(36, 27, 6, 0.78) 0%, rgba(10, 17, 25, 0.9) 100%);
+  padding: 10px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.dds-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dds-head strong {
+  font-size: 12.5px;
+  color: #fde047;
+}
+
+.dds-head button {
+  padding: 5px 9px;
+  min-height: 28px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 8px;
+}
+
+.dds-frente {
+  margin: 0;
+  font-size: 12px;
+  color: #ffffff;
+}
+
+.dds-ops {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dds-op {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 11.5px;
+  color: #f8fafc;
+}
+
+.dds-op b:last-child {
+  color: #6ee7b7;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tema Black v4.0 */
+html[data-acabamento='black'] :is(.moenda-card, .alo-coa-box, .comboio-sec, .comboio-card, .radar-303030, .dds-card),
+html[data-acabamento='solido'] :is(.moenda-card, .alo-coa-box, .comboio-sec, .comboio-card, .radar-303030, .dds-card) {
+  background: #04060a;
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+@media (max-width: 360px) {
+  .radar-metricas {
     grid-template-columns: minmax(0, 1fr);
   }
 }
