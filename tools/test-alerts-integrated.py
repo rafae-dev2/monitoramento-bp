@@ -1120,9 +1120,27 @@ with sync_playwright() as pw:
     }""")
     print('OK: aviso falado de queda/recuperação SGPA e re-alerta de críticos pendentes (com pausa após reconhecimento) validados')
 
+    page.evaluate("""() => {
+      document.getElementById('btn-cfg').click();
+      const sel = document.getElementById('cfg-acabamento');
+      if (!sel) throw new Error('Seletor #cfg-acabamento ausente em Preferências');
+      const opcoes = [...sel.options].map(o => o.value);
+      if (opcoes.join(',') !== 'vidro,black') throw new Error('Opções inesperadas em #cfg-acabamento: ' + opcoes.join(','));
+      sel.value = 'black';
+      sel.dispatchEvent(new Event('change'));
+      if (document.documentElement.dataset.acabamento !== 'black') throw new Error('Tema Black não foi aplicado');
+      if (localStorage.getItem('bperes.visual.acabamento.v1') !== 'black') throw new Error('Tema Black não persistiu');
+      if (MonitoramentoAlertas.aplicarTema('solido', false) !== 'black') throw new Error('Alias legado solido deve migrar para black');
+      sel.value = 'vidro';
+      sel.dispatchEvent(new Event('change'));
+      if (document.documentElement.dataset.acabamento !== 'vidro') throw new Error('Liquid Glass não foi restaurado');
+      document.getElementById('cfg-fechar-x').click();
+    }""")
+    print('OK: seletor Liquid Glass / Tema Black em Preferências, persistência local e migração validados')
+
     assert not errors, errors
     assert not any(m=='POST' for m,u in requests), 'Teste tentou POST'
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+13} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+14} grupos de verificações.')

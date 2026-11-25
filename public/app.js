@@ -476,9 +476,37 @@
   $('btn-menu').addEventListener('click', () => (el.menu.classList.contains('hide') ? show(el.menu) : hide(el.menu)));
   $('btn-portal').addEventListener('click', () => {});
 
+  function aplicarTemaShell(valor, persistir) {
+    if (window.MonitoramentoAlertas && typeof window.MonitoramentoAlertas.aplicarTema === 'function') {
+      return window.MonitoramentoAlertas.aplicarTema(valor, persistir);
+    }
+    const v = valor === 'black' || valor === 'solido' ? 'black' : 'vidro';
+    document.documentElement.dataset.acabamento = v;
+    for (const btn of document.querySelectorAll('[data-tema]')) {
+      btn.setAttribute('aria-pressed', btn.dataset.tema === v ? 'true' : 'false');
+    }
+    if (persistir) {
+      try { localStorage.setItem('bperes.visual.acabamento.v1', v); } catch { /* sem storage */ }
+    }
+    return v;
+  }
+  if (!document.documentElement.dataset.acabamento) {
+    let inicial = 'vidro';
+    try {
+      const salvo = localStorage.getItem('bperes.visual.acabamento.v1');
+      if (salvo) inicial = salvo;
+    } catch { /* sem storage */ }
+    aplicarTemaShell(inicial, false);
+  }
+
   el.menu.addEventListener('click', (ev) => {
     if (ev.target === el.menu) {
       hide(el.menu);
+      return;
+    }
+    const btnTema = ev.target && typeof ev.target.closest === 'function' ? ev.target.closest('[data-tema]') : null;
+    if (btnTema) {
+      aplicarTemaShell(btnTema.dataset.tema, true);
       return;
     }
     const alvo = ev.target && typeof ev.target.closest === 'function' ? ev.target.closest('[data-act]') : ev.target;

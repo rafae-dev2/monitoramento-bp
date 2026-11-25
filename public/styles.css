@@ -599,10 +599,17 @@ button:focus-visible,
 
 .sheet-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 0 4px 8px;
+  gap: 10px;
+  padding: 0 4px 10px;
+}
+
+.sheet-head-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .sheet h3,
@@ -615,6 +622,88 @@ button:focus-visible,
 
 .sheet h3 {
   margin: 0;
+  color: #ffffff;
+}
+
+.sheet .sheet-fechar-x {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  flex: none;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 15px;
+  font-weight: 700;
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.sheet .sheet-fechar-x:hover {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(248, 113, 113, 0.55);
+  color: #ffffff;
+}
+
+.tema-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  flex-wrap: wrap;
+}
+
+.tema-bar-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #e2e8f0;
+}
+
+.tema-seg {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  flex: 1 1 200px;
+  max-width: 260px;
+}
+
+.sheet .tema-seg button {
+  flex: 1 1 0;
+  width: auto;
+  min-height: 32px;
+  padding: 6px 10px;
+  justify-content: center;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #cbd5e1;
+  background: transparent;
+  border: 1px solid transparent;
+  box-shadow: none;
+}
+
+.sheet .tema-seg button:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: transparent;
+}
+
+.sheet .tema-seg button[aria-pressed='true'] {
+  color: #022014;
+  background: linear-gradient(180deg, #34d399 0%, #10b981 100%);
+  border-color: rgba(167, 243, 208, 0.65);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 2px 8px rgba(16, 185, 129, 0.28);
 }
 
 .menu-group {
@@ -921,10 +1010,10 @@ code {
    ===================================================================== */
 
 :root {
-  --lg-blur: blur(22px) saturate(185%) brightness(1.04);
-  --lg-blur-leve: blur(14px) saturate(170%);
-  --lg-tinta: rgba(14, 24, 34, 0.56);
-  --lg-tinta-forte: rgba(11, 19, 28, 0.74);
+  --lg-blur: blur(22px) saturate(180%) brightness(0.68) contrast(1.06);
+  --lg-blur-leve: blur(14px) saturate(165%) brightness(0.8);
+  --lg-tinta: rgba(10, 18, 28, 0.72);
+  --lg-tinta-forte: rgba(8, 15, 23, 0.84);
   /* Reflexo curvo superior (a "lente" do vidro) */
   --lg-reflexo: radial-gradient(120% 70% at 50% -18%, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.04) 46%, transparent 64%);
   /* Borda especular: luz entrando pelo topo e rebatendo na base */
@@ -933,14 +1022,14 @@ code {
     inset 0 -1px 0.5px rgba(255, 255, 255, 0.07),
     inset 0 0 0 1px rgba(255, 255, 255, 0.05);
   --lg-sombra: 0 10px 30px rgba(0, 0, 0, 0.42), 0 2px 6px rgba(0, 0, 0, 0.28);
-  --lg-borda: rgba(255, 255, 255, 0.14);
-  --lg-borda-forte: rgba(255, 255, 255, 0.24);
+  --lg-borda: rgba(255, 255, 255, 0.16);
+  --lg-borda-forte: rgba(255, 255, 255, 0.28);
   --lg-mola: cubic-bezier(0.22, 1.2, 0.36, 1);
 }
 
 /* --------------------------- Cabeçalho --------------------------- */
 
-:where(html:not([data-acabamento='solido'])) #bar {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #bar {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 52%),
     radial-gradient(60% 240% at 0% 0%, rgba(0, 108, 48, 0.34) 0%, transparent 58%),
@@ -954,7 +1043,7 @@ code {
 }
 
 /* Medalhão de vidro lapidado para o brasão Branco Peres */
-:where(html:not([data-acabamento='solido'])) .brand-emblem {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .brand-emblem {
   overflow: hidden;
   isolation: isolate;
   border-radius: 14px;
@@ -974,7 +1063,7 @@ code {
 }
 
 /* Faixa de brilho diagonal que atravessa o vidro (fica sobre o brasão) */
-:where(html:not([data-acabamento='solido'])) .brand-emblem::after {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .brand-emblem::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -987,17 +1076,17 @@ code {
   mix-blend-mode: screen;
 }
 
-:where(html:not([data-acabamento='solido'])) .brand-emblem #brand-logo {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .brand-emblem #brand-logo {
   position: relative;
   z-index: 1;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 6px rgba(250, 204, 21, 0.12));
 }
 
 /* Cápsulas ópticas do HUD (AO VIVO, severidade, operador, relógio) */
-:where(html:not([data-acabamento='solido'])) .coa-pill,
-:where(html:not([data-acabamento='solido'])) .coa-sev,
-:where(html:not([data-acabamento='solido'])) #who,
-:where(html:not([data-acabamento='solido'])) .coa-clock {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .coa-pill,
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .coa-sev,
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #who,
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .coa-clock {
   background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 55%, transparent 100%);
   border-color: var(--lg-borda);
   box-shadow: var(--lg-aro), 0 2px 8px rgba(0, 0, 0, 0.3);
@@ -1007,8 +1096,8 @@ code {
 
 /* ------------------------------ Botões ------------------------------ */
 
-:where(html:not([data-acabamento='solido'])) button,
-:where(html:not([data-acabamento='solido'])) .btn {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) button,
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .btn {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.11) 0%, rgba(255, 255, 255, 0.03) 52%, rgba(255, 255, 255, 0.05) 100%),
     var(--lg-tinta);
@@ -1024,8 +1113,8 @@ code {
     transform 0.32s var(--lg-mola);
 }
 
-:where(html:not([data-acabamento='solido'])) button:hover:not(:disabled),
-:where(html:not([data-acabamento='solido'])) .btn:hover:not(:disabled) {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) button:hover:not(:disabled),
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .btn:hover:not(:disabled) {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.17) 0%, rgba(255, 255, 255, 0.05) 52%, rgba(255, 255, 255, 0.08) 100%),
     rgba(20, 34, 48, 0.62);
@@ -1033,15 +1122,15 @@ code {
   box-shadow: var(--lg-aro), 0 6px 18px rgba(0, 0, 0, 0.36);
 }
 
-:where(html:not([data-acabamento='solido'])) button:active:not(:disabled),
-:where(html:not([data-acabamento='solido'])) .btn:active:not(:disabled) {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) button:active:not(:disabled),
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .btn:active:not(:disabled) {
   transform: scale(0.965);
   transition-duration: 0.08s;
 }
 
 /* Primário em vidro esmeralda (ação principal / confirmar) */
-:where(html:not([data-acabamento='solido'])) .primary,
-:where(html:not([data-acabamento='solido'])) #btn-install {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .primary,
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #btn-install {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.06) 50%, rgba(255, 255, 255, 0.12) 100%),
     linear-gradient(180deg, rgba(16, 185, 129, 0.92) 0%, rgba(5, 150, 105, 0.94) 100%);
@@ -1053,8 +1142,8 @@ code {
     0 6px 18px rgba(16, 185, 129, 0.28);
 }
 
-:where(html:not([data-acabamento='solido'])) .primary:hover:not(:disabled),
-:where(html:not([data-acabamento='solido'])) #btn-install:hover:not(:disabled) {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .primary:hover:not(:disabled),
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #btn-install:hover:not(:disabled) {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.42) 0%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.16) 100%),
     linear-gradient(180deg, #34d399 0%, #10b981 100%);
@@ -1062,7 +1151,7 @@ code {
 }
 
 /* Botões de ícone da barra: lentes quadradas com reflexo curvo */
-:where(html:not([data-acabamento='solido'])) #actions .icon-btn {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #actions .icon-btn {
   background:
     var(--lg-reflexo),
     linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.02) 100%),
@@ -1071,7 +1160,7 @@ code {
   box-shadow: var(--lg-aro), 0 4px 12px rgba(0, 0, 0, 0.34);
 }
 
-:where(html:not([data-acabamento='solido'])) #actions .icon-btn:hover {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #actions .icon-btn:hover {
   background:
     var(--lg-reflexo),
     linear-gradient(180deg, rgba(250, 204, 21, 0.20) 0%, rgba(250, 204, 21, 0.06) 100%),
@@ -1079,16 +1168,16 @@ code {
   border-color: rgba(253, 224, 71, 0.5);
 }
 
-:where(html:not([data-acabamento='solido'])) #actions .icon-btn:active {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #actions .icon-btn:active {
   transform: scale(0.92);
 }
 
 /* -------------------- Overlays, cartões e folha de menu -------------------- */
 
-:where(html:not([data-acabamento='solido'])) #boot,
-:where(html:not([data-acabamento='solido'])) #error,
-:where(html:not([data-acabamento='solido'])) #login,
-:where(html:not([data-acabamento='solido'])) #about {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #boot,
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #error,
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #login,
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #about {
   background:
     radial-gradient(80% 60% at 50% 0%, rgba(0, 108, 48, 0.22) 0%, transparent 65%),
     radial-gradient(110% 110% at 50% 50%, rgba(12, 21, 30, 0.66) 0%, rgba(6, 11, 17, 0.84) 78%);
@@ -1098,14 +1187,14 @@ code {
   backdrop-filter: none;
 }
 
-:where(html:not([data-acabamento='solido'])) #menu {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #menu {
   background: rgba(4, 8, 13, 0.46);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
-:where(html:not([data-acabamento='solido'])) .card,
-:where(html:not([data-acabamento='solido'])) .sheet {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .card,
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .sheet {
   background:
     var(--lg-reflexo),
     linear-gradient(160deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.015) 45%, rgba(255, 255, 255, 0.04) 100%),
@@ -1116,7 +1205,7 @@ code {
   backdrop-filter: var(--lg-blur);
 }
 
-:where(html:not([data-acabamento='solido'])) .sheet button {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .sheet button {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
   border-color: rgba(255, 255, 255, 0.09);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
@@ -1124,22 +1213,22 @@ code {
   backdrop-filter: none;
 }
 
-:where(html:not([data-acabamento='solido'])) .sheet button:hover {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .sheet button:hover {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.13) 0%, rgba(255, 255, 255, 0.05) 100%);
   border-color: var(--lg-borda-forte);
 }
 
-:where(html:not([data-acabamento='solido'])) .m-ico,
-:where(html:not([data-acabamento='solido'])) .about-pill {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .m-ico,
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .about-pill {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.03) 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
-:where(html:not([data-acabamento='solido'])) .sheet-handle {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .sheet-handle {
   background: rgba(255, 255, 255, 0.34);
 }
 
-:where(html:not([data-acabamento='solido'])) .marca-halo {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .marca-halo {
   background:
     radial-gradient(70% 45% at 50% 0%, rgba(255, 255, 255, 0.16) 0%, transparent 70%),
     radial-gradient(circle, rgba(16, 185, 129, 0.26), transparent 72%);
@@ -1147,7 +1236,7 @@ code {
   border-radius: 22px;
 }
 
-:where(html:not([data-acabamento='solido'])) #session-status {
+:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #session-status {
   -webkit-backdrop-filter: var(--lg-blur);
   backdrop-filter: var(--lg-blur);
   box-shadow: var(--lg-aro), 0 12px 32px rgba(0, 0, 0, 0.48);
@@ -1156,33 +1245,180 @@ code {
 /* Celulares: blur mais leve para preservar fluidez do mapa */
 @media (max-width: 560px) {
   :root {
-    --lg-blur: blur(16px) saturate(175%);
-    --lg-blur-leve: blur(10px) saturate(160%);
+    --lg-blur: blur(16px) saturate(175%) brightness(0.68) contrast(1.06);
+    --lg-blur-leve: blur(10px) saturate(160%) brightness(0.8);
   }
 }
 
 /* Navegadores sem backdrop-filter: vidro mais denso para manter leitura */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root {
-    --lg-tinta: rgba(16, 27, 38, 0.92);
-    --lg-tinta-forte: rgba(13, 22, 32, 0.97);
+    --lg-tinta: rgba(10, 18, 28, 0.94);
+    --lg-tinta-forte: rgba(8, 15, 23, 0.98);
   }
 }
 
-/* ---------------- Modo Sólido alto contraste (monitores claros) ---------------- */
+/* =====================================================================
+   TEMA BLACK (preto puro OLED · alto contraste operacional)
+   ===================================================================== */
 
+html[data-acabamento='black'],
 html[data-acabamento='solido'] {
-  --muted: #b4c0cf;
-  --ink-soft: #e2e8f0;
-  --line: rgba(148, 163, 184, 0.26);
-  --line-strong: rgba(148, 163, 184, 0.4);
+  --bg: #000000;
+  --surface-0: #020305;
+  --surface-1: #05070b;
+  --surface-2: #0a0e14;
+  --surface-3: #101620;
+  --bar: #000000;
+  --glass: #05070b;
+  --ink: #ffffff;
+  --ink-soft: #f1f5f9;
+  --muted: #cbd5e1;
+  --line: rgba(255, 255, 255, 0.2);
+  --line-strong: rgba(255, 255, 255, 0.36);
 }
 
+html[data-acabamento='black'] #bar,
+html[data-acabamento='solido'] #bar {
+  background: linear-gradient(180deg, #070a0f 0%, #000000 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.85);
+}
+
+html[data-acabamento='black'] .brand-emblem,
+html[data-acabamento='solido'] .brand-emblem {
+  background: #05070b;
+  border-color: rgba(250, 204, 21, 0.45);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 4px 12px rgba(0, 0, 0, 0.85);
+}
+
+html[data-acabamento='black'] :is(.coa-pill, .coa-sev, #who, .coa-clock),
+html[data-acabamento='solido'] :is(.coa-pill, .coa-sev, #who, .coa-clock) {
+  background-color: #05080d;
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+html[data-acabamento='black'] .coa-pill[data-state='live'],
+html[data-acabamento='solido'] .coa-pill[data-state='live'] {
+  background-color: #032217;
+  border-color: rgba(52, 211, 153, 0.55);
+  color: #d1fae5;
+}
+
+html[data-acabamento='black'] .coa-pill[data-state='rest'],
+html[data-acabamento='solido'] .coa-pill[data-state='rest'] {
+  background-color: #241404;
+  border-color: rgba(251, 191, 36, 0.55);
+  color: #fef08a;
+}
+
+html[data-acabamento='black'] .coa-pill[data-state='warn'],
+html[data-acabamento='solido'] .coa-pill[data-state='warn'] {
+  background-color: #2a0808;
+  border-color: rgba(248, 113, 113, 0.65);
+  color: #fee2e2;
+}
+
+:where(html[data-acabamento='black'], html[data-acabamento='solido']) button,
+:where(html[data-acabamento='black'], html[data-acabamento='solido']) .btn {
+  background: #090d14;
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+:where(html[data-acabamento='black'], html[data-acabamento='solido']) button:hover:not(:disabled),
+:where(html[data-acabamento='black'], html[data-acabamento='solido']) .btn:hover:not(:disabled) {
+  background: #131b26;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+:where(html[data-acabamento='black'], html[data-acabamento='solido']) .primary,
+:where(html[data-acabamento='black'], html[data-acabamento='solido']) #btn-install {
+  background: linear-gradient(180deg, #10b981 0%, #059669 100%);
+  border-color: rgba(110, 231, 183, 0.65);
+  color: #021c11;
+}
+
+html[data-acabamento='black'] #actions .icon-btn,
+html[data-acabamento='solido'] #actions .icon-btn {
+  background: #070a10;
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+html[data-acabamento='black'] #actions .icon-btn:hover,
+html[data-acabamento='solido'] #actions .icon-btn:hover {
+  background: #171406;
+  border-color: var(--bp-ouro);
+  color: #fef08a;
+}
+
+html[data-acabamento='black'] :is(#boot, #error, #login, #about, #menu, #session-status),
 html[data-acabamento='solido'] :is(#boot, #error, #login, #about, #menu, #session-status) {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
+html[data-acabamento='black'] :is(#boot, #error, #login, #about),
 html[data-acabamento='solido'] :is(#boot, #error, #login, #about) {
-  background: #080e14;
+  background: rgba(0, 0, 0, 0.94);
 }
+
+html[data-acabamento='black'] #menu,
+html[data-acabamento='solido'] #menu {
+  background: rgba(0, 0, 0, 0.78);
+}
+
+html[data-acabamento='black'] :is(.card, .sheet),
+html[data-acabamento='solido'] :is(.card, .sheet) {
+  background: #040609;
+  border-color: rgba(255, 255, 255, 0.24);
+  box-shadow: 0 28px 72px rgba(0, 0, 0, 0.92);
+}
+
+html[data-acabamento='black'] .sheet button,
+html[data-acabamento='solido'] .sheet button {
+  background: #0a0e15;
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+html[data-acabamento='black'] .sheet button:hover,
+html[data-acabamento='solido'] .sheet button:hover {
+  background: #141c28;
+  border-color: rgba(255, 255, 255, 0.34);
+}
+
+html[data-acabamento='black'] .tema-bar,
+html[data-acabamento='solido'] .tema-bar {
+  background: #080b11;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+html[data-acabamento='black'] .sheet .tema-seg button,
+html[data-acabamento='solido'] .sheet .tema-seg button {
+  background: transparent;
+  border-color: transparent;
+  color: #cbd5e1;
+}
+
+html[data-acabamento='black'] .sheet .tema-seg button[aria-pressed='true'],
+html[data-acabamento='solido'] .sheet .tema-seg button[aria-pressed='true'] {
+  color: #021c11;
+  background: linear-gradient(180deg, #34d399 0%, #10b981 100%);
+  border-color: rgba(167, 243, 208, 0.7);
+}
+
+html[data-acabamento='black'] .sheet .sheet-fechar-x,
+html[data-acabamento='solido'] .sheet .sheet-fechar-x {
+  background: #0e141d;
+  border-color: rgba(255, 255, 255, 0.28);
+  color: #ffffff;
+}
+
+html[data-acabamento='black'] .sheet .sheet-fechar-x:hover,
+html[data-acabamento='solido'] .sheet .sheet-fechar-x:hover {
+  background: #3b0d0d;
+  border-color: #f87171;
+}
+

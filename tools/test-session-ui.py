@@ -107,6 +107,17 @@ try:
         print('OK: falha HTTP 401 mostra instrução acessível e não bloqueante sobre o mapa.')
 
         page.click('#btn-menu')
+        assert not page.locator('#menu').evaluate("e => e.classList.contains('hide')")
+        page.click('#menu [data-tema="black"]')
+        assert page.evaluate("document.documentElement.dataset.acabamento") == 'black'
+        assert not page.locator('#menu').evaluate("e => e.classList.contains('hide')"), 'Trocar tema não deve fechar o menu'
+        page.click('#menu [data-tema="vidro"]')
+        assert page.evaluate("document.documentElement.dataset.acabamento") == 'vidro'
+        page.click('#menu-fechar-x')
+        assert page.locator('#menu').evaluate("e => e.classList.contains('hide')"), 'Botão X deve fechar o Centro de Comando COA'
+        print('OK: Centro de Comando COA alterna Liquid Glass / Tema Black e fecha pelo botão X.')
+
+        page.click('#btn-menu')
         page.click('[data-act="fresh"]')
         page.wait_for_function("document.querySelector('#session-status').classList.contains('hide')", timeout=3000)
         assert len(sessoes) == 3, sessoes

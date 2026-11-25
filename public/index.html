@@ -150,8 +150,18 @@
         <div class="sheet">
           <div class="sheet-handle" aria-hidden="true"></div>
           <div class="sheet-head">
-            <h3>Centro de Comando COA</h3>
-            <span class="fine">Atalhos operacionais e sessão</span>
+            <div class="sheet-head-info">
+              <h3>Centro de Comando COA</h3>
+              <span class="fine">Atalhos operacionais e sessão</span>
+            </div>
+            <button id="menu-fechar-x" type="button" class="sheet-fechar-x" data-act="close" title="Fechar Centro de Comando" aria-label="Fechar Centro de Comando">✕</button>
+          </div>
+          <div class="tema-bar" role="group" aria-label="Tema visual">
+            <span class="tema-bar-label">Tema visual</span>
+            <div class="tema-seg">
+              <button type="button" data-tema="vidro" aria-pressed="true">Liquid Glass</button>
+              <button type="button" data-tema="black" aria-pressed="false">Tema Black</button>
+            </div>
           </div>
           <div class="menu-group">
             <button data-act="alertas"><span class="m-ico">🔔</span><span>Central de alertas</span></button>

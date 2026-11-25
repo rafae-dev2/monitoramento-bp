@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '2.1.0';
+  const VERSAO = '2.2.0';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -52,26 +52,38 @@
   const $ = (id) => document.getElementById(id);
   const agora = () => Date.now();
 
-  /* Acabamento visual por aparelho: 'vidro' (Liquid Glass) ou 'solido' (alto contraste).
-     Fica fora do cfg de alertas para valer antes do login e não ser sincronizado. */
+  /* Tema visual por aparelho: 'vidro' (Liquid Glass) ou 'black' (Tema Black OLED).
+     Aceita 'solido' legado migrando para 'black'. Fica fora do cfg sincronizado. */
   const KEY_ACABAMENTO = 'bperes.visual.acabamento.v1';
+  function normalizarTema(valor) {
+    return valor === 'black' || valor === 'solido' ? 'black' : 'vidro';
+  }
   function acabamentoSalvo() {
     try {
       const v = localStorage.getItem(KEY_ACABAMENTO);
-      if (v === 'vidro' || v === 'solido') return v;
+      if (v === 'vidro' || v === 'black' || v === 'solido') return normalizarTema(v);
     } catch {
       /* sem storage */
     }
     try {
-      if (window.matchMedia && window.matchMedia('(prefers-reduced-transparency: reduce)').matches) return 'solido';
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-transparency: reduce)').matches) return 'black';
     } catch {
       /* matchMedia indisponível */
     }
     return 'vidro';
   }
+  function sincronizarControlesTema(v) {
+    const sel = document.getElementById('cfg-acabamento');
+    if (sel && sel.value !== v) sel.value = v;
+    const botoes = document.querySelectorAll('[data-tema]');
+    for (const btn of botoes) {
+      btn.setAttribute('aria-pressed', btn.dataset.tema === v ? 'true' : 'false');
+    }
+  }
   function aplicarAcabamento(valor, persistir) {
-    const v = valor === 'solido' ? 'solido' : 'vidro';
+    const v = normalizarTema(valor);
     document.documentElement.dataset.acabamento = v;
+    sincronizarControlesTema(v);
     if (persistir) {
       try {
         localStorage.setItem(KEY_ACABAMENTO, v);
@@ -82,6 +94,12 @@
     return v;
   }
   aplicarAcabamento(acabamentoSalvo(), false);
+  document.addEventListener('click', (ev) => {
+    const btn = ev.target && typeof ev.target.closest === 'function' ? ev.target.closest('[data-tema]') : null;
+    if (!btn) return;
+    ev.stopPropagation();
+    aplicarAcabamento(btn.dataset.tema, true);
+  });
   let prazoRequisicaoMs = 15_000;
 
   /* tipos de alarme oficiais => nossas regras (catálogo /tipo-alarme do tenant) */
@@ -3457,16 +3475,16 @@
       <p id="push-status" class="push-status" role="status" aria-live="polite">Verificando disponibilidade…</p>
       <div class="push-acoes"><button id="push-ativar" class="primary" type="button">Ativar notificações Push neste aparelho</button><button id="push-desligar" class="push-desligar hide" type="button">Desligar notificações Push neste aparelho</button></div>
     </section>
-    <h3 class="secao-alertas">Acabamento visual</h3>
+    <h3 class="secao-alertas">Tema visual</h3>
     <div class="grade">
-      <label class="campo"><span>Estilo da interface neste aparelho</span>
+      <label class="campo"><span>Tema da interface neste aparelho</span>
         <select id="cfg-acabamento">
-          <option value="vidro">Liquid Glass (vidro translúcido estilo iPhone)</option>
-          <option value="solido">Sólido alto contraste (monitor claro / celular básico)</option>
+          <option value="vidro">Liquid Glass (vidro escuro refrativo estilo iPhone)</option>
+          <option value="black">Tema Black (preto puro · máximo contraste)</option>
         </select>
       </label>
     </div>
-    <p class="fine">Aplica na hora, só neste aparelho. O modo sólido remove transparências e reforça o contraste dos textos — indicado para telões do COA com muita luz ambiente ou aparelhos mais lentos.</p>
+    <p class="fine">Aplica na hora neste aparelho (também disponível como atalho rápido em ⚙ Centro de Comando COA). O Tema Black usa preto puro sem transparência, ideal para telões claros ou máxima nitidez.</p>
     <h3 class="secao-alertas">Modo Sentinela COA (2º plano e anti-perda)</h3>
     <p class="fine">Garante que o computador (aba minimizada ou atrás de outros sistemas) e o APK Android continuem monitorando e falando os alertas, além de avisar imediatamente caso o sinal do SGPA caia.</p>
     <div class="switches">
@@ -4522,7 +4540,7 @@
     }
     if ($('cfg-perfil-voz')) $('cfg-perfil-voz').value = PERFIS_VOZ[cfg.perfilVoz] ? cfg.perfilVoz : 'padrao';
     if ($('cfg-estilo-toque')) $('cfg-estilo-toque').value = cfg.estiloToque || 'gongo-coa';
-    if ($('cfg-acabamento')) $('cfg-acabamento').value = document.documentElement.dataset.acabamento === 'solido' ? 'solido' : 'vidro';
+    if ($('cfg-acabamento')) $('cfg-acabamento').value = normalizarTema(document.documentElement.dataset.acabamento);
     const checks = {
       'cfg-liga': cfg.ativo,
       'cfg-gestao-frente': cfg.gestaoFrenteAtiva !== false,
@@ -4956,6 +4974,8 @@
     calarFalaAtual,
     alternarVoz,
     alternarJanelaFlutuante,
+    aplicarTema: aplicarAcabamento,
+    obterTema: () => normalizarTema(document.documentElement.dataset.acabamento),
     abrirPainel,
     fecharPainel,
     abrirStream,
