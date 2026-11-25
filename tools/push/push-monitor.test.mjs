@@ -25,32 +25,55 @@ const fixtureAlarm = {
 };
 const alarm = normalizeAlertResponse([fixtureAlarm])[0];
 
-function makeStore({ initialBaseline = false, claimed = true, hasSubscriptions = true } = {}) {
+function makeStore({ initialBaseline = false, claimed = true, hasSubscriptions = true, pendingDeliveries = null } = {}) {
   const calls = [];
   return {
     calls,
     async call(action, data) {
       calls.push({ action, data });
       if (action === 'has_subscriptions') return { ok: true, hasSubscriptions };
-      if (action === 'synchronize_alarms') return { initialBaseline, pendingDeliveries: initialBaseline ? [] : [{
-        occurrenceId: 'occ-1',
-        deviceId: '00000000-0000-4000-8000-000000000001',
-        endpoint: 'https://fcm.googleapis.com/fcm/send/fixture',
-        p256dh: 'fixture-p256dh',
-        auth: 'fixture-auth',
-        preferences: {
-          notificarCategorias: { velocidade: true },
-          tiposNotificacao: {},
-          frentes: [],
-          equipamentos: '',
-          seguirSelecaoMapa: false,
-          selecaoMapa: [],
-        },
-        payload: alarm.payload,
-      }] };
+      if (action === 'synchronize_alarms') {
+        const padrao = {
+          occurrenceId: 'occ-1',
+          deviceId: '00000000-0000-4000-8000-000000000001',
+          endpoint: 'https://fcm.googleapis.com/fcm/send/fixture',
+          p256dh: 'fixture-p256dh',
+          auth: 'fixture-auth',
+          preferences: {
+            notificarCategorias: { velocidade: true },
+            tiposNotificacao: {},
+            frentes: [],
+            equipamentos: '',
+            seguirSelecaoMapa: false,
+            selecaoMapa: [],
+          },
+          payload: alarm.payload,
+        };
+        return { initialBaseline, pendingDeliveries: initialBaseline ? [] : (pendingDeliveries || [padrao]) };
+      }
       if (action === 'claim_delivery') return { claimed };
       return { ok: true };
     },
+  };
+}
+
+function makeDelivery(index, selected) {
+  const suffix = String(index).padStart(12, '0');
+  return {
+    occurrenceId: `00000000-0000-4000-8000-${suffix}`,
+    deviceId: `10000000-0000-4000-8000-${suffix}`,
+    endpoint: `https://fcm.googleapis.com/fcm/send/fixture-${index}`,
+    p256dh: 'fixture-p256dh',
+    auth: 'fixture-auth',
+    preferences: {
+      notificarCategorias: { velocidade: selected },
+      tiposNotificacao: {},
+      frentes: [],
+      equipamentos: '',
+      seguirSelecaoMapa: false,
+      selecaoMapa: [],
+    },
+    payload: alarm.payload,
   };
 }
 
@@ -159,6 +182,45 @@ test('preferências por dispositivo filtram sem enviar e registram o estado filt
   assert.equal(result.filtered, 1);
   assert.equal(push.sent.length, 0);
   assert.ok(store.calls.some((call) => call.action === 'complete_delivery' && call.data.status === 'filtered'));
+});
+
+test('20 itens filtered são reivindicados e concluídos, liberando o 21º item elegível na próxima execução', async () => {
+  const deliveries = Array.from({ length: 20 }, (_, i) => makeDelivery(i + 1, false));
+  deliveries.push(makeDelivery(21, true));
+  const claimed = new Set();
+  const completed = new Set();
+  const calls = [];
+  const store = {
+    calls,
+    async call(action, data) {
+      calls.push({ action, data });
+      if (action === 'has_subscriptions') return { ok: true, hasSubscriptions: true };
+      if (action === 'synchronize_alarms') return {
+        initialBaseline: false,
+        pendingDeliveries: deliveries.filter((item) => !completed.has(item.occurrenceId)),
+      };
+      if (action === 'claim_delivery') {
+        claimed.add(data.occurrenceId);
+        return { ok: true, claimed: true };
+      }
+      if (action === 'complete_delivery') {
+        if (!claimed.has(data.occurrenceId)) return { ok: true, updated: false };
+        completed.add(data.occurrenceId);
+        return { ok: true, updated: true };
+      }
+      return { ok: true };
+    },
+  };
+  const push = makePush();
+  const first = await runPushMonitor({ env, fetchOfficialAlarms: async () => [alarm], store, webPush: push, skipVapidSetup: true });
+  assert.equal(first.filtered, 20);
+  assert.equal(first.deferred, 1);
+  assert.equal(push.sent.length, 0);
+  assert.equal(completed.size, 20);
+  const second = await runPushMonitor({ env, fetchOfficialAlarms: async () => [alarm], store, webPush: push, skipVapidSetup: true });
+  assert.equal(second.sent, 1);
+  assert.equal(push.sent.length, 1);
+  assert.equal(completed.size, 21);
 });
 
 test('HTTP 410 remove subscription expirada sem persistir endpoint no log', async () => {

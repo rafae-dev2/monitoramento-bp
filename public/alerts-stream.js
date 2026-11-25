@@ -12,15 +12,29 @@
 
 let ctl = null;
 let ativo = false;
+let sequencia = 0;
 let buf = '';
 let caixa = [];
-let escorrendo = null;
+let timerEscoar = null;
+let timerAbertura = null;
+let decoder = null;
 
 async function abrir(msg) {
   fechar();
+  const id = ++sequencia;
   ativo = true;
+  buf = '';
+  caixa = [];
+  decoder = new TextDecoder();
   ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const controlador = ctl;
+  const atual = () => id === sequencia && ativo;
   self.postMessage({ type: 'estado', status: 'conectando' });
+  if (controlador) {
+    timerAbertura = setTimeout(() => {
+      if (atual()) controlador.abort();
+    }, 30000);
+  }
   try {
     const res = await fetch(msg.url, {
       method: 'POST',
@@ -31,60 +45,93 @@ async function abrir(msg) {
         accept: 'application/x-ndjson, application/json',
       },
       body: JSON.stringify(msg.corpo),
-      signal: ctl ? ctl.signal : undefined,
+      signal: controlador ? controlador.signal : undefined,
       cache: 'no-store',
     });
+    if (!atual()) return;
+    if (timerAbertura) clearTimeout(timerAbertura);
+    timerAbertura = null;
     if (!res.ok) {
       const erro = new Error('HTTP ' + res.status);
       erro.statusCode = res.status;
       throw erro;
     }
     if (!res.body || !res.body.getReader) {
-      // navegadores sem streaming de corpo: cai para leitura única do texto
-      const txt = await res.text();
-      processar(txt);
+      // Compatibilidade: mesmo a resposta de leitura única passa pelo flush final.
+      buf += await res.text();
+      if (!atual()) return;
+      finalizarBuffer();
+      ativo = false;
       self.postMessage({ type: 'estado', status: 'fechado' });
       return;
     }
     self.postMessage({ type: 'estado', status: 'ao vivo' });
     const leitor = res.body.getReader();
-    const dec = new TextDecoder();
-    while (ativo) {
+    while (atual()) {
       const { done, value } = await leitor.read();
+      if (!atual()) break;
       if (done) break;
-      buf += dec.decode(value, { stream: true });
+      buf += decoder.decode(value, { stream: true });
       const cortes = buf.split('\n');
       buf = cortes.pop() || '';
       if (cortes.length) processar(cortes.join('\n'));
     }
-    self.postMessage({ type: 'estado', status: 'fechado' });
+    if (atual()) {
+      finalizarBuffer();
+      ativo = false;
+      self.postMessage({ type: 'estado', status: 'fechado' });
+    }
   } catch (e) {
-    if (ativo) self.postMessage({ type: 'estado', status: 'erro', statusCode: Number(e && e.statusCode) || 0, mensagem: String((e && e.message) || e) });
+    if (atual()) {
+      finalizarBuffer();
+      ativo = false;
+      self.postMessage({ type: 'estado', status: 'erro', statusCode: Number(e && e.statusCode) || 0, mensagem: String((e && e.message) || e) });
+    }
   } finally {
-    escorrendo = null;
+    if (id === sequencia) {
+      if (timerAbertura) clearTimeout(timerAbertura);
+      timerAbertura = null;
+      ctl = null;
+      decoder = null;
+    }
   }
 }
 
 function processar(texto) {
+  let invalidas = 0;
   for (const linha of texto.split('\n')) {
     const t = linha.trim();
     if (!t) continue;
+    const json = t.startsWith('data:') ? t.slice(5).trim() : t;
+    // Ignora comentários e campos SSE; só conta como malformado o que se parece com JSON.
+    if (!json.startsWith('{') && !json.startsWith('[')) continue;
     let obj = null;
     try {
-      obj = JSON.parse(t.startsWith('data:') ? t.slice(5).trim() : t);
+      obj = JSON.parse(json);
     } catch {
-      continue; // linha parcial ou não JSON
+      invalidas++;
+      continue;
     }
     if (obj && obj.cdEquipamento) caixa.push(obj);
     if (Array.isArray(obj)) for (const x of obj) if (x && x.cdEquipamento) caixa.push(x);
   }
+  if (invalidas) self.postMessage({ type: 'aviso', mensagem: `${invalidas} linha(s) NDJSON inválida(s) recebida(s); confira a conexão com o portal.` });
   escoar();
 }
 
-function escoar() {
-  if (!caixa.length || escorrendo) return;
-  escorrendo = setTimeout(() => {
-    escorrendo = null;
+function escoar(imediato = false) {
+  if (imediato) {
+    if (timerEscoar) clearTimeout(timerEscoar);
+    timerEscoar = null;
+    if (!caixa.length) return;
+    const itens = caixa;
+    caixa = [];
+    self.postMessage({ type: 'quadros', itens });
+    return;
+  }
+  if (!caixa.length || timerEscoar) return;
+  timerEscoar = setTimeout(() => {
+    timerEscoar = null;
     if (!caixa.length) return;
     const itens = caixa;
     caixa = [];
@@ -92,20 +139,28 @@ function escoar() {
   }, 150);
 }
 
-function fechar() {
-  ativo = false;
+function finalizarBuffer() {
+  if (decoder) {
+    try { buf += decoder.decode(); } catch { /* flush parcial de bytes */ }
+  }
+  if (buf.trim()) processar(buf); // inclui a última linha mesmo sem \n no EOF.
   buf = '';
-  caixa = [];
-  if (escorrendo) clearTimeout(escorrendo);
-  escorrendo = null;
+  escoar(true); // não deixa o timer de agrupamento perder quadros no fechamento.
+}
+
+function fechar() {
+  const tinhaDados = ativo || !!buf || caixa.length > 0;
+  ativo = false;
+  sequencia++;
+  if (timerAbertura) clearTimeout(timerAbertura);
+  timerAbertura = null;
+  finalizarBuffer();
   if (ctl) {
-    try {
-      ctl.abort();
-    } catch {
-      /* já encerrado */
-    }
+    try { ctl.abort(); } catch { /* já encerrado */ }
     ctl = null;
   }
+  decoder = null;
+  if (tinhaDados) self.postMessage({ type: 'estado', status: 'fechado' });
 }
 
 self.onmessage = (ev) => {

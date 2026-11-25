@@ -365,14 +365,22 @@ export default async function handler(req, ctx) {
     if (rateLimited(ip)) {
       return new Response(JSON.stringify({ erro: 'muitas requisições' }), { status: 429, headers: JSON_HEADERS });
     }
-    // o app manda em lote: {alertas:[...]} — um único INSERT no Supabase por rajada
+    // o app manda em lote: {alertas:[...]} — confirma cada registro individualmente
     const lista = Array.isArray(corpo.alertas) ? corpo.alertas : [corpo];
-    let gravados = 0;
-    for (const item of lista.slice(0, 40)) {
-      if (await gravarAlerta(Object.assign({ unidade: corpo.unidade, usuario: corpo.usuario }, item))) gravados++;
+    if (lista.length > 40) {
+      return new Response(JSON.stringify({ erro: 'lote excede o limite de 40 alertas' }), { status: 413, headers: JSON_HEADERS });
     }
-    return new Response(JSON.stringify({ ok: true, recebidos: lista.length, gravados }), {
-      status: 202,
+    const resultados = [];
+    for (let i = 0; i < lista.length; i++) {
+      const item = lista[i] && typeof lista[i] === 'object' ? lista[i] : {};
+      const eventId = String(item.eventId || `legado-${i}`).slice(0, 128);
+      const ok = await gravarAlerta(Object.assign({ unidade: corpo.unidade, usuario: corpo.usuario }, item));
+      resultados.push({ eventId, ok });
+    }
+    const gravados = resultados.filter((resultado) => resultado.ok).length;
+    const ok = gravados === lista.length;
+    return new Response(JSON.stringify({ ok, recebidos: lista.length, gravados, falhas: lista.length - gravados, resultados }), {
+      status: ok ? 202 : 207,
       headers: JSON_HEADERS,
     });
   }

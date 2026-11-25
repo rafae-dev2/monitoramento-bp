@@ -31,11 +31,12 @@
 (() => {
   'use strict';
 
-  const VERSAO = '1.8.5';
+  const VERSAO = '1.8.6';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
   const KEY_ACK = 'bperes.alertas.ack.v2';
+  const KEY_AUDIT_QUEUE = 'bperes.alertas.audit-queue.v1';
   const KEY_PUSH_DEVICE = 'bperes.push.deviceId.v1';
   const MAX_HIST = 600;
   const JANELA_CORRELACAO_905_MS = 3000;
@@ -49,6 +50,7 @@
 
   const $ = (id) => document.getElementById(id);
   const agora = () => Date.now();
+  let prazoRequisicaoMs = 15_000;
 
   /* tipos de alarme oficiais => nossas regras (catálogo /tipo-alarme do tenant) */
   const MAPA_ALARME = {
@@ -147,6 +149,8 @@
   let correndo = false;
   let proximo = 0;
   let worker = null;
+  let streamRetryTimer = null;
+  let ultimoSinalStream = 0;
   let ultimoQuadro = 0;
   let tentativasStream = 0;
   let renovacaoPendente = null;
@@ -180,6 +184,10 @@
     backoff: 0,
     fonte: '—',
     stream: 'desligado',
+    fontes: {
+      telemetria: { status: 'aguardando', ultimaSucesso: 0, erro: '' },
+      alarmes: { status: 'aguardando', ultimaSucesso: 0, erro: '' },
+    },
     quadros: 0,
     frentes: [],
   };
@@ -667,36 +675,70 @@
     };
   }
 
+  async function requisitarJson(url, opcoes, origem) {
+    const controle = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    let expirou = false;
+    let temporizador = null;
+    const pedido = (async () => {
+      const res = await fetch(url, Object.assign({}, opcoes || {}, { signal: controle ? controle.signal : undefined }));
+      const texto = await res.text();
+      let json = null;
+      try { json = texto ? JSON.parse(texto) : null; } catch { /* preserva o código HTTP mesmo sem JSON */ }
+      return { res, json };
+    })();
+    const limite = new Promise((_, rejeitar) => {
+      temporizador = setTimeout(() => {
+        expirou = true;
+        if (controle) controle.abort();
+        const erro = new Error(`${origem || 'consulta SGPA'} sem resposta em ${Math.ceil(prazoRequisicaoMs / 1000)} segundos`);
+        erro.code = 'ETIMEDOUT';
+        rejeitar(erro);
+      }, prazoRequisicaoMs);
+    });
+    try {
+      return await Promise.race([pedido, limite]);
+    } catch (erro) {
+      if (expirou && (!erro || erro.code !== 'ETIMEDOUT')) {
+        const timeout = new Error(`${origem || 'consulta SGPA'} excedeu o tempo limite`);
+        timeout.code = 'ETIMEDOUT';
+        throw timeout;
+      }
+      throw erro;
+    } finally {
+      if (temporizador) clearTimeout(temporizador);
+    }
+  }
+
   async function chamar(caminho) {
     if (!ctx.api) throw new Error('sem sessão com o portal');
     const url = ctx.api.replace(/\/$/, '') + caminho;
-    let res;
+    let resposta;
     try {
-      res = await fetch(url, { method: 'GET', headers: cabecalhos(), cache: 'no-store' });
+      resposta = await requisitarJson(url, { method: 'GET', headers: cabecalhos(), cache: 'no-store' }, 'API SGPA');
     } catch (e) {
-      if (ctx.proxy) return chamarProxy(caminho); // rede/CORS contra a API: vai pelo servidor
+      if (ctx.proxy && (!e || e.code !== 'ETIMEDOUT')) return chamarProxy(caminho); // rede/CORS contra a API: vai pelo servidor
       throw e;
     }
-    if (res.status === 401) {
+    if (resposta.res.status === 401) {
       await renovarToken();
-      const deNovo = await fetch(url, { method: 'GET', headers: cabecalhos(), cache: 'no-store' });
-      if (!deNovo.ok) throw new Error('HTTP ' + deNovo.status);
-      return deNovo.json();
+      const deNovo = await requisitarJson(url, { method: 'GET', headers: cabecalhos(), cache: 'no-store' }, 'API SGPA após renovar sessão');
+      if (!deNovo.res.ok) throw new Error('HTTP ' + deNovo.res.status);
+      return deNovo.json;
     }
-    if (res.status === 429) {
+    if (resposta.res.status === 429) {
       estado.backoff = 90_000;
       throw new Error('limite de requisições do portal (10/min) atingido — reduzindo o ritmo');
     }
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    return res.json();
+    if (!resposta.res.ok) throw new Error('HTTP ' + resposta.res.status);
+    return resposta.json;
   }
 
   async function chamarProxy(caminho, tentarRenovar = true) {
-    const res = await fetch('/.netlify/functions/session?acao=dados&rota=' + encodeURIComponent(caminho), {
+    const resposta = await requisitarJson('/.netlify/functions/session?acao=dados&rota=' + encodeURIComponent(caminho), {
       headers: { accept: 'application/json' },
       cache: 'no-store',
-    });
-    const json = await res.json().catch(() => ({}));
+    }, 'proxy SGPA');
+    const { res, json } = resposta;
     if (res.status === 401 && tentarRenovar) {
       await renovarToken();
       return chamarProxy(caminho, false);
@@ -738,6 +780,8 @@
   /* ------------------------------------------------------------------ */
 
   function abrirStream() {
+    clearTimeout(streamRetryTimer);
+    streamRetryTimer = null;
     fecharStream();
     if (!cfg.ativo || !cfg.usarStream || typeof Worker === 'undefined' || !ctx.token) {
       estado.stream = !cfg.ativo || !cfg.usarStream ? 'desligado' : 'indisponível';
@@ -749,58 +793,96 @@
       cdUnidade: [Number(ctx.buId) || 1],
     };
     const url = MONITORAMENTO_API + '/subscribe-live?buId=' + encodeURIComponent(ctx.buId) + '&language=pt-br';
+    let workerAtual;
     try {
-      worker = new Worker('/alerts-stream.js');
+      workerAtual = new Worker('/alerts-stream.js');
+      worker = workerAtual;
     } catch {
       estado.stream = 'indisponível';
+      estado.proximoErro = 'não foi possível iniciar o Worker do stream';
+      agendarReconexaoStream(60_000);
+      renderCabecalho();
       return;
     }
+    ultimoSinalStream = agora();
     estado.stream = 'conectando';
-    worker.onmessage = (ev) => {
+    workerAtual.onmessage = (ev) => {
       const m = (ev && ev.data) || {};
       if (m.type === 'quadros') {
-        ultimoQuadro = agora();
-        tentativasStream = 0;
-        estado.stream = 'ao vivo';
+        if (workerAtual === worker) {
+          ultimoQuadro = agora();
+          ultimoSinalStream = ultimoQuadro;
+          tentativasStream = 0;
+          estado.stream = 'ao vivo';
+        }
         processarQuadros(m.itens);
       } else if (m.type === 'estado') {
+        if (workerAtual !== worker) {
+          if (m.status === 'fechado') {
+            clearTimeout(workerAtual._timerFechamento);
+            try { workerAtual.terminate(); } catch { /* já encerrado */ }
+          }
+          return;
+        }
         estado.stream = m.status;
+        if (m.status === 'ao vivo') ultimoSinalStream = agora();
         if (m.status === 'erro' || m.status === 'fechado') {
-          const reconectar = () => {
-            const espera = Math.min(60_000, 2000 * 2 ** tentativasStream);
-            tentativasStream++;
-            setTimeout(() => {
-              if (cfg.usarStream && cfg.ativo) abrirStream();
-            }, espera);
-          };
-          if (m.statusCode === 401) renovarToken().catch(reconectar);
+          const reconectar = (espera) => agendarReconexaoStream(espera);
+          if (m.statusCode === 401) renovarToken().catch(() => reconectar());
           else if (m.statusCode === 403) {
             estado.sessao = 'sem autorização';
             estado.proximoErro = 'o SGPA recusou a autorização do stream (403)';
-          } else reconectar();
+            reconectar(60_000);
+          } else {
+            estado.proximoErro = m.mensagem || 'stream encerrado; tentando reconectar';
+            reconectar();
+          }
         }
       } else if (m.type === 'aviso') {
         estado.proximoErro = m.mensagem || m.type;
       }
       renderCabecalho();
     };
-    worker.onerror = () => {
+    workerAtual.onerror = () => {
+      if (workerAtual !== worker) {
+        try { workerAtual.terminate(); } catch { /* já encerrado */ }
+        return;
+      }
       estado.stream = 'erro';
+      estado.proximoErro = 'erro inesperado no Worker do stream';
       renderCabecalho();
+      agendarReconexaoStream();
     };
-    worker.postMessage({ type: 'abrir', url, token: ctx.token, corpo });
+    workerAtual.postMessage({ type: 'abrir', url, token: ctx.token, corpo });
+  }
+
+  function agendarReconexaoStream(esperaForcada) {
+    if (streamRetryTimer || !cfg.usarStream || !cfg.ativo) return;
+    const espera = Number.isFinite(esperaForcada)
+      ? Math.max(1000, esperaForcada)
+      : Math.min(60_000, 2000 * 2 ** tentativasStream);
+    tentativasStream++;
+    streamRetryTimer = setTimeout(() => {
+      streamRetryTimer = null;
+      if (cfg.usarStream && cfg.ativo) abrirStream();
+    }, espera);
   }
 
   function fecharStream() {
-    if (worker) {
+    clearTimeout(streamRetryTimer);
+    streamRetryTimer = null;
+    const anterior = worker;
+    worker = null;
+    if (anterior) {
       try {
-        worker.postMessage({ type: 'fechar' });
-        worker.terminate();
+        anterior.postMessage({ type: 'fechar' });
+        anterior._timerFechamento = setTimeout(() => {
+          try { anterior.terminate(); } catch { /* já encerrado */ }
+        }, 1000);
       } catch {
-        /* nada a limpar */
+        try { anterior.terminate(); } catch { /* já encerrado */ }
       }
     }
-    worker = null;
   }
 
   function processarQuadros(itens) {
@@ -873,24 +955,45 @@
       }
       e.vistoEm = agora();
       if (!e.fonte) e.fonte = 'stream';
-      if (q.descOperacao !== undefined && dentroDoEscopo(e)) {
-        regraSemApontamento(e, agora());
-        if (!ehCaminhaoAguardandoCarregamento(e)) regraParada(e, agora());
-        regraRefeicao(e, agora());
+      e.ultimaObservacaoFonte = ts > 0 ? `sgpa:${ts}` : `stream:${++sequenciaStreamObservacao}:${id}`;
+      const observacaoAnterior = observacaoEmAvaliacao;
+      const avaliacaoAnterior = avaliacaoSoTempo;
+      observacaoEmAvaliacao = e.ultimaObservacaoFonte;
+      avaliacaoSoTempo = false;
+      try {
+        if (q.descOperacao !== undefined && dentroDoEscopo(e)) {
+          regraSemApontamento(e, agora());
+          if (!ehCaminhaoAguardandoCarregamento(e)) regraParada(e, agora());
+          regraRefeicao(e, agora());
+        }
+      } finally {
+        observacaoEmAvaliacao = observacaoAnterior;
+        avaliacaoSoTempo = avaliacaoAnterior;
       }
     }
     // Avalia o 905 após consolidar o lote inteiro para não dispará-lo antes de
     // processar o caminhão da mesma frente que veio no mesmo quadro do stream.
     const tsAguardando = agora();
     atualizarFrentesInferidas(tsAguardando);
-    for (const e of frota.values()) {
-      if (!dentroDoEscopo(e)) continue;
-      if (ehCaminhaoAguardandoCarregamento(e)) regraParada(e, tsAguardando);
-      const stCaminhao = estados.get(e.id + '|aguardandoCaminhao');
-      const stBasculamento = estados.get(e.id + '|aguardandoBasculamento');
-      const stFrenteDividida = estados.get(e.id + '|frenteDividida');
-      if (policy.frenteDividida(e) || stFrenteDividida) regraFrenteDividida(e, tsAguardando);
-      if (policy.aguardandoCaminhao(e) || stCaminhao || stBasculamento) regraAguardandoCaminhao(e, tsAguardando);
+    const observacaoAnterior = observacaoEmAvaliacao;
+    const avaliacaoAnterior = avaliacaoSoTempo;
+    try {
+      avaliacaoSoTempo = false;
+      for (const e of frota.values()) {
+        if (!dentroDoEscopo(e)) continue;
+        observacaoEmAvaliacao = e.ultimaObservacaoFonte || (Number(e.tsEquipamento) > 0
+          ? `sgpa:${Number(e.tsEquipamento)}`
+          : `quadro:${Number(e.vistoEm) || 0}:${e.id}`);
+        if (ehCaminhaoAguardandoCarregamento(e)) regraParada(e, tsAguardando);
+        const stCaminhao = estados.get(e.id + '|aguardandoCaminhao');
+        const stBasculamento = estados.get(e.id + '|aguardandoBasculamento');
+        const stFrenteDividida = estados.get(e.id + '|frenteDividida');
+        if (policy.frenteDividida(e) || stFrenteDividida) regraFrenteDividida(e, tsAguardando);
+        if (policy.aguardandoCaminhao(e) || stCaminhao || stBasculamento) regraAguardandoCaminhao(e, tsAguardando);
+      }
+    } finally {
+      observacaoEmAvaliacao = observacaoAnterior;
+      avaliacaoSoTempo = avaliacaoAnterior;
     }
     estado.quadros += lista.length;
   }
@@ -1264,9 +1367,9 @@
     }
   }
 
-  function dentroDoEscopo(e) {
-    if (String(e.ativo || 'T') === 'F') return false;
-    if (e.atraso !== null && e.atraso !== undefined && e.atraso > cfg.maxAtrasoMin * 60) return false;
+  function dentroDoEscopo(e, opcoes = {}) {
+    if (!opcoes.alarmesOficiais && String(e.ativo || 'T') === 'F') return false;
+    if (!opcoes.alarmesOficiais && e.atraso !== null && e.atraso !== undefined && e.atraso > cfg.maxAtrasoMin * 60) return false;
     if (cfg.seguirSelecaoMapa && ctx.selecao && ctx.selecao.size) {
       if (!ctx.selecao.has(String(e.id)) && !ctx.selecao.has(String(e.numero))) return false;
     }
@@ -1284,7 +1387,7 @@
 
   function reconciliarEscopo() {
     for (const [chave, alerta] of ativos) {
-      if (dentroDoEscopo(alerta.e)) continue;
+      if (dentroDoEscopo(alerta.e, { alarmesOficiais: alerta.fonte === 'portal' })) continue;
       ativos.delete(chave);
       if (alerta.fonte === 'portal') {
         const st = estados.get(chave);
@@ -1311,6 +1414,10 @@
   }
 
   let nCiclo = 0;
+  let sequenciaObservacao = 0;
+  let sequenciaStreamObservacao = 0;
+  let avaliacaoSoTempo = false;
+  let observacaoEmAvaliacao = null;
 
   async function ciclo() {
     nCiclo++;
@@ -1329,42 +1436,66 @@
     correndo = true;
     estado.ligado = true;
     const tsInicio = agora();
-    let pegou = false;
+    let telemetriaNova = false;
     try {
-      // Telemetria e espelho independentes: falha de uma fonte não bloqueia a outra.
+      // Cada fonte expõe sua própria saúde: sucesso parcial não apaga a falha da outra.
       const resultados = await Promise.allSettled([
         chamar(rotaTelemetria()),
         cfg.espelharServidor ? chamar(rotaAlarmes()) : Promise.resolve(null),
       ]);
       if (!cfg.ativo) return;
-      let telemetriaNova = false;
-      if (resultados[0].status === 'fulfilled' && Array.isArray(resultados[0].value)) {
+      const telemetriaOK = resultados[0].status === 'fulfilled' && Array.isArray(resultados[0].value);
+      const alarmesOK = !cfg.espelharServidor || (resultados[1].status === 'fulfilled' && Array.isArray(resultados[1].value));
+      const erroFonte = (resultado) => resultado.status === 'rejected'
+        ? (resultado.reason && resultado.reason.message) || 'falha na consulta'
+        : 'resposta do SGPA em formato inválido';
+      const falhas = [];
+
+      estado.fontes.telemetria = telemetriaOK
+        ? { status: 'ok', ultimaSucesso: agora(), erro: '' }
+        : { ...estado.fontes.telemetria, status: 'falha', erro: erroFonte(resultados[0]) };
+      if (!telemetriaOK) falhas.push('telemetria: ' + estado.fontes.telemetria.erro);
+
+      if (cfg.espelharServidor) {
+        estado.fontes.alarmes = alarmesOK
+          ? { status: 'ok', ultimaSucesso: agora(), erro: '' }
+          : { ...estado.fontes.alarmes, status: 'falha', erro: erroFonte(resultados[1]) };
+        if (!alarmesOK) falhas.push('alarmes oficiais: ' + estado.fontes.alarmes.erro);
+      } else {
+        estado.fontes.alarmes = { status: 'desligado', ultimaSucesso: estado.fontes.alarmes.ultimaSucesso, erro: '' };
+      }
+
+      if (telemetriaOK) {
         aplicarTelemetria(resultados[0].value);
         telemetriaNova = true;
-        pegou = true;
       }
-      if (cfg.espelharServidor && resultados[1].status === 'fulfilled' && Array.isArray(resultados[1].value)) {
-        espelharAlarmes(resultados[1].value);
-        pegou = true;
-      }
-      if (!pegou) throw new Error('sem resposta das fontes SGPA');
+      if (cfg.espelharServidor && alarmesOK) espelharAlarmes(resultados[1].value);
+      if (!telemetriaOK && !cfg.espelharServidor) throw new Error(falhas.join(' · ') || 'sem resposta das fontes SGPA');
+      if (!telemetriaOK && !alarmesOK) throw new Error(falhas.join(' · ') || 'sem resposta das fontes SGPA');
+
       if (cfg.espelharServidor && nCiclo % 3 === 2) {
         const d = await chamar(rotaTempos()).catch(() => null);
         if (cfg.ativo && Array.isArray(d)) aplicarTempos(d);
       }
-      estado.erros = 0;
-      estado.backoff = 0;
+      if (falhas.length) {
+        estado.erros++;
+        estado.proximoErro = falhas.join(' · ');
+        estado.backoff = Math.max(estado.backoff, Math.min(5 * 60_000, estado.backoff || 20_000));
+      } else {
+        estado.erros = 0;
+        estado.proximoErro = '';
+        estado.backoff = 0;
+      }
       estado.ultimoCiclo = tsInicio;
-      estado.fonte = telemetriaNova ? 'telemetria + SGPA oficial' : 'SGPA oficial';
-      // Inicia estados temporizados quando os dados foram efetivamente avaliados,
-      // não no começo da requisição REST que pode demorar vários segundos.
+      estado.fonte = telemetriaNova ? (cfg.espelharServidor && alarmesOK ? 'telemetria + SGPA oficial' : 'telemetria') : 'SGPA oficial';
+      // Inicia estados temporizados quando os dados foram efetivamente avaliados.
       const tsAvaliacao = agora();
       avaliarFrota(tsAvaliacao, telemetriaNova ? 'lotes' : 'tempo');
       purarResolvidos(tsAvaliacao);
     } catch (e) {
       estado.erros++;
       estado.proximoErro = (e && e.message) || 'falha ao ler o portal';
-      estado.backoff = Math.min(5 * 60_000, estado.backoff || 20_000);
+      estado.backoff = Math.max(estado.backoff, Math.min(5 * 60_000, estado.backoff || 20_000));
     } finally {
       correndo = false;
       renderAtivos();
@@ -1395,6 +1526,7 @@
       st = { chave, id, regra, firing: false, since: 0, consec: 0, negados: 0, ultimo: 0, emitido: false, valor: null, nascido: ts };
       estados.set(chave, st);
     }
+    const observacao = observacaoEmAvaliacao || `direta:${ts}`;
     if (liga) {
       st.negados = 0;
       if (!st.firing) {
@@ -1402,11 +1534,16 @@
         st.since = ts;
         st.consec = 1;
         st.emitido = false;
-      } else {
+        st.ultimaObservacaoPositiva = observacao;
+      } else if (!avaliacaoSoTempo && st.ultimaObservacaoPositiva !== observacao) {
         st.consec++;
+        st.ultimaObservacaoPositiva = observacao;
       }
+      st.ultimaObservacaoNegativa = null;
       if (valor !== undefined && valor !== null) st.valor = valor;
     } else if (st.firing) {
+      if (avaliacaoSoTempo || st.ultimaObservacaoNegativa === observacao) return st;
+      st.ultimaObservacaoNegativa = observacao;
       st.negados++;
       if (st.negados >= 2) {
         st.firing = false;
@@ -1457,24 +1594,39 @@
 
   function avaliarFrota(ts, modo) {
     const lotes = modo !== 'tempo';
+    const modoAnterior = avaliacaoSoTempo;
+    const observacaoAnterior = observacaoEmAvaliacao;
+    avaliacaoSoTempo = !lotes;
+    const rodada = lotes ? ++sequenciaObservacao : 0;
     let cont = 0;
-    atualizarFrentesInferidas(ts);
-    for (const e of frota.values()) {
-      if (!dentroDoEscopo(e)) continue;
-      cont++;
-      if (lotes) {
-        regraRpm(e, ts);
+    try {
+      atualizarFrentesInferidas(ts);
+      for (const e of frota.values()) {
+        if (!dentroDoEscopo(e)) continue;
+        cont++;
+        const tsEquipamento = Number(e.tsEquipamento);
+        observacaoEmAvaliacao = lotes
+          ? tsEquipamento > 0 ? `sgpa:${tsEquipamento}` : `rodada:${rodada}:${e.id}`
+          : null;
+        if (lotes) e.ultimaObservacaoFonte = observacaoEmAvaliacao;
+        if (lotes) {
+          regraRpm(e, ts);
+        }
+        regraFrenteDividida(e, ts);
+        regraAguardandoCaminhao(e, ts);
+        regraSemApontamento(e, ts);
+        regraParada(e, ts);
+        regraRefeicao(e, ts);
+        regraTurno(e, ts);
+        regraOcioso(e, ts);
       }
-      regraFrenteDividida(e, ts);
-      regraAguardandoCaminhao(e, ts);
-      regraSemApontamento(e, ts);
-      regraParada(e, ts);
-      regraRefeicao(e, ts);
-      regraTurno(e, ts);
-      regraOcioso(e, ts);
+      observacaoEmAvaliacao = lotes ? `frente:rodada:${rodada}` : null;
+      regrasFrente(ts);
+      estado.monitorados = cont;
+    } finally {
+      avaliacaoSoTempo = modoAnterior;
+      observacaoEmAvaliacao = observacaoAnterior;
     }
-    regrasFrente(ts);
-    estado.monitorados = cont;
   }
 
   function equipamentoCaminhao(e) {
@@ -1648,7 +1800,7 @@
     const p = e.operacaoConfirmada === true ? policy.paradaImprodutiva(e) : null;
     const lim = p ? policy.limiteParada(cfg, p) : 0;
     const anterior = paradaAtual.get(e.id);
-    if (anterior && (!p || anterior !== p.id)) {
+    if (anterior && (!p || anterior !== p.id) && !avaliacaoSoTempo) {
       const velho = marcar(e.id, 'parada:' + anterior, false, ts, null);
       ativos.delete(velho.chave);
       paradaAtual.delete(e.id);
@@ -1839,7 +1991,7 @@
     const outraRegra = semPonto ? 'ocioso' : 'ociosoSemApontamento';
     const chaveOutra = String(e.id) + '|' + outraRegra;
     const stOutra = estados.get(chaveOutra);
-    if (stOutra) {
+    if (stOutra && !avaliacaoSoTempo) {
       Object.assign(stOutra, { firing: false, consec: 0, negados: 0, emitido: false, since: 0, ultimo: 0 });
       ativos.delete(chaveOutra);
     }
@@ -1965,7 +2117,7 @@
     if (a.cdId) st.ocorrencia = String(a.cdId);
     st.consec = Math.max(st.consec, Math.max(1, cfg.amostras)); // SGPA já confirmou o alarme
     const estavaForaDoEscopo = !!st.foraDoEscopo;
-    if (!dentroDoEscopo(e)) {
+    if (!dentroDoEscopo(e, { alarmesOficiais: true })) {
       st.foraDoEscopo = true;
       return;
     }
@@ -2462,13 +2614,53 @@
 
   /* Manda em lote: um disparo pode gerar dezenas de alertas e o limite do
      serverless é 40 requisições/min por IP. */
-  const filaAudit = [];
+  let auditStorageError = '';
+  let auditRemoteError = '';
+  let auditFilaMigrada = false;
   let auditPausaAte = 0;
   let auditTimer = null;
+  let auditEnviando = false;
+
+  function novoIdAudit() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+    return `audit-${agora()}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  function carregarFilaAudit() {
+    try {
+      const bruto = localStorage.getItem(KEY_AUDIT_QUEUE);
+      if (!bruto) return [];
+      const salva = JSON.parse(bruto);
+      if (!Array.isArray(salva)) throw new Error('formato de fila inválido');
+      return salva.filter((item) => item && typeof item === 'object').map((item) => {
+        if (item.eventId) return item;
+        auditFilaMigrada = true;
+        return Object.assign({}, item, { eventId: novoIdAudit() });
+      });
+    } catch {
+      auditStorageError = 'A fila local de auditoria não pôde ser lida; os próximos alertas ficarão apenas na memória.';
+      return [];
+    }
+  }
+
+  const filaAudit = carregarFilaAudit();
+  if (auditFilaMigrada) persistirFilaAudit();
+
+  function persistirFilaAudit() {
+    try {
+      localStorage.setItem(KEY_AUDIT_QUEUE, JSON.stringify(filaAudit));
+      auditStorageError = '';
+      return true;
+    } catch {
+      auditStorageError = 'Não foi possível persistir a fila de auditoria neste aparelho; ela fica vulnerável ao fechamento da página.';
+      return false;
+    }
+  }
 
   function registrarNoServidor(a) {
     if (!ctx.audit) return;
     filaAudit.push({
+      eventId: novoIdAudit(),
       chave: a.chave,
       regra: a.regra,
       severidade: a.severidade,
@@ -2486,32 +2678,67 @@
       unidade: ctx.unidade || '',
       usuario: ctx.usuario || '',
     });
-    if (filaAudit.length > 400) filaAudit.splice(0, filaAudit.length - 400);
+    persistirFilaAudit();
     if (!auditTimer) auditTimer = setTimeout(enviarAudit, 20000);
+    renderCabecalho();
   }
 
   async function enviarAudit() {
+    if (auditTimer) clearTimeout(auditTimer);
     auditTimer = null;
-    if (!filaAudit.length || agora() < auditPausaAte) {
-      if (filaAudit.length) auditTimer = setTimeout(enviarAudit, 30000);
+    if (auditEnviando || !filaAudit.length) return;
+    if (agora() < auditPausaAte) {
+      auditTimer = setTimeout(enviarAudit, Math.max(1000, auditPausaAte - agora()));
       return;
     }
-    const lote = filaAudit.splice(0, 25);
+    auditEnviando = true;
+    const lote = filaAudit.slice(0, 25);
     try {
-      const res = await fetch('/.netlify/functions/session?acao=alerta', {
+      const { res, json } = await requisitarJson('/.netlify/functions/session?acao=alerta', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ alertas: lote, unidade: ctx.unidade || '', usuario: ctx.usuario || '' }),
-      });
+      }, 'gravação da auditoria');
       if (res.status === 429) {
-        filaAudit.unshift(...lote);
-        auditPausaAte = agora() + 120000; // duas varridas sem tentar de novo
+        auditPausaAte = agora() + 120000;
+        auditRemoteError = 'O servidor limitou a gravação da auditoria; a fila foi mantida para nova tentativa.';
+        return;
       }
-    } catch {
-      filaAudit.unshift(...lote);
+      if (!res.ok || !json || !Array.isArray(json.resultados) || json.resultados.length !== lote.length) {
+        throw new Error('o servidor não confirmou cada alerta da fila');
+      }
+      const esperados = new Set(lote.map((item) => String(item.eventId)));
+      const vistos = new Set();
+      const gravados = new Set();
+      for (const resultado of json.resultados) {
+        const id = String(resultado && resultado.eventId || '');
+        if (!esperados.has(id) || vistos.has(id)) throw new Error('confirmação de auditoria inválida');
+        vistos.add(id);
+        if (resultado.ok === true) gravados.add(id);
+      }
+      if (vistos.size !== esperados.size) throw new Error('confirmação de auditoria incompleta');
+      if (gravados.size) {
+        for (let i = filaAudit.length - 1; i >= 0; i--) {
+          if (gravados.has(String(filaAudit[i].eventId))) filaAudit.splice(i, 1);
+        }
+        persistirFilaAudit();
+      }
+      const falhas = json.resultados.length - gravados.size;
+      if (falhas) {
+        auditRemoteError = `${falhas} alerta(s) não foram confirmados no servidor; permaneceram na fila.`;
+        auditPausaAte = agora() + 30000;
+      } else {
+        auditRemoteError = '';
+        auditPausaAte = 0;
+      }
+    } catch (erro) {
+      auditRemoteError = 'A gravação da auditoria não foi confirmada; os alertas permanecem na fila.';
       auditPausaAte = agora() + 60000;
+    } finally {
+      auditEnviando = false;
+      if (filaAudit.length) auditTimer = setTimeout(enviarAudit, Math.max(30000, auditPausaAte - agora()));
+      renderCabecalho();
     }
-    if (filaAudit.length) auditTimer = setTimeout(enviarAudit, 30000);
   }
 
   /* ------------------------------------------------------------------ */
@@ -2810,7 +3037,13 @@
     if (el.proximo) el.proximo.textContent = estado.ligado ? `próxima leitura em ${s}s` : 'central desligada';
     if (el.status) {
       const sessao = estado.sessao === 'ativa' ? 'sessão SGPA ativa' : `sessão SGPA ${estado.sessao}`;
-      el.status.textContent = `${n} ativo${n === 1 ? '' : 's'} · ${estado.monitorados} equipamentos vigiados · ${sessao}`;
+      const resumoFonte = (fonte) => fonte.status === 'ok' ? 'ok' : fonte.status === 'falha' ? 'falha' : fonte.status === 'desligado' ? 'desligada' : 'aguardando';
+      const statusAudit = auditStorageError ? 'não persistida' : auditRemoteError ? 'falha remota' : filaAudit.length ? 'pendente' : ctx.audit ? 'ok' : 'desativada';
+      el.status.textContent = `${n} ativo${n === 1 ? '' : 's'} · ${estado.monitorados} equipamentos · telemetria ${resumoFonte(estado.fontes.telemetria)} · SGPA ${resumoFonte(estado.fontes.alarmes)} · auditoria ${statusAudit} · ${sessao}`;
+      el.status.title = [estado.fontes.telemetria.erro && 'Telemetria: ' + estado.fontes.telemetria.erro,
+        estado.fontes.alarmes.erro && 'Alarmes oficiais: ' + estado.fontes.alarmes.erro,
+        auditStorageError && 'Auditoria local: ' + auditStorageError,
+        auditRemoteError && 'Auditoria servidor: ' + auditRemoteError].filter(Boolean).join(' | ');
     }
     if (el.stream) {
       const vivo = estado.stream === 'ao vivo' && agora() - ultimoQuadro < 120000;
@@ -2819,8 +3052,11 @@
         : 'eventos do mapa: ' + estado.stream;
     }
     if (el.dot) {
-      el.dot.classList.toggle('ruim', estado.erros > 0);
-      el.dot.title = estado.erros ? 'último erro: ' + estado.proximoErro : 'lendo o portal normalmente';
+      const temErro = estado.erros > 0 || !!auditStorageError || !!auditRemoteError;
+      el.dot.classList.toggle('ruim', temErro);
+      el.dot.title = [estado.erros > 0 && 'fontes SGPA: ' + estado.proximoErro,
+        auditStorageError && 'auditoria local: ' + auditStorageError,
+        auditRemoteError && 'auditoria servidor: ' + auditRemoteError].filter(Boolean).join(' | ') || 'fontes e auditoria lendo normalmente';
     }
     if (el.escopo) {
       const pedacos = [];
@@ -3712,6 +3948,7 @@
         ? Object.assign(contextoDa(novoCtx), { renovar: novoCtx.renovar })
         : novoCtx || {};
     ctx = Object.assign({ selecao: new Set() }, ctx, base);
+    if (filaAudit.length && !auditTimer) auditTimer = setTimeout(enviarAudit, 2000);
     const selecaoPersistida = Array.isArray(cfg.selecaoMapa) ? cfg.selecaoMapa.map(String) : [];
     const selecaoAtual = ctx.selecao instanceof Set ? [...ctx.selecao] : Array.isArray(ctx.selecao) ? ctx.selecao.map(String) : [];
     ctx.selecao = new Set([...selecaoPersistida, ...selecaoAtual]);
@@ -3746,8 +3983,13 @@
       }
       setInterval(tique, 1000);
       setInterval(() => {
-        // watchdog do stream: sem quadro há 3 min, reconecta
-        if (cfg.usarStream && cfg.ativo && worker && ultimoQuadro && agora() - ultimoQuadro > 180000) abrirStream();
+        // Watchdog também cobre conexão aberta sem sequer ter recebido o primeiro quadro.
+        if (cfg.usarStream && cfg.ativo && worker && estado.stream === 'ao vivo' && ultimoSinalStream && agora() - ultimoSinalStream > 180000) {
+          estado.proximoErro = 'stream sem atividade há mais de 3 minutos; tentando reconectar';
+          fecharStream();
+          renderCabecalho();
+          agendarReconexaoStream();
+        }
       }, 20000);
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden') { escondidoEm = agora(); return; }

@@ -16,23 +16,34 @@ hooks = """
   const chamarReal = chamar;
   const avaliarFrotaReal = avaliarFrota;
   window.__test = {
-    aplicarTelemetria, atualizarFrentesInferidas, avaliarFrota, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, regraParada, regraFrenteDividida, regrasFrente, enviarAudit, ciclo, abrirNoMapa, timestampEquipamento,
+    aplicarTelemetria, atualizarFrentesInferidas, avaliarFrota, tique, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, regraParada, regraFrenteDividida, regrasFrente, registrarNoServidor, enviarAudit, ciclo, chamar, abrirNoMapa, timestampEquipamento,
     frota: () => [...frota.values()],
     setCtx: (v) => { ctx = Object.assign(ctx, v); },
     setChamar: (fn) => { chamar = fn; },
+    setPrazoRequisicao: (ms) => { prazoRequisicaoMs = ms; },
+    setPausaAudit: (ms) => { auditPausaAte = ms; },
+    fontes: () => JSON.parse(JSON.stringify(estado.fontes)),
+    status: () => ({ erros: estado.erros, proximoErro: estado.proximoErro }),
     setEvaluationLogger: (sink) => { avaliarFrota = sink ? ((ts, mode) => { sink(ts, mode); return avaliarFrotaReal(ts, mode); }) : avaliarFrotaReal; },
     capturarFalas: () => { falasCapturadas = []; falar = (texto) => falasCapturadas.push(String(texto)); },
     restaurarFalas: () => { falar = falarReal; },
     falasCapturadas: () => falasCapturadas.slice(),
     reset: () => {
       chamar = chamarReal; avaliarFrota = avaliarFrotaReal;
+      clearTimeout(timer); timer = null; clearTimeout(auditTimer); auditTimer = null;
+      correndo = false; nCiclo = 0; sequenciaObservacao = 0; sequenciaStreamObservacao = 0;
+      prazoRequisicaoMs = 15000; auditPausaAte = 0; auditEnviando = false;
+      auditStorageError = ''; auditRemoteError = '';
       frota.clear(); estados.clear(); ativos.clear(); hist = []; filaAudit.length = 0;
       gestaoUltimoDisparo.clear();
       paradaAtual.clear();
       cfg = policy.normalizeCfg(JSON.parse(JSON.stringify(PADRAO)));
       cfg.popup = false; cfg.som = false; cfg.voz = false; cfg.vibrar = false; cfg.usarStream = false; cfg.notificacao = false;
       rajada = {ts: 0, voz: 0};
+      estado.erros = 0; estado.proximoErro = ''; estado.backoff = 0; estado.monitorados = 0;
+      estado.fontes = { telemetria: {status:'aguardando',ultimaSucesso:0,erro:''}, alarmes: {status:'aguardando',ultimaSucesso:0,erro:''} };
       ctx.audit = false;
+      localStorage.removeItem(KEY_AUDIT_QUEUE);
       buscaCentral = '';
       if (el.busca) el.busca.value = '';
       if (el.buscaLimpar) el.buscaLimpar.classList.add('hide');
@@ -177,7 +188,12 @@ with sync_playwright() as pw:
       ok(Math.abs(t.timestampEquipamento(arrayTenant)-instanteTenant)<120_000,'dtHrLocal em array é interpretado no fuso São Paulo, não no fuso Los Angeles do navegador');
       ok(Math.abs(t.timestampEquipamento(localBrasileiro)-instanteTenant)<120_000,'dtHrLocal dd/mm/aaaa usa o fuso do tenant');
       ok(Math.abs(t.timestampEquipamento(isoSemFuso)-instanteTenant)<120_000,'ISO sem offset usa o fuso do tenant, não o do dispositivo');
-      const feed = (r) => { t.aplicarTelemetria([r]); t.avaliarFrota(Date.now(),'lotes'); };
+      let feedTimestamp = Date.now();
+      const feed = (r) => {
+        feedTimestamp += 1000;
+        t.aplicarTelemetria([{...r,dtHrLocal:new Date(feedTimestamp).toISOString()}]);
+        t.avaliarFrota(Date.now(),'lotes');
+      };
       const aguardarJanela905 = (id) => t.regraAguardandoCaminhao(t.frota().find(e=>e.id===id),Date.now()+3000);
       feed(row);
       ok(!api.ativos().some(a => a.regra==='velocidade'), 'telemetria a 85 não produz velocidade local');
@@ -215,6 +231,8 @@ with sync_playwright() as pw:
       feed({...row,descOperacao:'Aguardando Caminhão'});
       ok(api.historico().length===wn, 'espera persistente respeita cooldown');
       feed({...row,descOperacao:'Aguardando Carregamento'});
+      t.tique(); t.tique();
+      ok(api.ativos().some(a=>a.regra==='aguardandoCaminhao'), 'tiques temporizados não contam novamente a mesma leitura negativa');
       feed({...row,descOperacao:'Aguardando Carregamento'});
       ok(api.ativos().length===0, 'duas leituras negativas encerram espera sem equivaler carregamento');
       feed({...row,descOperacao:'Aguardando Caminhão'});
@@ -230,16 +248,21 @@ with sync_playwright() as pw:
       ok(api.ativos().some(x=>x.e.id==='COL-905' && x.regra==='aguardandoCaminhao'),'código 905 reconhecido pelo código da operação');
 
       t.reset(); t.capturarFalas(); window.__systemNotifications.length=0;
-      api.configurar({voz:true,notificacao:true,popup:false,cooldownMin:10});
+      api.configurar({voz:true,notificacao:true,popup:false,cooldownMin:10,amostras:3});
       const frenteDivididaStream={cdEquipamento:'FD-8833',descEquipamento:'8833 - Trator fixture',descTpEquipamento:'TRATOR',descFullTpEquipamento:'Trator agrícola',descFrente:'Frente Norte',cdOperacao:991,descOperacao:'991 - Frente Dividida',fgMonitoramentoAtivo:'T',dtHrLocal:new Date().toISOString()};
       t.processarQuadros([frenteDivididaStream]);
       const fdStream=api.ativos().find(a=>a.e.id==='FD-8833' && a.regra==='frenteDividida');
       ok(!!fdStream && fdStream.fonte==='app' && fdStream.notificar && fdStream.numero==='8833' && fdStream.texto.includes('Frente Norte'),'primeiro quadro de Frente dividida no stream gera alerta local imediato com veículo e frente');
       ok(fdStream.fala.includes('Atenção COA') && fdStream.fala.includes('Frente dividida') && fdStream.fala.includes('sistema FUT') && fdStream.detalhe.includes('não foram alteradas'),'fala orienta validar a chamada no FUT sem atribuir intenção ou alterar operação/fila');
+      const estadoFdStream=()=>t.estados().find(s=>s.id==='FD-8833' && s.regra==='frenteDividida');
+      ok(estadoFdStream().consec===1,'primeiro quadro do equipamento conta uma única observação positiva');
+      await new Promise(resolve=>setTimeout(resolve,5));
+      t.processarQuadros([{...frenteDivididaStream,cdEquipamento:'FD-NAO-RELACIONADO',descEquipamento:'9911 - Trator fixture',descOperacao:'Operação fixture'}]);
+      ok(estadoFdStream().consec===1,'quadro de outro equipamento não cria nova confirmação para o alvo em cache');
       const historicoFd=api.historico().filter(a=>a.regra==='frenteDividida').length;
       t.processarQuadros([frenteDivididaStream]);
       await new Promise(resolve=>setTimeout(resolve,30));
-      ok(historicoFd===1 && api.historico().filter(a=>a.regra==='frenteDividida').length===1 && t.falasCapturadas().length===1 && window.__systemNotifications.length===1,'quadros repetidos respeitam cooldown e não duplicam fala/notificação');
+      ok(estadoFdStream().consec===1 && historicoFd===1 && api.historico().filter(a=>a.regra==='frenteDividida').length===1 && t.falasCapturadas().length===1 && window.__systemNotifications.length===1,'quadros repetidos respeitam identidade de observação, cooldown e não duplicam fala/notificação');
 
       t.reset(); t.capturarFalas();
       api.configurar({calcularLocal:false,voz:true,notificacao:true,notificarCategorias:{frenteDividida:false}});
@@ -503,8 +526,14 @@ with sync_playwright() as pw:
       ok(api.historico().length===beforeReplay+1,'ocorrência oficial distinta emite novo alerta');
       t.reset(); const count = api.frota().length; api.testar();
       ok(api.frota().length===count && t.filaAudit()===0, 'exemplo não modifica frota nem grava produção');
-      t.reset(); api.configurar({calcularLocal:true,limiteRpm:2000}); feed({...row,vlParametro4:2100});
-      ok(api.ativos().some(a=>a.regra==='rpm'), 'RPM local complementar preservada');
+      t.reset(); api.configurar({calcularLocal:true,limiteRpm:2000,amostras:3}); feed({...row,vlParametro4:2100});
+      const estadoRpm = () => t.estados().find(s=>s.regra==='rpm');
+      t.tique(); t.tique();
+      ok(estadoRpm().consec===1 && !api.ativos().some(a=>a.regra==='rpm'), 'tiques não multiplicam amostras positivas repetidas');
+      feed({...row,vlParametro4:2100});
+      ok(estadoRpm().consec===2 && !api.ativos().some(a=>a.regra==='rpm'), 'segunda observação distinta conta uma confirmação, sem disparar antes da terceira');
+      feed({...row,vlParametro4:2100});
+      ok(api.ativos().some(a=>a.regra==='rpm'), 'RPM local complementar é preservada após três observações distintas');
       t.reset(); t.capturarFalas();
       api.configurar({voz:true,popup:false,som:false,vibrar:false,notificarCategorias:{generico:false},tiposNotificacao:{11500:true}});
       t.espelharAlarmes([{cdEquipamento:'TESTE-INDIVIDUAL',cdId:'TIPO-SELECIONADO',cdTpAlarme:11500,descTpAlarme:'ABAST_INS_DESLIGAR_MOTOR_TPL',fgOnline:true}]);
@@ -594,6 +623,54 @@ with sync_playwright() as pw:
       ok(!!semMedicao && semMedicao.valor===null && t.falasCapturadas().length===1 && /alarme oficial de velocidade excedida/.test(semMedicao.fala), 'alarme oficial fala imediatamente sem esperar medição complementar');
       await new Promise(resolve=>setTimeout(resolve,30));
       ok(t.falasCapturadas().length===1, 'medição complementar tardia não gera segunda fala');
+
+      t.reset();
+      t.setChamar(async caminho => caminho.includes('/estatistica/') ? Promise.reject(new Error('timeout telemetria fixture')) : []);
+      await t.ciclo();
+      let fontes = t.fontes();
+      ok(fontes.telemetria.status==='falha' && fontes.alarmes.status==='ok' && t.status().erros>0 && /telemetria/.test(t.status().proximoErro), 'sucesso dos alarmes oficiais não mascara falha de telemetria');
+      t.reset();
+      t.setChamar(async caminho => caminho.includes('/alarmeOnline?') ? Promise.reject(new Error('indisponível alarmes fixture')) : []);
+      await t.ciclo();
+      fontes = t.fontes();
+      ok(fontes.telemetria.status==='ok' && fontes.alarmes.status==='falha' && t.status().erros>0 && /alarmes oficiais/.test(t.status().proximoErro), 'sucesso da telemetria não mascara falha de alarmes oficiais');
+
+      t.reset();
+      t.setCtx({api:'https://fixture.invalid',token:'fixture-token',proxy:false});
+      t.setPrazoRequisicao(30);
+      const fetchOriginal = window.fetch;
+      window.fetch = (_url,opcoes) => new Promise((_,reject) => opcoes.signal.addEventListener('abort',()=>reject(new DOMException('aborted','AbortError'))));
+      let timeoutDetectado = false;
+      try { await t.chamar('/estatistica/monitoramento'); }
+      catch (e) { timeoutDetectado = e.code==='ETIMEDOUT' && /resposta em/.test(e.message); }
+      finally { window.fetch = fetchOriginal; }
+      ok(timeoutDetectado, 'consulta REST que não responde termina por timeout em vez de travar o ciclo');
+
+      t.reset();
+      t.setCtx({audit:true,unidade:'Fixture',usuario:'Operador fixture'});
+      const alertaAudit = (chave) => ({chave,regra:'velocidade',severidade:3,numero:'8833',descricao:'Trator fixture',operador:'',valor:85,limite:50,texto:'alerta fixture',detalhe:'',fonte:'portal',fala:'fala fixture',inicio:Date.now(),ts:Date.now()});
+      t.registrarNoServidor(alertaAudit('AUDIT-1'));
+      t.registrarNoServidor(alertaAudit('AUDIT-2'));
+      const itensAudit = JSON.parse(localStorage.getItem('bperes.alertas.audit-queue.v1'));
+      ok(t.filaAudit()===2 && itensAudit.length===2 && itensAudit.every(item=>item.eventId), 'fila de auditoria é persistida com identidade por evento antes do envio');
+      const fetchAuditOriginal = window.fetch;
+      try {
+        window.fetch = async (_url,opcoes) => {
+          const corpo = JSON.parse(opcoes.body);
+          return new Response(JSON.stringify({ok:false,resultados:corpo.alertas.map((item,i)=>({eventId:item.eventId,ok:i===0}))}),{status:207,headers:{'content-type':'application/json'}});
+        };
+        await t.enviarAudit();
+        const restante = JSON.parse(localStorage.getItem('bperes.alertas.audit-queue.v1'));
+        ok(t.filaAudit()===1 && restante.length===1 && restante[0].eventId===itensAudit[1].eventId, 'confirmação parcial remove só o registro aceito e mantém a falha na fila');
+        t.setPausaAudit(0);
+        window.fetch = async (_url,opcoes) => {
+          const corpo = JSON.parse(opcoes.body);
+          return new Response(JSON.stringify({ok:true,resultados:corpo.alertas.map(item=>({eventId:item.eventId,ok:true}))}),{status:202,headers:{'content-type':'application/json'}});
+        };
+        await t.enviarAudit();
+        ok(t.filaAudit()===0 && JSON.parse(localStorage.getItem('bperes.alertas.audit-queue.v1')).length===0, 'fila persistente só é esvaziada após confirmação de gravação do servidor');
+      } finally { window.fetch = fetchAuditOriginal; }
+      t.reset();
       return checks;
     }""")
     for name in result:

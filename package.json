@@ -1,11 +1,13 @@
 {
   "name": "monitoramento-bp",
-  "version": "1.8.5",
+  "version": "1.8.6",
   "private": true,
   "description": "Monitoramento BP PWA \u2014 fun\u00e7\u00f5es serverless e testes fixture-only",
   "scripts": {
     "test:push": "node --test tools/push/*.test.mjs",
-    "test": "npm run test:push"
+    "test:stream": "node --test tools/alerts-stream.test.mjs",
+    "test:audit": "node --test tools/test-audit-endpoint.mjs",
+    "test": "npm run test:push && npm run test:stream && npm run test:audit"
   },
   "dependencies": {
     "web-push": "4.0.0"

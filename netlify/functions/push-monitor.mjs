@@ -59,30 +59,43 @@ export async function runPushMonitor(dependencies = {}) {
     while (cursor < queue.length) {
       const current = queue[cursor++];
       try {
-        const deviceId = String(current.deviceId || '');
-        const occurrenceId = String(current.occurrenceId || '');
-        const payload = current.payload && typeof current.payload === 'object' ? current.payload : {};
-        if (!deviceId || !occurrenceId || !current.endpoint || !current.p256dh || !current.auth) {
-          failed++;
-          await finishQuietly(store, occurrenceId, deviceId, 'failed', 'invalid-subscription');
-          continue;
-        }
+      const deviceId = String(current.deviceId || '');
+      const occurrenceId = String(current.occurrenceId || '');
+      const payload = current.payload && typeof current.payload === 'object' ? current.payload : {};
+      if (!deviceId || !occurrenceId) {
+        failed++;
+        continue;
+      }
 
-        if (!acceptsDeviceAlarm(current.preferences, payload)) {
-          filtered++;
-          await store.call('complete_delivery', {
+      // complete_delivery só transiciona linhas em estado sending. Reivindicar
+      // antes de filtrar impede que itens filtered reapareçam no início da fila.
+      const claim = await store.call('claim_delivery', { occurrenceId, deviceId });
+      if (!claim || claim.claimed !== true) continue;
+
+      if (!current.endpoint || !current.p256dh || !current.auth) {
+        failed++;
+        await finishQuietly(store, occurrenceId, deviceId, 'failed', 'invalid-subscription');
+        continue;
+      }
+
+      if (!acceptsDeviceAlarm(current.preferences, payload)) {
+        try {
+          const result = await store.call('complete_delivery', {
             occurrenceId,
             deviceId,
             status: 'filtered',
             error: null,
           });
-          continue;
+          if (!result || result.ok !== true || result.updated === false) throw new Error('filtered state was not persisted');
+          filtered++;
+        } catch {
+          failed++;
+          await finishQuietly(store, occurrenceId, deviceId, 'failed', 'filter-state-not-updated');
         }
+        continue;
+      }
 
-        const claim = await store.call('claim_delivery', { occurrenceId, deviceId });
-        if (!claim || claim.claimed !== true) continue;
-
-        const notification = buildPushPayload(payload, occurrenceId);
+      const notification = buildPushPayload(payload, occurrenceId);
         try {
           await pushClient.sendNotification(
             { endpoint: current.endpoint, keys: { p256dh: current.p256dh, auth: current.auth } },
