@@ -10,7 +10,7 @@
  *      com deduplicação em memória de eventId, lote único PostgREST e fallback individual.
  */
 
-import { VOZES_GEMINI_BR, sintetizarVozGemini, raciocinarComGemini } from '../lib/gemini-coa.mjs';
+import { VOZES_GEMINI_BR, sanitizarApiKeyGemini, sintetizarVozGemini, raciocinarComGemini } from '../lib/gemini-coa.mjs';
 
 const AUTH_API = process.env.AUTH_API || 'https://auth-api.saas-solinftec.com/auth-api-03/v2';
 const SGPA_API = process.env.SGPA_API || 'https://sgpa-api-br.saas-solinftec.com/slf03';
@@ -511,10 +511,12 @@ export default async function handler(req, ctx) {
 
   // GET ?acao=ia_status → informa se há GEMINI_API_KEY configurada no servidor (sem jamais expor o segredo) e lista as vozes Gemini Brasil
   if (acao === 'ia_status' && req.method === 'GET') {
+    const chaveSrv = sanitizarApiKeyGemini(process.env.GEMINI_API_KEY) || sanitizarApiKeyGemini(process.env.GOOGLE_API_KEY);
     return new Response(
       JSON.stringify({
         ok: true,
-        servidorConfigurado: Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
+        servidorConfigurado: Boolean(chaveSrv),
+        formatoChave: chaveSrv ? (chaveSrv.startsWith('AQ.') ? 'AQ' : 'AIza') : null,
         modeloTexto: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
         modeloVoz: process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
         vozes: VOZES_GEMINI_BR,

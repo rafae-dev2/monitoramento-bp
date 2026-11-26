@@ -6,7 +6,7 @@ const thisFile = fileURLToPath(import.meta.url);
 const mode = process.argv[2];
 
 if (!mode) {
-  for (const scenario of ['fresh-inflight', 'unauthorized-concurrent', 'gemini-ai-tts']) {
+  for (const scenario of ['fresh-inflight', 'unauthorized-concurrent', 'gemini-ai-tts', 'gemini-aq-key-fallback']) {
     const output = execFileSync(process.execPath, [thisFile, scenario], { encoding: 'utf8' });
     process.stdout.write(output);
   }
@@ -26,6 +26,7 @@ process.env.PROPS_TTL_SECONDS = '432000';
 process.env.SUPABASE_URL = '';
 process.env.SUPABASE_KEY = '';
 if (mode === 'gemini-ai-tts') process.env.GEMINI_API_KEY = 'AIzaSyFixtureKeyForUnitTestOnly123456';
+else if (mode === 'gemini-aq-key-fallback') process.env.GEMINI_API_KEY = 'GEMINI_API_KEY="AQ.FixtureUnitTestOnlyKey0000000000000000"';
 else delete process.env.GEMINI_API_KEY;
 delete process.env.APP_KEY;
 
@@ -46,9 +47,12 @@ globalThis.fetch = async (input, init = {}) => {
   const url = new URL(typeof input === 'string' ? input : input.url);
   const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
 
-  if (url.hostname === 'generativelanguage.googleapis.com') {
+  if (url.hostname === 'generativelanguage.googleapis.com' || url.hostname === 'aiplatform.googleapis.com') {
     const body = JSON.parse(String(init.body || '{}'));
-    chamadasGemini.push({ path: url.pathname, apiKey: headers.get('x-goog-api-key'), body });
+    chamadasGemini.push({ host: url.hostname, path: url.pathname, apiKey: headers.get('x-goog-api-key'), body });
+    if (mode === 'gemini-aq-key-fallback' && url.hostname === 'generativelanguage.googleapis.com') {
+      return json({ error: { code: 401, message: 'ACCESS_TOKEN_TYPE_UNSUPPORTED', status: 'UNAUTHENTICATED' } }, 401);
+    }
     if (url.pathname.includes('tts')) {
       const pcmDummy = Buffer.alloc(480, 0).toString('base64');
       return json({
@@ -169,6 +173,40 @@ if (mode === 'fresh-inflight') {
   assert.doesNotMatch(iaBody.analise, /pensamento interno oculto/, 'partes thought:true do Gemini 2.5 Thinking não devem vazar no texto final');
   assert.match(iaBody.analise, /Diagnóstico Causa-Raiz/);
   console.log('OK: rotas ia_status, ia_voz (WAV 24kHz vozes brasileiras Gemini) e ia_raciocinio (Gemini 2.5 Thinking) validadas.');
+} else if (mode === 'gemini-aq-key-fallback') {
+  const stRes = await handler(request('?acao=ia_status'), {});
+  const stText = await stRes.text();
+  assert.equal(stText.includes('FixtureUnitTestOnlyKey'), false, 'ia_status jamais pode vazar a chave secreta');
+  const stBody = JSON.parse(stText);
+  assert.equal(stRes.status, 200);
+  assert.equal(stBody.servidorConfigurado, true);
+  assert.equal(stBody.formatoChave, 'AQ');
+
+  const ttsRes = await handler(request('?acao=ia_voz', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': 'test-gemini-aq' },
+    body: JSON.stringify({ texto: 'Atenção Flow: Caminhão bombeiro em deslocamento.', voz: 'Puck', estilo: 'urgente' }),
+  }), {});
+  const ttsBody = await ttsRes.json();
+  assert.equal(ttsRes.status, 200);
+  assert.equal(ttsBody.ok, true);
+  assert.equal(ttsBody.voz, 'Puck');
+  assert.equal(chamadasGemini.length, 2, 'primeira chamada tenta Studio (401) e faz fallback automático para Vertex Express (200)');
+  assert.equal(chamadasGemini[0].host, 'generativelanguage.googleapis.com');
+  assert.equal(chamadasGemini[1].host, 'aiplatform.googleapis.com');
+  assert.equal(chamadasGemini[1].apiKey, 'AQ.FixtureUnitTestOnlyKey0000000000000000', 'sanitizador deve remover prefixo GEMINI_API_KEY= e aspas');
+
+  const iaRes = await handler(request('?acao=ia_raciocinio', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': 'test-gemini-aq' },
+    body: JSON.stringify({ pergunta: 'Diagnóstico rápido', contexto: { unidade: 'Branco Peres' } }),
+  }), {});
+  const iaBody = await iaRes.json();
+  assert.equal(iaRes.status, 200);
+  assert.equal(iaBody.ok, true);
+  assert.equal(chamadasGemini.length, 3, 'segunda chamada na mesma instância já usa direto a superfície Vertex Express memoizada');
+  assert.equal(chamadasGemini[2].host, 'aiplatform.googleapis.com');
+  console.log('OK: chave AQ. sanitizada + fallback adaptativo AI Studio -> Vertex Express + cache por chave validados.');
 } else {
   throw new Error(`Cenário desconhecido: ${mode}`);
 }

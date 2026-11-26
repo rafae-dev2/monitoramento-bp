@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '6.0.0';
+  const VERSAO = '6.0.1';
   const KEY_PAINEL_FIXO = 'bperes.visual.painel-fixo.v1';
   const KEY_GEMINI_KEY = 'bperes.ia.geminiKey.v1';
   const policy = window.AlertasPolicy;
@@ -3410,9 +3410,20 @@
       .replace(/\bF\s+L\s+O\s+W\b|\bFLOW\b/g, 'Flow');
   }
 
+  function sanitizarChaveGemini(bruto) {
+    let s = String(bruto || '').trim();
+    if (!s) return '';
+    s = s.replace(/^(?:GEMINI_API_KEY|GOOGLE_API_KEY)\s*[:=\r\n]+\s*/i, '').trim();
+    s = s.replace(/^['"`]+|['"`]+$/g, '').trim();
+    const m = /\b((?:AQ\.[A-Za-z0-9._-]+|AIza[A-Za-z0-9_-]{20,}))\b/.exec(s);
+    if (m) s = m[1];
+    if (s.length < 16 || s.length > 256 || /\s/.test(s)) return '';
+    return s;
+  }
+
   function obterChaveGeminiLocal() {
     try {
-      return String(localStorage.getItem(KEY_GEMINI_KEY) || '').trim();
+      return sanitizarChaveGemini(localStorage.getItem(KEY_GEMINI_KEY));
     } catch {
       return '';
     }
@@ -3420,12 +3431,33 @@
 
   function salvarChaveGeminiLocal(chave) {
     try {
-      const limpa = String(chave || '').trim();
+      const limpa = sanitizarChaveGemini(chave);
       if (limpa) localStorage.setItem(KEY_GEMINI_KEY, limpa);
       else localStorage.removeItem(KEY_GEMINI_KEY);
     } catch {
       /* sem storage */
     }
+  }
+
+  async function chamarGeminiDiretoCliente(modelo, chaveLocal, payload) {
+    const bases = ['https://generativelanguage.googleapis.com/v1beta/models'];
+    if (chaveLocal.startsWith('AQ.')) {
+      bases.push('https://aiplatform.googleapis.com/v1/publishers/google/models');
+    }
+    let ultimaResp = null;
+    let ultimoJson = null;
+    for (let i = 0; i < bases.length; i++) {
+      const r = await fetch(`${bases[i]}/${encodeURIComponent(modelo)}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': chaveLocal },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json().catch(() => null);
+      ultimaResp = r;
+      ultimoJson = j;
+      if (r.ok || (r.status !== 401 && r.status !== 403)) break;
+    }
+    return { r: ultimaResp, j: ultimoJson };
   }
 
   function geminiDisponivel() {
@@ -3482,6 +3514,10 @@
         });
         const j = await r.json().catch(() => null);
         if (r.ok && j && j.ok && j.audioBase64) {
+          if (!chaveLocal) {
+            iaServidorConfigurado = true;
+            atualizarStatusGeminiUi();
+          }
           dataUrl = `data:${j.mimeType || 'audio/wav'};base64,${j.audioBase64}`;
         }
       } catch {
@@ -3495,21 +3531,16 @@
         : estilo === 'calmo'
           ? 'Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, cadência pausada e serena, lendo exatamente o texto a seguir sem acrescentar palavras:'
           : 'Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, dicção clara e firme de centro de operações agrícolas, lendo exatamente o texto a seguir sem acrescentar palavras:';
-      const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': chaveLocal },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: `${direcao}\n"${texto}"` }] }],
-          generationConfig: {
-            responseModalities: ['AUDIO'],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voz } } },
-          },
-        }),
+      const { r, j } = await chamarGeminiDiretoCliente('gemini-2.5-flash-preview-tts', chaveLocal, {
+        contents: [{ role: 'user', parts: [{ text: `${direcao}\n"${texto}"` }] }],
+        generationConfig: {
+          responseModalities: ['AUDIO'],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voz } } },
+        },
       });
-      const j = await r.json().catch(() => null);
       const parts = (((j || {}).candidates || [])[0] || {}).content && j.candidates[0].content.parts || [];
       const part = parts.find((p) => p && p.inlineData && p.inlineData.data);
-      if (r.ok && part) {
+      if (r && r.ok && part) {
         const mime = String(part.inlineData.mimeType || '');
         if (/audio\/(?:wav|mpeg|mp3|ogg)/i.test(mime)) {
           dataUrl = `data:${mime};base64,${part.inlineData.data}`;
@@ -4713,8 +4744,8 @@
           <label class="chk"><input id="cfg-ia-ativa" type="checkbox"><span>Ativar Copiloto de IA na Central e botão “🧠 IA” nos cartões de alerta</span></label>
         </div>
         <div class="grade" style="margin-top:6px">
-          <label class="campo"><span>Chave Google Gemini API neste aparelho (opcional · <code>AIza...</code>)</span>
-            <input id="cfg-gemini-key" type="password" placeholder="Cole sua chave AIza... do Google AI Studio (ou deixe no servidor)" autocomplete="off" spellcheck="false">
+          <label class="campo"><span>Chave Google Gemini API neste aparelho (opcional · aceita <code>AQ...</code> ou <code>AIza...</code>)</span>
+            <input id="cfg-gemini-key" type="password" placeholder="Deixe vazio se GEMINI_API_KEY já estiver no Netlify, ou cole AQ... / AIza..." autocomplete="off" spellcheck="false">
           </label>
           <label class="campo"><span>Modelo de raciocínio Gemini</span>
             <select id="cfg-modelo-ia">
@@ -5049,7 +5080,7 @@
 
     // Vozes Gemini Brasil & Teste de IA
     if ($('cfg-testar-voz-gemini')) {
-      $('cfg-testar-voz-gemini').onclick = () => {
+      $('cfg-testar-voz-gemini').onclick = async () => {
         if ($('cfg-gemini-key') && $('cfg-gemini-key').value.trim()) {
           salvarChaveGeminiLocal($('cfg-gemini-key').value.trim());
         }
@@ -5061,21 +5092,29 @@
           vozDuplaSetor: $('cfg-voz-dupla') ? $('cfg-voz-dupla').checked : true,
           estiloDirecaoGemini: $('cfg-estilo-gemini') ? $('cfg-estilo-gemini').value : 'comando',
         });
-        atualizarStatusGeminiUi();
+        if (!geminiDisponivel() && ctx.proxy && ctx.audit) {
+          await verificarStatusIaServidor();
+        } else {
+          atualizarStatusGeminiUi();
+        }
         if (!geminiDisponivel()) {
-          mostrarAviso('Para usar as novas vozes brasileiras Gemini, cole uma chave gratuita Google AI Studio na aba 🧠 IA & Sistema (ou defina GEMINI_API_KEY no Netlify). Ouvindo na voz local atual…', 'info');
+          mostrarAviso('Para usar as novas vozes brasileiras Gemini, cole uma chave Google (AQ... ou AIza...) na aba 🧠 IA & Sistema ou aguarde o deploy de GEMINI_API_KEY no Netlify. Ouvindo na voz local atual…', 'info');
         }
         falar('Atenção Coa: nova voz brasileira do Gemini ativa na sala de controle. Colhedora cinco sete oito três oito operando na Frente 1.', { oficial: true, forcarGemini: true });
       };
     }
     if ($('cfg-testar-ia')) {
-      $('cfg-testar-ia').onclick = () => {
+      $('cfg-testar-ia').onclick = async () => {
         if ($('cfg-gemini-key')) salvarChaveGeminiLocal($('cfg-gemini-key').value.trim());
         configurar({
           iaAtiva: $('cfg-ia-ativa') ? $('cfg-ia-ativa').checked : true,
           modeloIa: $('cfg-modelo-ia') ? $('cfg-modelo-ia').value : 'gemini-2.5-flash',
         });
-        atualizarStatusGeminiUi();
+        if (!geminiDisponivel() && ctx.proxy && ctx.audit) {
+          await verificarStatusIaServidor();
+        } else {
+          atualizarStatusGeminiUi();
+        }
         fecharConfig();
         abrirPainel('ia');
         executarAnaliseIa('Faça um diagnóstico operacional rápido da usina agora.');
@@ -7074,6 +7113,9 @@
     renderCopilotoIa();
 
     const chaveLocal = obterChaveGeminiLocal();
+    if (!iaServidorConfigurado && !chaveLocal && ctx.proxy && ctx.audit) {
+      await verificarStatusIaServidor();
+    }
     if (!iaServidorConfigurado && !chaveLocal) {
       iaCarregando = false;
       historicoChatIa.unshift(ultimaAnaliseIa);
@@ -7096,27 +7138,28 @@
           }),
         });
         const j = await r.json().catch(() => null);
-        if (r.ok && j && j.ok && j.analise) respIa = j;
+        if (r.ok && j && j.ok && j.analise) {
+          if (!chaveLocal) {
+            iaServidorConfigurado = true;
+            atualizarStatusGeminiUi();
+          }
+          respIa = j;
+        }
       }
       if (!respIa && chaveLocal) {
         const modelo = cfg.modeloIa || 'gemini-2.5-flash';
-        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': chaveLocal },
-          body: JSON.stringify({
-            contents: [{
-              role: 'user',
-              parts: [{
-                text: `Você é o Copiloto Sênior da Usina Branco Peres (SGPA Solinftec), separando ações do Controle Coa (colhedoras, tratores, transbordos, linha amarela) e Controle Flow (todos os caminhões, bombeiros como Caminhão e veículos leves). Velocidade é exclusivamente oficial SGPA. Analise com raciocínio profundo de causa-raiz e responda em português do Brasil claro:\nCONTEXTO:\n${JSON.stringify(contexto)}\n\nPERGUNTA:\n${questao}`,
-              }],
+        const { r, j } = await chamarGeminiDiretoCliente(modelo, chaveLocal, {
+          contents: [{
+            role: 'user',
+            parts: [{
+              text: `Você é o Copiloto Sênior da Usina Branco Peres (SGPA Solinftec), separando ações do Controle Coa (colhedoras, tratores, transbordos, linha amarela) e Controle Flow (todos os caminhões, bombeiros como Caminhão e veículos leves). Velocidade é exclusivamente oficial SGPA. Analise com raciocínio profundo de causa-raiz e responda em português do Brasil claro:\nCONTEXTO:\n${JSON.stringify(contexto)}\n\nPERGUNTA:\n${questao}`,
             }],
-            generationConfig: { temperature: 0.25, maxOutputTokens: 1300 },
-          }),
+          }],
+          generationConfig: { temperature: 0.25, maxOutputTokens: 1300 },
         });
-        const j = await r.json().catch(() => null);
         const parts = (((j || {}).candidates || [])[0] || {}).content && j.candidates[0].content.parts || [];
         const txt = parts.filter((p) => p && typeof p.text === 'string' && !p.thought).map((p) => p.text).join('\n').trim();
-        if (r.ok && txt) respIa = { ok: true, origem: 'gemini', modelo, analise: txt };
+        if (r && r.ok && txt) respIa = { ok: true, origem: 'gemini', modelo, analise: txt };
       }
       if (respIa) {
         ultimaAnaliseIa = Object.assign({}, baseLocal, respIa, { pergunta: questao, ts: agora() });
@@ -7358,6 +7401,9 @@
     preencherVozes();
     renderPushStatus();
     atualizarStatusGeminiUi();
+    if (!iaServidorConfigurado && ctx.proxy && ctx.audit) {
+      verificarStatusIaServidor().catch(() => {});
+    }
 
     renderRefeicoes();
     renderParadas();
