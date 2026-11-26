@@ -340,8 +340,8 @@ assert.equal(policy.interpretarComandoCoa('modo chuva frente 2').frente, 'Frente
 assert.equal(policy.interpretarComandoCoa('alertas pendentes').acao, 'pendentes');
 assert.equal(policy.interpretarComandoCoa('fixar painel').acao, 'fixar');
 
-// Pacote Pente-Fino COA v5.0 + Refinamentos Operacionais v5.1 + Anti-Repetição Frota Muda & Velocidade 100% SGPA v5.2 (22 categorias).
-assert.equal(policy.CATEGORIAS.length, 22);
+// Pacote Pente-Fino COA v5.0 + Refinamentos v5.1/v5.2 + v6.1 Flow Urgente (23 categorias).
+assert.equal(policy.CATEGORIAS.length, 23);
 assert.equal(policy.CATEGORIAS.includes('turno'), false);
 assert.equal(policy.CATEGORIAS.includes('qualidadeColheita'), false);
 assert.equal(policy.PARADAS.length, 26);
@@ -441,4 +441,19 @@ const diagIa = policy.raciocinarOperacaoCoa({
 assert.equal(diagIa.ok, true);
 assert.match(diagIa.analise, /Frente 3 sofre fome logística.*Ações Imediatas — Controle Coa.*Ações Imediatas — Controle Flow/s);
 
-console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 + v5.1 + v5.2 + v6.0 passaram.');
+// v6.1.0: Controle FLOW Urgente — 1 caminhão carregando e 0 no aguarde (Frente 1, Frente 2 e Frente 3 individual).
+assert.equal(policy.frenteColheitaPrincipal('Frente 1'), 'Frente 1');
+assert.equal(policy.frenteColheitaPrincipal('Frente de Colheita 02'), 'Frente 2');
+assert.equal(policy.frenteColheitaPrincipal('FRENTE 3'), 'Frente 3');
+assert.equal(policy.frenteColheitaPrincipal('Apoio Plantio'), '');
+assert.equal(policy.ehCaminhaoCanavieiro({ tipo: 'CAMINHÃO CANAVIEIRO', nome: '4502 - Caminhão' }), true);
+assert.equal(policy.ehCaminhaoCanavieiro({ tipo: 'CAMINHÃO BOMBEIRO', grupoEquipamento: 'CAMINHÕES BOMBEIROS' }), false);
+assert.equal(policy.caminhaoEmCarregamento({ tipo: 'CAMINHÃO CANAVIEIRO', operacao: '201 - Carregando Cana' }), true);
+assert.equal(policy.caminhaoEmCarregamento({ tipo: 'CAMINHÃO CANAVIEIRO', operacao: '205 - Aguardando Carregamento' }), false);
+assert.equal(policy.caminhaoNoAguarde({ tipo: 'CAMINHÃO CANAVIEIRO', operacao: '205 - Aguardando Carregamento' }), true);
+assert.equal(policy.setorControle({ regra: 'flowUltimoCaminhao' }, { frente: 'Frente 1' }), 'FLOW');
+assert.equal(policy.notificar({ somenteCriticos: true }, { regra: 'flowUltimoCaminhao', severidade: 4 }), true, 'Flow urgente último caminhão deve passar mesmo no Modo Somente Críticos');
+const falaFlowUrg = policy.montarFala({ regra: 'flowUltimoCaminhao', caminhoes: ['4502'], e: { frente: 'Frente 2' } });
+assert.equal(falaFlowUrg, 'Atenção Flow, urgente! Frente 2 com apenas um caminhão carregando, caminhão quatro cinco zero dois, e nenhum caminhão no aguarde. Avaliar e enviar outro caminhão imediatamente.');
+
+console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 + v5.1 + v5.2 + v6.0 + v6.1 passaram.');

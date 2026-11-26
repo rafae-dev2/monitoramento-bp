@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '6.0.1';
+  const VERSAO = '6.1.0';
   const KEY_PAINEL_FIXO = 'bperes.visual.painel-fixo.v1';
   const KEY_GEMINI_KEY = 'bperes.ia.geminiKey.v1';
   const policy = window.AlertasPolicy;
@@ -141,6 +141,7 @@
     semApontamento: { id: 'semApontamento', nome: 'Sem apontamento', icone: '📝', cor: '#f97316', severidade: 2 },
     paradaImprodutiva: { id: 'paradaImprodutiva', nome: 'Parada improdutiva', icone: '⏸️', cor: '#d97706', severidade: 2 },
     gestaoFrente: { id: 'gestaoFrente', nome: 'Gestão da frente', icone: '🚩', cor: '#f59e0b', severidade: 3 },
+    flowUltimoCaminhao: { id: 'flowUltimoCaminhao', nome: 'Flow urgente: último caminhão carregando', icone: '🚛', cor: '#dc2626', severidade: 4 },
     telemetriaMuda: { id: 'telemetriaMuda', nome: 'Frota muda (sem telemetria)', icone: '📡', cor: '#f59e0b', severidade: 2 },
     inconsistenciaApontamento: { id: 'inconsistenciaApontamento', nome: 'Falso apontamento (inconsistência)', icone: '🕵️', cor: '#f97316', severidade: 2 },
     riscoMoenda: { id: 'riscoMoenda', nome: 'Risco de moenda (entrega abaixo da meta)', icone: '🏭', cor: '#ef4444', severidade: 3 },
@@ -172,6 +173,10 @@
     lideresFrente: '', // "Frente 1=João; Frente 2=Pedro"
     filaMaxFrente: 4, // caminhões/transbordos em fila/aguardando carregamento na mesma frente (0 = desliga)
     gestaoFrenteAtiva: true, // chave geral dos alertas “Atenção gestão”
+    flowUltimoCaminhaoAtivo: true, // alerta urgente Flow: 1 caminhão carregando e 0 no aguarde (Frente 1, 2 e 3 individual)
+    flowFrente1Ativa: true,
+    flowFrente2Ativa: true,
+    flowFrente3Ativa: true,
     minutosFrenteSemColhedora: 10, // todas as colhedoras da frente paradas (0 = desliga)
     transbordosAguardandoMax: 3, // transbordos aguardando colhedora na mesma frente (0 = desliga)
     minutosFrotaMuda: 25, // minutos sem comunicação de telemetria para alertar frota muda (0 = desliga)
@@ -1466,13 +1471,19 @@
   }
 
   function manterParaInferencia(e) {
-    return policy.caminhaoCanavieiroTerceiro(e) || equipamentoReferenciaFrente(e);
+    return policy.ehCaminhaoCanavieiro(e) || equipamentoReferenciaFrente(e);
   }
 
   function ehCaminhaoAguardandoCarregamento(e) {
     if (!policy.caminhaoCanavieiroTerceiro(e)) return false;
     const parada = e && e.operacaoConfirmada === true ? policy.paradaImprodutiva(e) : null;
     return !!parada && parada.id === 'aguardandoCarregamento';
+  }
+
+  function ehCaminhaoParaInferenciaFrente(e) {
+    if (!e || e.operacaoConfirmada !== true) return false;
+    return ehCaminhaoAguardandoCarregamento(e) ||
+      (policy.ehCaminhaoCanavieiro(e) && (policy.caminhaoEmCarregamento(e) || policy.caminhaoNoAguarde(e)));
   }
 
   function frenteOperacional(e) {
@@ -1614,7 +1625,7 @@
     for (const e of frota.values()) {
       const frenteAnterior = String(e.frenteInferida || '');
       const referenciasAnteriores = Number(e.frenteInferidaReferencias) || 0;
-      const inferencia = !String(e.frente || '').trim() && ehCaminhaoAguardandoCarregamento(e)
+      const inferencia = !String(e.frente || '').trim() && ehCaminhaoParaInferenciaFrente(e)
         ? inferirFrenteGeografica(e, referencias, ts)
         : null;
       const frenteNova = inferencia ? inferencia.frente : '';
@@ -2536,6 +2547,7 @@
       }
       observacaoEmAvaliacao = lotes ? `frente:rodada:${rodada}` : null;
       regrasFrente(ts);
+      regrasFlowUltimoCaminhao(ts);
       acumularOciosidadeTurno(ts);
       acumularCustosTurno(ts);
       resumoFrentes();
@@ -2834,6 +2846,111 @@
       checar(frente, chaveFrente, 'desequilibrio', tbMax > 0 && f.transbAg.length >= tbMax, 0,
         `${f.transbAg.length} transbordos aguardando colhedora, remanejar a frota`,
         'Transbordos aguardando colhedora: ' + f.transbAg.join(', '), f.transbAg.length);
+    }
+  }
+  function limparAlertasFlowUltimoCaminhao(frenteAlvo) {
+    let mudou = false;
+    const alvoNorm = frenteAlvo ? policy.norm(frenteAlvo) : '';
+    for (const [chave, alerta] of ativos) {
+      if (alerta.regra !== 'flowUltimoCaminhao') continue;
+      if (alvoNorm && policy.norm((alerta.e && alerta.e.frente) || '') !== alvoNorm) continue;
+      ativos.delete(chave);
+      gestaoUltimoDisparo.delete(chave);
+      mudou = true;
+      if (el.toasts) {
+        el.toasts.querySelectorAll('.toast').forEach((flutuante) => {
+          if (flutuante.dataset.chave === chave) flutuante.remove();
+        });
+      }
+    }
+    for (const st of estados.values()) {
+      if (st.regra !== 'flowUltimoCaminhao') continue;
+      if (alvoNorm && !String(st.chave || '').startsWith('flow-frente:' + alvoNorm + '|')) continue;
+      Object.assign(st, { firing: false, since: 0, consec: 0, negados: 0, emitido: false, ultimo: 0 });
+    }
+    if (mudou) {
+      renderAtivos();
+      renderCabecalho();
+    }
+    if (el.toasts) atualizarBotaoLimparToasts();
+  }
+  /* Controle FLOW — Alerta urgente individual para Frente 1, Frente 2 e Frente 3:
+     dispara sempre que houver exatamente 1 caminhão canavieiro carregando e 0 no aguarde na frente. */
+  function regrasFlowUltimoCaminhao(ts) {
+    if (cfg.flowUltimoCaminhaoAtivo === false) {
+      limparAlertasFlowUltimoCaminhao();
+      return;
+    }
+    const frentesAlvo = [
+      { nome: 'Frente 1', ativa: cfg.flowFrente1Ativa !== false },
+      { nome: 'Frente 2', ativa: cfg.flowFrente2Ativa !== false },
+      { nome: 'Frente 3', ativa: cfg.flowFrente3Ativa !== false },
+    ];
+    const maxAtrasoSeg = Math.max(5, Number(cfg.maxAtrasoMin) || 20) * 60;
+    const mapa = new Map();
+    for (const f of frentesAlvo) {
+      mapa.set(f.nome, { nome: f.nome, ativa: f.ativa, carregando: [], aguardando: [] });
+    }
+    for (const e of frota.values()) {
+      if (!e || String(e.ativo || 'T').toUpperCase() === 'F') continue;
+      if (e.operacaoConfirmada !== true) continue;
+      if (!policy.ehCaminhaoCanavieiro(e)) continue;
+      if (e.atraso != null && Number.isFinite(Number(e.atraso)) && Number(e.atraso) > maxAtrasoSeg) continue;
+      const frenteBruta = frenteOperacional(e) || String(e.grupoEquipamento || '').trim();
+      const frenteColh = policy.frenteColheitaPrincipal(frenteBruta);
+      if (!frenteColh || !mapa.has(frenteColh)) continue;
+      const bucket = mapa.get(frenteColh);
+      const num = String(e.numero || e.id);
+      if (policy.caminhaoEmCarregamento(e)) {
+        if (!bucket.carregando.includes(num)) bucket.carregando.push(num);
+      } else if (policy.caminhaoNoAguarde(e)) {
+        if (!bucket.aguardando.includes(num)) bucket.aguardando.push(num);
+      }
+    }
+    const cooldown = Math.max(0, Number(cfg.cooldownMin) || 0) * 60000;
+    for (const bucket of mapa.values()) {
+      if (!bucket.ativa || !frenteSelecionada(bucket.nome)) {
+        limparAlertasFlowUltimoCaminhao(bucket.nome);
+        continue;
+      }
+      const chaveFrente = policy.norm(bucket.nome);
+      const pe = {
+        id: 'flow-frente:' + chaveFrente,
+        numero: bucket.nome,
+        nome: bucket.nome + ' — Controle Flow',
+        tipo: 'Caminhão Canavieiro',
+        frente: bucket.nome,
+      };
+      const liga = bucket.carregando.length === 1 && bucket.aguardando.length === 0;
+      const st = marcar(pe.id, 'flowUltimoCaminhao', liga, ts, null);
+      if (!liga) {
+        st.firing = false;
+        st.emitido = false;
+        st.consec = 0;
+        if (ativos.has(st.chave)) {
+          ativos.delete(st.chave);
+          renderAtivos();
+          renderCabecalho();
+        }
+        continue;
+      }
+      if (!st.firing) continue;
+      const ultimoDisparo = gestaoUltimoDisparo.get(st.chave) || 0;
+      if (ultimoDisparo && (!cooldown || ts - ultimoDisparo < cooldown)) continue;
+      if (!podeDisparar(st, ts)) continue;
+      gestaoUltimoDisparo.set(st.chave, ts);
+      const camAtual = bucket.carregando[0];
+      emitir({
+        chave: st.chave,
+        regra: 'flowUltimoCaminhao',
+        e: pe,
+        valor: 1,
+        caminhoes: [camAtual],
+        urgente: true,
+        texto: `${bucket.nome}: apenas 1 caminhão carregando (${camAtual}) e 0 no aguarde — Flow avaliar e enviar outro com urgência`,
+        detalhe: `Carregando: Caminhão ${camAtual} · No aguarde: 0 caminhões · Alerta individual ${bucket.nome}`,
+        inicio: st.since,
+      });
     }
   }
   /* Controle de refeições: limite por grupo ou equipamento; alarma ao exceder. */
@@ -3197,9 +3314,10 @@
     }
 
     const silenciado = !emergencia && (ts < (Number(cfg.silencioAte) || 0) || jaReconhecido);
-    const oficial = alerta.fonte === 'portal' || emergencia;
+    const urgenteFlow = alerta.regra === 'flowUltimoCaminhao' || !!a.urgente;
+    const oficial = alerta.fonte === 'portal' || emergencia || urgenteFlow;
     const localAberto = localComCanais(alerta) && alerta.notificar;
-    // Alarmes oficiais e emergências não podem ser suprimidos pela proteção de rajada.
+    // Alarmes oficiais, emergências e Flow urgente não podem ser suprimidos pela proteção de rajada.
     let demais = false;
     if (!oficial) {
       if (ts - rajada.ts > 20000) rajada = { ts, voz: 0, aviso: false };
@@ -3212,9 +3330,9 @@
     // Sempre que falar (ou quando pop-up estiver ligado), o cartão flutuante aparece na lateral.
     if ((cfg.popup && (oficial || localAberto || a.simulado)) || vaiFalar) mostrarToast(alerta, silenciado);
     if (!silenciado && !demais) {
-      if ((oficial || localAberto || a.simulado) && cfg.som) tocar(emergencia ? 4 : regra.severidade, emergencia);
+      if ((oficial || localAberto || a.simulado) && cfg.som) tocar(emergencia || urgenteFlow ? 4 : regra.severidade, emergencia);
       if (vaiFalar) {
-        falar(alerta.fala, { oficial, emergencia, toastExibido: true });
+        falar(alerta.fala, { oficial, emergencia: emergencia || urgenteFlow, alerta, toastExibido: true });
         faladoEm.set(chave, ts);
       }
       if ((oficial || localAberto || a.simulado) && cfg.vibrar) vibrar(emergencia ? 4 : regra.severidade);
@@ -4160,7 +4278,7 @@
   function localComCanais(a) {
     return !!a && a.fonte === 'app' && (
       a.regra === 'semApontamento' || a.regra === 'refeicao' || a.regra === 'paradaImprodutiva' ||
-      a.regra === 'gestaoFrente' || a.regra === 'aguardandoBasculamento' || a.regra === 'frenteDividida' ||
+      a.regra === 'gestaoFrente' || a.regra === 'flowUltimoCaminhao' || a.regra === 'aguardandoBasculamento' || a.regra === 'frenteDividida' ||
       a.regra === 'emergencia' || a.regra === 'telemetriaMuda' ||
       a.regra === 'inconsistenciaApontamento' || a.regra === 'riscoMoenda' ||
       a.regra === 'bateVolta' || a.regra === 'manutencaoPreditiva' ||
@@ -4605,6 +4723,14 @@
 
       <h3 class="secao-alertas">Gestão por Frente e Escalonamento</h3>
       <label class="chk"><input id="cfg-gestao-frente" type="checkbox"><span>Ativar alertas “Atenção gestão” por frente</span></label>
+      <div class="switches" style="margin-top:6px;padding:8px 10px;border-radius:10px;background:rgba(220,38,38,.09);border:1px solid rgba(220,38,38,.3)">
+        <label class="chk"><input id="cfg-flow-ultimo-cam" type="checkbox"><span><b>🚛 Controle FLOW Urgente:</b> avisar quando restar apenas <b>1 caminhão carregando e 0 no aguarde</b></span></label>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:4px;padding-left:4px">
+          <label class="chk"><input id="cfg-flow-f1" type="checkbox"><span>Frente 1</span></label>
+          <label class="chk"><input id="cfg-flow-f2" type="checkbox"><span>Frente 2</span></label>
+          <label class="chk"><input id="cfg-flow-f3" type="checkbox"><span>Frente 3</span></label>
+        </div>
+      </div>
       <div class="grade" style="margin-top:6px">
         <label class="campo"><span>Fila: nº de equipamentos aguardando carregamento</span><input id="cfg-fila-frente" type="number" min="0" step="1" inputmode="numeric"></label>
         <label class="campo"><span>Todas as colhedoras paradas há (min)</span><input id="cfg-sem-colh" type="number" min="0" step="1" inputmode="numeric"></label>
@@ -5980,6 +6106,7 @@
               <strong class="ctt-nome">${esc(f.frente)}</strong>
               <span class="ctt-sem ${semCls}">${semLbl}</span>
             </div>
+            ${f.alertaUltimoCaminhao ? '<div class="ctt-flow-urgente" style="margin:6px 0;padding:5px 8px;border-radius:8px;background:rgba(220,38,38,.18);border:1px solid rgba(220,38,38,.55);color:#fecaca;font-size:12px;font-weight:700">🚨 FLOW URGENTE: 1 caminhão carregando e 0 no aguarde — enviar outro</div>' : ''}
             <div class="ctt-grid">
               <div class="ctt-cell"><span>🚜 Colhedoras</span><b>${f.colhColhendo}/${f.colhTotal} colh.</b><small>${f.colhParadas} par. · ${f.colhManut} manut.</small></div>
               <div class="ctt-cell"><span>🌾 Transbordos</span><b>${f.tbAtivos}/${f.tbTotal} ativ.</b><small>${f.tbAgCam} ag. cam. · ${razaoTxt}</small></div>
@@ -6582,6 +6709,7 @@
     semApontamento: 'Equipamento na operação SGPA “Sem Apontamento” por 5 min ou mais (sem alarme do portal). Fala e notifica só com o app aberto.',
     paradaImprodutiva: 'Paradas improdutivas de maior impacto (fila, aguardando carregamento, 983, falta de transbordo, mecânica, comboio, troca de facas, lavagem, julieta, balança etc.) acima da tolerância da seção Paradas improdutivas.',
     gestaoFrente: 'Alertas da frente: fila acumulada de caminhões, frente com todas as colhedoras paradas e transbordos demais aguardando colhedora (seção Gestão por frente).',
+    flowUltimoCaminhao: 'Controle FLOW Urgente (individual Frente 1, Frente 2 e Frente 3): avisa com urgência sempre que houver apenas 1 caminhão canavieiro carregando e 0 caminhões no aguarde na frente, para avaliar e enviar outro.',
     emergencia: 'Prioridade máxima: apontamento confirmado ou alarme oficial SGPA de incêndio/fogo/sinistro. Fura a fila de voz, dispara sirene e abre banner vermelho no topo.',
     telemetriaMuda: 'Frota em operação sem comunicação de telemetria entre o limiar configurado e 3h (aviso único por episódio, ignorando parada de chuva/manutenção).',
     inconsistenciaApontamento: 'Auditoria automática COA: máquina apontando Colheita parada (0 km/h) ou apontando Parada/Refeição/Sem Apontamento enquanto desloca em velocidade.',
@@ -7094,6 +7222,7 @@
           transbordosAtivos: f.tbAtivos,
           transbordos905: f.tbAgCam,
           caminhoesFila: f.camFila,
+          caminhoesCarregando: f.camCarregando,
         })),
         sugestoesBalanceamento: resCtt.sugestoesBalanceamento || [],
       },
@@ -7368,6 +7497,10 @@
       'cfg-voz-dupla': cfg.vozDuplaSetor !== false,
       'cfg-ia-ativa': cfg.iaAtiva !== false,
       'cfg-gestao-frente': cfg.gestaoFrenteAtiva !== false,
+      'cfg-flow-ultimo-cam': cfg.flowUltimoCaminhaoAtivo !== false,
+      'cfg-flow-f1': cfg.flowFrente1Ativa !== false,
+      'cfg-flow-f2': cfg.flowFrente2Ativa !== false,
+      'cfg-flow-f3': cfg.flowFrente3Ativa !== false,
       'cfg-auditar-apontamento': cfg.auditarApontamento !== false,
       'cfg-manut-preditiva': cfg.manutencaoPreditivaAtiva !== false,
       'cfg-pentefino-ativo': cfg.penteFinoAtivo !== false,
@@ -7447,6 +7580,10 @@
       vibrar: $('cfg-vib').checked,
       repetirVoz: $('cfg-repete').checked,
       gestaoFrenteAtiva: $('cfg-gestao-frente').checked,
+      flowUltimoCaminhaoAtivo: $('cfg-flow-ultimo-cam') ? $('cfg-flow-ultimo-cam').checked : cfg.flowUltimoCaminhaoAtivo !== false,
+      flowFrente1Ativa: $('cfg-flow-f1') ? $('cfg-flow-f1').checked : cfg.flowFrente1Ativa !== false,
+      flowFrente2Ativa: $('cfg-flow-f2') ? $('cfg-flow-f2').checked : cfg.flowFrente2Ativa !== false,
+      flowFrente3Ativa: $('cfg-flow-f3') ? $('cfg-flow-f3').checked : cfg.flowFrente3Ativa !== false,
       auditarApontamento: $('cfg-auditar-apontamento') ? $('cfg-auditar-apontamento').checked : cfg.auditarApontamento !== false,
       manutencaoPreditivaAtiva: $('cfg-manut-preditiva') ? $('cfg-manut-preditiva').checked : cfg.manutencaoPreditivaAtiva !== false,
       penteFinoAtivo: $('cfg-pentefino-ativo') ? $('cfg-pentefino-ativo').checked : cfg.penteFinoAtivo !== false,
@@ -7643,6 +7780,12 @@
     }));
     cfg.incluirOutros = cfg.notificarCategorias.generico;
     if (cfg.gestaoFrenteAtiva === false) limparAlertasGestao();
+    if (cfg.flowUltimoCaminhaoAtivo === false) limparAlertasFlowUltimoCaminhao();
+    else {
+      if (cfg.flowFrente1Ativa === false) limparAlertasFlowUltimoCaminhao('Frente 1');
+      if (cfg.flowFrente2Ativa === false) limparAlertasFlowUltimoCaminhao('Frente 2');
+      if (cfg.flowFrente3Ativa === false) limparAlertasFlowUltimoCaminhao('Frente 3');
+    }
     if (!Array.isArray(ctx.selecao)) ctx.selecao = new Set(selecaoMapa);
     if (Object.prototype.hasOwnProperty.call(patch, 'selecaoMapa')) ctx.selecao = new Set(selecaoMapa);
     if (notificacaoAlterada) {

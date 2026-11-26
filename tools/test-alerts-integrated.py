@@ -16,7 +16,7 @@ hooks = """
   const chamarReal = chamar;
   const avaliarFrotaReal = avaliarFrota;
   window.__test = {
-    aplicarTelemetria, atualizarFrentesInferidas, avaliarFrota, tique, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, regraParada, regraFrenteDividida, regrasFrente, registrarNoServidor, enviarAudit, ciclo, chamar, abrirNoMapa, timestampEquipamento,
+    aplicarTelemetria, atualizarFrentesInferidas, avaliarFrota, tique, processarQuadros, espelharAlarmes, regraAguardandoCaminhao, regraParada, regraFrenteDividida, regrasFrente, regrasFlowUltimoCaminhao, registrarNoServidor, enviarAudit, ciclo, chamar, abrirNoMapa, timestampEquipamento,
     marcarComunicacaoSgpa, verificarSaudeComunicacaoSgpa, verificarReescalonamentoCriticos, rotuloVozAmigavel,
     setFalhasSgpa: (erros, ultimaTs) => { estado.erros = erros; ultimaComunicacaoSgpa = ultimaTs; },
     frota: () => [...frota.values()],
@@ -796,7 +796,7 @@ with sync_playwright() as pw:
     assert page.locator('#cfg-alertas').evaluate("el => el.classList.contains('hide')"), 'O X deve fechar as preferências'
     assert page.evaluate('document.activeElement.id === "btn-cfg"'), 'Ao fechar, o foco deve voltar ao controle de configurações visível'
     page.click('#btn-cfg')
-    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 22")
+    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 23")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
     assert page.locator('#cfg-categorias input[aria-label="Notificar: Frente dividida (validar FUT)"]').is_checked(), 'Frente dividida deve aparecer ligada por padrão nas preferências'
     page.click('#tab-cfg-tempos')
@@ -1659,9 +1659,75 @@ with sync_playwright() as pw:
     }""")
     print('OK: Central v6.0.0 (6 Abas em Preferências, Modo Somente Críticos, 2.972 Alertas SGPA + ⭐, Grupos & Frentes, Vozes Brasileiras Gemini e Copiloto IA) validada')
 
+    # --- Validação v6.1.0: Alerta Urgente FLOW individual (Frente 1, Frente 2 e Frente 3: 1 caminhão carregando e 0 no aguarde) ---
+    page.evaluate("""async () => {
+      __test.reset();
+      __test.capturarFalas();
+      const agora = Date.now();
+      MonitoramentoAlertas.configurar({
+        ativo: true,
+        voz: true,
+        popup: true,
+        cooldownMin: 10,
+        somenteCriticos: true,
+        flowUltimoCaminhaoAtivo: true,
+        flowFrente1Ativa: true,
+        flowFrente2Ativa: true,
+        flowFrente3Ativa: true,
+      });
+
+      // Frente 1: 1 caminhão carregando e 0 no aguarde -> DEVE disparar urgente para Flow
+      // Frente 2: 1 caminhão carregando e 1 no aguarde -> NÃO deve disparar
+      // Frente 3: 1 caminhão carregando e 0 no aguarde -> DEVE disparar alerta individual separado da Frente 1
+      // Bombeiro carregando na Frente 2 não entra na conta
+      __test.aplicarTelemetria([
+        { cdEquipamento: 'CAM-F1-1', descEquipamento: '4501 - Caminhão Canavieiro', tipoEquipamento: 'CAMINHÃO CANAVIEIRO', descFrente: 'Frente 1', descOperacao: '201 - Carregando Cana', fgAtivo: 'T', vlTempoSemComunicacao: 10 },
+        { cdEquipamento: 'CAM-F2-1', descEquipamento: '4502 - Caminhão Canavieiro', tipoEquipamento: 'CAMINHÃO CANAVIEIRO', descFrente: 'Frente 2', descOperacao: '201 - Carregando Cana', fgAtivo: 'T', vlTempoSemComunicacao: 10 },
+        { cdEquipamento: 'CAM-F2-2', descEquipamento: '4503 - Caminhão Canavieiro', tipoEquipamento: 'CAMINHÃO CANAVIEIRO', descFrente: 'Frente 2', descOperacao: '205 - Aguardando Carregamento', fgAtivo: 'T', vlTempoSemComunicacao: 10 },
+        { cdEquipamento: 'CAM-F3-1', descEquipamento: '4504 - Caminhão Canavieiro', tipoEquipamento: 'CAMINHÃO CANAVIEIRO', descFrente: 'Frente 3', descOperacao: '201 - Carregando Cana', fgAtivo: 'T', vlTempoSemComunicacao: 10 },
+        { cdEquipamento: 'BOMB-F1', descEquipamento: '9911 - Caminhão Bombeiro', tipoEquipamento: 'CAMINHÃO BOMBEIRO', descGrupoEquipamento: 'CAMINHÕES BOMBEIROS', descFrente: 'Frente 1', descOperacao: '205 - Aguardando Carregamento', fgAtivo: 'T', vlTempoSemComunicacao: 10 },
+      ]);
+      __test.regrasFlowUltimoCaminhao(agora);
+
+      const ativosFlow = MonitoramentoAlertas.ativos().filter(a => a.regra === 'flowUltimoCaminhao');
+      if (ativosFlow.length !== 2) {
+        throw new Error('Esperava exatamente 2 alertas individuais (Frente 1 e Frente 3), veio: ' + JSON.stringify(ativosFlow.map(a => a.e && a.e.frente)));
+      }
+      const frentesDisparadas = ativosFlow.map(a => a.e.frente).sort();
+      if (frentesDisparadas.join(',') !== 'Frente 1,Frente 3') {
+        throw new Error('Frentes disparadas incorretas: ' + frentesDisparadas.join(','));
+      }
+      if (!ativosFlow.every(a => a.setor === 'FLOW' && a.notificar === true && a.severidade === 4)) {
+        throw new Error('Alertas flowUltimoCaminhao devem ser setor FLOW, severidade 4 e notificar mesmo em Somente Críticos');
+      }
+      const falas = __test.falasCapturadas();
+      if (!falas.some(f => f.includes('Atenção Flow, urgente! Frente 1') && f.includes('quatro cinco zero um')) ||
+          !falas.some(f => f.includes('Atenção Flow, urgente! Frente 3') && f.includes('quatro cinco zero quatro'))) {
+        throw new Error('Falas urgentes individuais para Frente 1 e Frente 3 não saíram como esperado: ' + JSON.stringify(falas));
+      }
+
+      // Chega caminhão no aguarde na Frente 1 -> alerta da Frente 1 limpa na hora, Frente 3 continua ativa
+      __test.aplicarTelemetria([
+        { cdEquipamento: 'CAM-F1-2', descEquipamento: '4505 - Caminhão Canavieiro', tipoEquipamento: 'CAMINHÃO CANAVIEIRO', descFrente: 'Frente 1', descOperacao: '205 - Aguardando Carregamento', fgAtivo: 'T', vlTempoSemComunicacao: 5 },
+      ]);
+      __test.regrasFlowUltimoCaminhao(agora + 30_000);
+      const aposChegada = MonitoramentoAlertas.ativos().filter(a => a.regra === 'flowUltimoCaminhao');
+      if (aposChegada.length !== 1 || aposChegada[0].e.frente !== 'Frente 3') {
+        throw new Error('Chegada de caminhão no aguarde na Frente 1 deveria encerrar Frente 1 mantendo Frente 3: ' + JSON.stringify(aposChegada.map(a => a.e.frente)));
+      }
+
+      // Desligar somente Frente 3 remove o alerta da Frente 3 sem afetar a chave geral
+      MonitoramentoAlertas.configurar({ flowFrente3Ativa: false });
+      if (MonitoramentoAlertas.ativos().some(a => a.regra === 'flowUltimoCaminhao')) {
+        throw new Error('Desligar flowFrente3Ativa deveria limpar o alerta da Frente 3');
+      }
+      __test.restaurarFalas();
+    }""")
+    print('OK: Controle FLOW Urgente v6.1.0 (alertas individuais Frente 1, Frente 2 e Frente 3: 1 carregando + 0 no aguarde) validado')
+
     assert not errors, errors
     assert not any(m=='POST' for m,u in requests), 'Teste tentou POST'
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+20} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+21} grupos de verificações.')

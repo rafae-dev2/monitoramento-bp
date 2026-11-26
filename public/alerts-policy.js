@@ -7,7 +7,7 @@
 }(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis), function () {
   'use strict';
 
-  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'aguardandoBasculamento', 'frenteDividida', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente', 'emergencia', 'telemetriaMuda', 'inconsistenciaApontamento', 'riscoMoenda', 'bateVolta', 'manutencaoPreditiva', 'semOperadorTrabalhando', 'chaveGeralLigada', 'abastecimentoMotorLigado', 'microParadasCronicas'];
+  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'aguardandoBasculamento', 'frenteDividida', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente', 'flowUltimoCaminhao', 'emergencia', 'telemetriaMuda', 'inconsistenciaApontamento', 'riscoMoenda', 'bateVolta', 'manutencaoPreditiva', 'semOperadorTrabalhando', 'chaveGeralLigada', 'abastecimentoMotorLigado', 'microParadasCronicas'];
   var DEFAULTS = {
     velocidade: true,
     rpm: true,
@@ -21,6 +21,7 @@
     refeicao: true,
     paradaImprodutiva: true,
     gestaoFrente: true,
+    flowUltimoCaminhao: true,
     emergencia: true,
     telemetriaMuda: true,
     inconsistenciaApontamento: true,
@@ -208,6 +209,50 @@
     return caminhao && canavieiro && terceiro;
   }
 
+  function frenteColheitaPrincipal(rotulo) {
+    var t = norm(rotulo == null ? '' : String(rotulo)).replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!t) return '';
+    if (/\bfrente(?:\s+de\s+colheita)?\s*0*1\b|^f0*1$/.test(t)) return 'Frente 1';
+    if (/\bfrente(?:\s+de\s+colheita)?\s*0*2\b|^f0*2$/.test(t)) return 'Frente 2';
+    if (/\bfrente(?:\s+de\s+colheita)?\s*0*3\b|^f0*3$/.test(t)) return 'Frente 3';
+    return '';
+  }
+
+  function ehCaminhaoCanavieiro(e) {
+    if (!e || typeof e !== 'object') return false;
+    if (caminhaoCanavieiroTerceiro(e)) return true;
+    var tipo = norm([e.tipo, e.tipoCompleto, e.nome].filter(Boolean).join(' ')).replace(/[^a-z0-9]+/g, ' ');
+    var grupo = norm([e.grupoEquipamento, e.descGrupoEquipamento].filter(Boolean).join(' ')).replace(/[^a-z0-9]+/g, ' ');
+    var texto = (tipo + ' ' + grupo).trim();
+    if (!texto) return false;
+    if (/\b(?:bombeir\w*|munck|pipa|comboio|cacamb\w*|oficina|prancha|guindaste|vinhac\w*|muda|adubo|insumo|basculante\s+apoio|leve|pickup|utilitari\w*|onibus|van|trator|colhed\w*|transbord\w*)\b/.test(texto)) {
+      return false;
+    }
+    return /\b(?:caminh(?:ao|oes)|truck|canav\w*|rodotrem|bitrem|carreta)\b/.test(texto);
+  }
+
+  function caminhaoEmCarregamento(e) {
+    if (!ehCaminhaoCanavieiro(e) || String(e.ativo || 'T').toUpperCase() === 'F') return false;
+    var op = norm(e.operacao || e.descOperacao || '').replace(/^\d+\s*-\s*/, '').trim();
+    if (!op) return false;
+    if (/\b(?:aguard\w*|ag|fila|muda|insumo|adubo|calcario|vinhac\w*|agua|descarreg\w*|balanca|patio|industria)\b/.test(op)) {
+      return false;
+    }
+    return /\b(?:carregando|carregamento|basculando|basculamento)\b/.test(op);
+  }
+
+  function caminhaoNoAguarde(e) {
+    if (!ehCaminhaoCanavieiro(e) || String(e.ativo || 'T').toUpperCase() === 'F') return false;
+    var p = paradaImprodutiva(e);
+    if (p && (p.id === 'aguardandoCarregamento' || p.id === 'filaUnica')) return true;
+    var op = norm(e.operacao || e.descOperacao || '').replace(/^\d+\s*-\s*/, '').trim();
+    if (!op) return false;
+    if (/\b(?:muda|balanca|descarg\w*|descarreg\w*|industria|patio|insumo|adubo|agua|pipa|comboio|mecan\w*|oficina)\b/.test(op)) {
+      return false;
+    }
+    return /^(?:ag(?:uardando|uard)?\s+(?:carreg\w*|transb\w*|colh\w*|manobra|vez|fila)|fila\s+(?:unica|carreg\w*|frente|caminh\w*))/.test(op);
+  }
+
   /* Paradas improdutivas de maior impacto (ranking SGPA 23/10–22/11/2026). */
   var PARADAS = [
     { id: 'agColhedoraParadaRapida', nome: 'AG colhedora parada rápida (983)', min: 10, codigo: '983', re: /^ag(?:uardando|uard)? colhedora parada rapida/ },
@@ -316,6 +361,7 @@
     rpm: true,
     motorCondicao: true,
     frenteDividida: true,
+    flowUltimoCaminhao: true,
     abastecimentoMotorLigado: true,
     riscoMoenda: true
   };
@@ -348,6 +394,7 @@
       var aliases = {
         velocidade: 'velocidade', rpm: 'rpm', ocioso: 'ocioso',
         motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', aguardandobasculamento: 'aguardandoBasculamento', frentedividida: 'frenteDividida', semapontamento: 'semApontamento', refeicao: 'refeicao', paradaimprodutiva: 'paradaImprodutiva', gestaofrente: 'gestaoFrente',
+        flowultimocaminhao: 'flowUltimoCaminhao',
         ociososemapontamento: 'ocioso', emergencia: 'emergencia', telemetriamuda: 'telemetriaMuda',
         inconsistenciaapontamento: 'inconsistenciaApontamento', riscomoenda: 'riscoMoenda', batevolta: 'bateVolta', manutencaopreditiva: 'manutencaoPreditiva',
         semoperadortrabalhando: 'semOperadorTrabalhando', chavegeralligada: 'chaveGeralLigada', abastecimentomotorligado: 'abastecimentoMotorLigado', microparadascronicas: 'microParadasCronicas'
@@ -585,7 +632,7 @@
         cat === 'aguardandoCaminhao' || cat === 'aguardandoBasculamento' || cat === 'microParadasCronicas') {
       return 'COA';
     }
-    if (cat === 'bateVolta' || ehGrupoBombeiro(item, ev)) {
+    if (cat === 'bateVolta' || cat === 'flowUltimoCaminhao' || ehGrupoBombeiro(item, ev)) {
       return 'FLOW';
     }
     var cls = classeEquipamentoFalado(item, ev);
@@ -684,6 +731,14 @@
       var ff = event.frente == null || String(event.frente).trim() === '' ? 'não informada' : String(event.frente).trim();
       return 'Atenção Coa, gestão ' + (/^frente\b/i.test(ff) ? ff : 'frente ' + ff) + ': ' + String(item.texto || '').replace(/\s*·.*$/, '') + '.' +
         (item.lider ? ' Líder ' + item.lider + '.' : '') + ' Verificar.';
+    }
+    if (selectedCategory === 'flowUltimoCaminhao') {
+      var ffFlow = event.frente == null || String(event.frente).trim() === '' ? 'não informada' : String(event.frente).trim();
+      var camNum = Array.isArray(item.caminhoes) && item.caminhoes.length ? idFalado(item.caminhoes[0]) : '';
+      var nomeFrenteFlow = /^frente\b/i.test(ffFlow) ? ffFlow : 'Frente ' + ffFlow;
+      return 'Atenção Flow, urgente! ' + nomeFrenteFlow + ' com apenas um caminhão carregando' +
+        (camNum ? ', caminhão ' + camNum + ',' : '') +
+        ' e nenhum caminhão no aguarde. Avaliar e enviar outro caminhão imediatamente.';
     }
     if (selectedCategory === 'emergencia') {
       var fem = frenteOuGrupo(event);
@@ -928,13 +983,13 @@
           f.colhParadas += 1;
           totais.colhedorasParadas += 1;
         }
-      } else if (/caminh|\btruck\b|canav/.test(tipoTxt) && !/bombeir|munck|pipa|comboio|oficina/.test(tipoTxt)) {
+      } else if (ehCaminhaoCanavieiro(e)) {
         f.camTotal += 1;
         totais.caminhoes += 1;
-        if (parada && (parada.id === 'aguardandoCarregamento' || parada.id === 'filaUnica')) {
+        if (e.operacaoConfirmada === true && caminhaoNoAguarde(e)) {
           f.camFila += 1;
           totais.caminhoesFila += 1;
-        } else if (/carregando|bascul/.test(opTxt)) {
+        } else if (caminhaoEmCarregamento(e)) {
           f.camCarregando += 1;
           totais.caminhoesCarregando += 1;
         }
@@ -961,9 +1016,10 @@
       var f = mapaFrentes[k];
       if (f.chuva) totais.chuvasAtivas += 1;
       f.razaoTbColh = f.colhColhendo > 0 ? Math.round((f.tbTotal / f.colhColhendo) * 10) / 10 : null;
+      f.alertaUltimoCaminhao = Boolean(frenteColheitaPrincipal(f.frente) && f.camCarregando === 1 && f.camFila === 0 && !f.chuva);
       if (f.emergencias > 0 || (f.colhTotal > 0 && f.colhColhendo === 0 && !f.chuva)) {
         f.semaforo = 'critico';
-      } else if (f.chuva || f.camFila >= filaMax || f.tbAgCam >= 2 || f.tbAgColh >= 3 || f.mudas > 0 || f.colhManut > 0) {
+      } else if (f.chuva || f.alertaUltimoCaminhao || f.camFila >= filaMax || f.tbAgCam >= 2 || f.tbAgColh >= 3 || f.mudas > 0 || f.colhManut > 0) {
         f.semaforo = 'atencao';
       } else {
         f.semaforo = 'ok';
@@ -1856,6 +1912,9 @@
       } else if (f.transbordos905 >= 2 && f.caminhoesFila === 0) {
         hipoteses.push(f.frente + ' sofre fome logística de transporte: ' + f.transbordos905 + ' transbordos retidos em 905 (Aguardando Caminhão) e zero caminhões na fila.');
         acoesFlow.push('Redirecionar caminhões canavieiros imediatamente para ' + f.frente + ' para escoar ' + f.transbordos905 + ' transbordos cheios.');
+      } else if (f.caminhoesCarregando === 1 && f.caminhoesFila === 0 && frenteColheitaPrincipal(f.frente)) {
+        hipoteses.push('URGENTE FLOW — ' + f.frente + ' está com apenas 1 caminhão carregando e zero caminhões no aguarde.');
+        acoesFlow.push('Urgente (' + f.frente + '): avaliar imediatamente e despachar outro caminhão canavieiro antes do término do carregamento atual.');
       } else if (f.caminhoesFila >= 4) {
         hipoteses.push(f.frente + ' apresenta gargalo de carregamento: ' + f.caminhoesFila + ' caminhões acumulando fila (' + f.colhedorasColhendo + '/' + f.colhedorasTotal + ' colhedoras colhendo).');
         acoesFlow.push('Segurar envio adicional e redistribuir excesso de caminhões da ' + f.frente + ' para frentes com transbordo aguardando.');
@@ -1938,6 +1997,10 @@
     idFalado: idFalado,
     aguardandoCaminhao: aguardandoCaminhao,
     caminhaoCanavieiroTerceiro: caminhaoCanavieiroTerceiro,
+    frenteColheitaPrincipal: frenteColheitaPrincipal,
+    ehCaminhaoCanavieiro: ehCaminhaoCanavieiro,
+    caminhaoEmCarregamento: caminhaoEmCarregamento,
+    caminhaoNoAguarde: caminhaoNoAguarde,
     frenteDividida: frenteDividida,
     semApontamento: semApontamento,
     emRefeicao: emRefeicao,
