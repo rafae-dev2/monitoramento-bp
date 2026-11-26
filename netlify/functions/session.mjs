@@ -10,6 +10,8 @@
  *      com deduplicação em memória de eventId, lote único PostgREST e fallback individual.
  */
 
+import { VOZES_GEMINI_BR, sintetizarVozGemini, raciocinarComGemini } from '../lib/gemini-coa.mjs';
+
 const AUTH_API = process.env.AUTH_API || 'https://auth-api.saas-solinftec.com/auth-api-03/v2';
 const SGPA_API = process.env.SGPA_API || 'https://sgpa-api-br.saas-solinftec.com/slf03';
 const SERVICE_API = process.env.SERVICE_API || 'https://api-br.saas-solinftec.com/mapv4/service-7';
@@ -504,6 +506,54 @@ export default async function handler(req, ctx) {
         status: e.status && e.status !== 501 ? e.status : 502,
         headers: JSON_HEADERS,
       });
+    }
+  }
+
+  // GET ?acao=ia_status → informa se há GEMINI_API_KEY configurada no servidor (sem jamais expor o segredo) e lista as vozes Gemini Brasil
+  if (acao === 'ia_status' && req.method === 'GET') {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        servidorConfigurado: Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
+        modeloTexto: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+        modeloVoz: process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
+        vozes: VOZES_GEMINI_BR,
+      }),
+      { status: 200, headers: JSON_HEADERS },
+    );
+  }
+
+  // POST ?acao=ia_voz → síntese neural nas novas vozes brasileiras do Google Gemini
+  if (acao === 'ia_voz' && req.method === 'POST') {
+    const corpo = await req.json().catch(() => null);
+    if (!corpo || typeof corpo !== 'object') {
+      return new Response(JSON.stringify({ ok: false, erro: 'corpo inválido' }), { status: 400, headers: JSON_HEADERS });
+    }
+    try {
+      const resultado = await sintetizarVozGemini(corpo);
+      return new Response(JSON.stringify(resultado), { status: 200, headers: JSON_HEADERS });
+    } catch (e) {
+      return new Response(
+        JSON.stringify({ ok: false, semChave: !!e.semChave, erro: e.message || 'falha ao sintetizar voz Gemini' }),
+        { status: e.status || 502, headers: JSON_HEADERS },
+      );
+    }
+  }
+
+  // POST ?acao=ia_raciocinio → raciocínio operacional COA/FLOW com Google Gemini 2.5 Flash Thinking
+  if (acao === 'ia_raciocinio' && req.method === 'POST') {
+    const corpo = await req.json().catch(() => null);
+    if (!corpo || typeof corpo !== 'object') {
+      return new Response(JSON.stringify({ ok: false, erro: 'corpo inválido' }), { status: 400, headers: JSON_HEADERS });
+    }
+    try {
+      const resultado = await raciocinarComGemini(corpo);
+      return new Response(JSON.stringify(resultado), { status: 200, headers: JSON_HEADERS });
+    } catch (e) {
+      return new Response(
+        JSON.stringify({ ok: false, semChave: !!e.semChave, erro: e.message || 'falha ao executar raciocínio IA' }),
+        { status: e.status || 502, headers: JSON_HEADERS },
+      );
     }
   }
 

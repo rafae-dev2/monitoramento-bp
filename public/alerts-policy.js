@@ -310,6 +310,16 @@
     return value !== null && typeof value === 'object' && !Array.isArray(value);
   }
 
+  var CATEGORIAS_CRITICAS_PADRAO = {
+    emergencia: true,
+    velocidade: true,
+    rpm: true,
+    motorCondicao: true,
+    frenteDividida: true,
+    abastecimentoMotorLigado: true,
+    riscoMoenda: true
+  };
+
   function normalizeCfg(cfg) {
     var source = isObject(cfg) ? cfg : {};
     var suppliedCategories = isObject(source.notificarCategorias) ? source.notificarCategorias : {};
@@ -319,8 +329,12 @@
     }
 
     return Object.assign({}, source, {
+      somenteCriticos: Boolean(source.somenteCriticos),
       notificarCategorias: categories,
-      tiposNotificacao: isObject(source.tiposNotificacao) ? Object.assign({}, source.tiposNotificacao) : {}
+      tiposNotificacao: isObject(source.tiposNotificacao) ? Object.assign({}, source.tiposNotificacao) : {},
+      tiposCriticos: isObject(source.tiposCriticos) ? Object.assign({}, source.tiposCriticos) : {},
+      gruposEquipamento: Array.isArray(source.gruposEquipamento) ? source.gruposEquipamento.map(function (g) { return String(g || '').trim(); }).filter(Boolean) : [],
+      setorMonitorado: source.setorMonitorado === 'FLOW' || source.setorMonitorado === 'COA' ? source.setorMonitorado : 'todos'
     });
   }
 
@@ -358,6 +372,18 @@
     return '';
   }
 
+  function ehAlertaCritico(cfg, alert) {
+    var normalized = normalizeCfg(cfg);
+    var item = isObject(alert) ? alert : {};
+    var code = codeFromAlert(item);
+    if (code && normalized.tiposCriticos && normalized.tiposCriticos[code] === false) return false;
+    if (code && normalized.tiposCriticos && normalized.tiposCriticos[code] === true) return true;
+    if (Number(item.severidade) >= 3 || Number(item.nivel) >= 2) return true;
+    if (item.paradaId === 'faltaTransbordo') return true;
+    var cat = categoryFromAlert(item);
+    return Boolean(CATEGORIAS_CRITICAS_PADRAO[cat]);
+  }
+
   function notificar(cfg, alert) {
     var normalized = normalizeCfg(cfg);
     var item = isObject(alert) ? alert : {};
@@ -370,7 +396,12 @@
     var selectedIndividually = !!code &&
       Object.prototype.hasOwnProperty.call(normalized.tiposNotificacao, code) &&
       normalized.tiposNotificacao[code] === true;
-    return enabledByType && (enabledByCategory || selectedIndividually);
+    if (!enabledByType) return false;
+    if (normalized.somenteCriticos) {
+      if (selectedIndividually) return true;
+      return enabledByCategory && ehAlertaCritico(normalized, item);
+    }
+    return enabledByCategory || selectedIndividually;
   }
 
   function vehicleNumber(alert, event) {
@@ -1693,6 +1724,213 @@
     };
   }
 
+  var VOZES_GEMINI_BR = [
+    { id: 'Kore', nome: 'Kore — Firme e Comandante (Recomendada Coa / Rádio)', genero: 'feminina' },
+    { id: 'Aoede', nome: 'Aoede — Natural, Clara e Fluida (Recomendada Geral)', genero: 'feminina' },
+    { id: 'Puck', nome: 'Puck — Ágil e Dinâmica (Recomendada Flow)', genero: 'masculina' },
+    { id: 'Charon', nome: 'Charon — Grave, Sóbria e Informativa', genero: 'masculina' },
+    { id: 'Fenrir', nome: 'Fenrir — Energética (Alta Presença / Críticos)', genero: 'masculina' },
+    { id: 'Leda', nome: 'Leda — Serena, Limpa e Suave', genero: 'feminina' },
+    { id: 'Zephyr', nome: 'Zephyr — Brilhante e Alta Inteligibilidade', genero: 'feminina' },
+    { id: 'Orus', nome: 'Orus — Sólida e Executiva', genero: 'masculina' },
+    { id: 'Callirrhoe', nome: 'Callirrhoe — Articulada e Equilibrada', genero: 'feminina' },
+    { id: 'Autonoe', nome: 'Autonoe — Calorosa e Natural', genero: 'feminina' },
+    { id: 'Schedar', nome: 'Schedar — Estável e Cadenciada', genero: 'masculina' },
+    { id: 'Sulafat', nome: 'Sulafat — Precisa em Números de Frota', genero: 'feminina' }
+  ];
+
+  var GRUPOS_PADRAO_USINA = [
+    'COLHEDORAS',
+    'TRATORES',
+    'TRANSBORDOS',
+    'LINHA AMARELA',
+    'CAMINHÕES CANAVIEIROS',
+    'CAMINHÕES CANAVIEIRO TERC',
+    'CAMINHÕES BOMBEIROS',
+    'CAMINHÕES COMBOIO',
+    'CAMINHÕES PIPA / APOIO',
+    'CAMINHÕES MUNCK / PRANCHA',
+    'OFICINA VOLANTE',
+    'VEÍCULOS LEVES'
+  ];
+
+  var FRENTES_PADRAO_USINA = [
+    'Frente 1',
+    'Frente 2',
+    'Frente 3',
+    'Frente 4',
+    'Frente 5'
+  ];
+
+  function inferirGrupoCanonico(e) {
+    if (!e || typeof e !== 'object') return [];
+    var tags = [];
+    var bruto = norm([e.grupoEquipamento, e.descGrupoEquipamento].filter(Boolean).join(' '));
+    var texto = norm([e.grupoEquipamento, e.descGrupoEquipamento, e.tipo, e.tipoCompleto, e.nome, e.descEquipamento].filter(Boolean).join(' '));
+    if (bruto) tags.push(bruto);
+    if (ehGrupoBombeiro(null, e)) tags.push('caminhoes bombeiros');
+    if (/\bcomboio|lubrific/.test(texto)) tags.push('caminhoes comboio');
+    if (/\boficina\s+volante|socorro\s+mecan/.test(texto)) tags.push('oficina volante');
+    if (/\bpipa|agua/.test(texto) && /\bcaminh/.test(texto) && !ehGrupoBombeiro(null, e)) tags.push('caminhoes pipa / apoio');
+    if (/\bmunck|prancha|cacamba|basculante|guindauto/.test(texto)) tags.push('caminhoes munck / prancha');
+    if (caminhaoCanavieiroTerceiro(e)) tags.push('caminhoes canavieiro terc');
+    if (/\bcaminh/.test(texto) && /\bcanav/.test(texto)) tags.push('caminhoes canavieiros');
+    if (/\bveiculos?\s+leves?|utilitari|camionet|caminhonet|strada|hilux|saveiro|gol\b|uno\b|mobi\b|fiorino|carro|viatura/.test(texto)) tags.push('veiculos leves');
+    if (/\bcolhedor|colheitad/.test(texto)) tags.push('colhedoras');
+    if (/\btransbordo/.test(texto)) tags.push('transbordos');
+    if (tratorOuTransbordo(e) && /\btrator/.test(texto)) tags.push('tratores');
+    if (/\bmotoniveladora|pa\s+carregadeira|escavadeira|retroescavadeira|trator\s+esteira|rolo\s+compactador|linha\s+amarela/.test(texto)) tags.push('linha amarela');
+    return tags;
+  }
+
+  function grupoEquipamentoPermitido(cfg, e) {
+    var normalized = normalizeCfg(cfg);
+    if (normalized.setorMonitorado === 'FLOW' || normalized.setorMonitorado === 'COA') {
+      if (setorControle(null, e) !== normalized.setorMonitorado) return false;
+    }
+    var selecionados = normalized.gruposEquipamento || [];
+    if (!selecionados.length) return true;
+    var tags = inferirGrupoCanonico(e);
+    var grupoBruto = norm(e && (e.grupoEquipamento || e.descGrupoEquipamento) || '');
+    for (var i = 0; i < selecionados.length; i += 1) {
+      var alvo = norm(selecionados[i]);
+      if (!alvo) continue;
+      if (grupoBruto && grupoBruto === alvo) return true;
+      if (tags.indexOf(alvo) !== -1) return true;
+    }
+    return false;
+  }
+
+  function raciocinarOperacaoCoa(contexto, pergunta) {
+    var ctx = isObject(contexto) ? contexto : {};
+    var ativos = Array.isArray(ctx.ativos) ? ctx.ativos : [];
+    var ctt = isObject(ctx.resumoCtt) ? ctx.resumoCtt : { frentes: [], frotasMudas: [], sugestoesBalanceamento: [] };
+    var moenda = isObject(ctx.moenda) ? ctx.moenda : { entregaTonHora: 0, metaTonHora: 420, pctMeta: 0, status: 'ok', deficitTonHora: 0 };
+    var custo = isObject(ctx.custoTurno) ? ctx.custoTurno : { totalRs: 0 };
+    var comboio = isObject(ctx.filaComboio) ? ctx.filaComboio : { chamados: [] };
+    var alvoAlerta = isObject(ctx.alertaFoco) ? ctx.alertaFoco : null;
+    var q = norm(pergunta || '');
+
+    var criticos = ativos.filter(function (a) { return Number(a && a.severidade) >= 3; });
+    var alertasCoa = ativos.filter(function (a) { return (a && a.setor) !== 'FLOW'; });
+    var alertasFlow = ativos.filter(function (a) { return a && a.setor === 'FLOW'; });
+
+    var hipoteses = [];
+    var acoesCoa = [];
+    var acoesFlow = [];
+
+    if (alvoAlerta) {
+      var setorAlvo = alvoAlerta.setor || setorControle(alvoAlerta, alvoAlerta.e);
+      var frenteAlvo = (alvoAlerta.e && (alvoAlerta.e.frente || alvoAlerta.e.grupoEquipamento)) || 'sem frente informada';
+      var opAlvo = (alvoAlerta.e && alvoAlerta.e.operacao) || 'não informada';
+      var velAlvo = alvoAlerta.e && alvoAlerta.e.velocidade != null ? Math.round(Number(alvoAlerta.e.velocidade)) + ' km/h' : 'n/d';
+      var rpmAlvo = alvoAlerta.e && alvoAlerta.e.rpm != null ? Math.round(Number(alvoAlerta.e.rpm)) + ' RPM' : 'n/d';
+      hipoteses.push(
+        alvoAlerta.classe + ' ' + alvoAlerta.numero + ' (' + frenteAlvo + '): ' + (alvoAlerta.nome || alvoAlerta.regra) +
+        ' — telemetria cruzada indica operação "' + opAlvo + '", velocidade ' + velAlvo + ' e motor a ' + rpmAlvo + '.'
+      );
+      if (alvoAlerta.regra === 'aguardandoCaminhao' || alvoAlerta.regra === 'aguardandoBasculamento') {
+        hipoteses.push('Causa provável: descompasso de chegada de canavieiros na frente ou caminhão já no carreador aguardando posicionamento de transbordo.');
+        acoesCoa.push('Confirmar com líder da ' + frenteAlvo + ' se o transbordo ' + alvoAlerta.numero + ' está carregado pronto para bascular.');
+        acoesFlow.push('Verificar caminhões em deslocamento/fila para ' + frenteAlvo + ' e antecipar despacho caso não haja canavieiro no raio.');
+      } else if (alvoAlerta.regra === 'velocidade') {
+        hipoteses.push('Alarme oficial emitido pelo portal SGPA acima do limite parametrizado para o trecho/equipamento.');
+        if (setorAlvo === 'FLOW') acoesFlow.push('Acionar imediatamente motorista do ' + alvoAlerta.classe + ' ' + alvoAlerta.numero + ' no rádio e registrar tratativa de segurança.');
+        else acoesCoa.push('Cobrar operador do ' + alvoAlerta.classe + ' ' + alvoAlerta.numero + ' no rádio para adequação imediata de velocidade segura.');
+      } else if (alvoAlerta.regra === 'inconsistenciaApontamento' || alvoAlerta.regra === 'semApontamento' || alvoAlerta.regra === 'semOperadorTrabalhando') {
+        hipoteses.push('Divergência entre estado físico do equipamento (RPM/velocidade) e apontamento no computador de bordo, distorcendo indicadores de eficiência.');
+        if (setorAlvo === 'FLOW') acoesFlow.push('Solicitar correção imediata de apontamento/login no bordo da frota ' + alvoAlerta.numero + '.');
+        else acoesCoa.push('Cobrar operador da frota ' + alvoAlerta.numero + ' (' + frenteAlvo + ') para corrigir apontamento no computador de bordo.');
+      } else {
+        if (setorAlvo === 'FLOW') acoesFlow.push('Tratar ocorrência do ' + alvoAlerta.classe + ' ' + alvoAlerta.numero + ' (' + (alvoAlerta.texto || alvoAlerta.nome) + ') junto à logística Flow.');
+        else acoesCoa.push('Atuar sobre ' + alvoAlerta.classe + ' ' + alvoAlerta.numero + ' na ' + frenteAlvo + ' (' + (alvoAlerta.texto || alvoAlerta.nome) + ').');
+      }
+    }
+
+    var frentes = Array.isArray(ctt.frentes) ? ctt.frentes : [];
+    for (var i = 0; i < frentes.length; i += 1) {
+      var f = frentes[i];
+      if (f.colhedorasTotal > 0 && f.colhedorasColhendo === 0) {
+        hipoteses.push(f.frente + ' está com 100% das colhedoras paradas (' + f.colhedorasTotal + ' máquinas) — impacto direto na alimentação de cana.');
+        acoesCoa.push('Prioridade máxima na ' + f.frente + ': destravar colhedoras paradas (checar falta de transbordo, troca de facas ou manutenção).');
+      } else if (f.transbordos905 >= 2 && f.caminhoesFila === 0) {
+        hipoteses.push(f.frente + ' sofre fome logística de transporte: ' + f.transbordos905 + ' transbordos retidos em 905 (Aguardando Caminhão) e zero caminhões na fila.');
+        acoesFlow.push('Redirecionar caminhões canavieiros imediatamente para ' + f.frente + ' para escoar ' + f.transbordos905 + ' transbordos cheios.');
+      } else if (f.caminhoesFila >= 4) {
+        hipoteses.push(f.frente + ' apresenta gargalo de carregamento: ' + f.caminhoesFila + ' caminhões acumulando fila (' + f.colhedorasColhendo + '/' + f.colhedorasTotal + ' colhedoras colhendo).');
+        acoesFlow.push('Segurar envio adicional e redistribuir excesso de caminhões da ' + f.frente + ' para frentes com transbordo aguardando.');
+        acoesCoa.push('Validar ritmo de colheita e chamada de transbordos no FUT na ' + f.frente + '.');
+      }
+    }
+
+    if (Array.isArray(ctt.sugestoesBalanceamento) && ctt.sugestoesBalanceamento.length) {
+      acoesFlow.push('Balanceamento dinâmico: ' + ctt.sugestoesBalanceamento[0].texto);
+    }
+
+    if (moenda.metaTonHora > 0 && moenda.status === 'risco') {
+      hipoteses.push('Risco de falta de cana na moenda: entrega estimada em ' + moenda.entregaTonHora + ' t/h (' + moenda.pctMeta + '% da meta de ' + moenda.metaTonHora + ' t/h; déficit de ' + moenda.deficitTonHora + ' t/h).');
+      acoesCoa.push('Focar recuperação imediata de colhedoras paradas para recompor ' + moenda.deficitTonHora + ' t/h de moagem.');
+    }
+
+    if (Array.isArray(comboio.chamados) && comboio.chamados.length) {
+      var top = comboio.chamados[0];
+      acoesFlow.push('Despachar apoio/comboio ' + (top.apoioNumero ? '#' + top.apoioNumero : 'mais próximo') + ' primeiro para ' + top.classe + ' ' + top.numero + ' (' + top.frente + ') — maior peso produtivo.');
+    }
+
+    var micro = ativos.filter(function (a) { return a.regra === 'microParadasCronicas' || a.regra === 'manutencaoPreditiva'; });
+    if (micro.length) {
+      hipoteses.push(micro.length + ' equipamento(s) com padrão serrote / falha recorrente (' + micro.slice(0, 3).map(function (m) { return m.numero; }).join(', ') + ') — risco de quebra mecânica maior no turno.');
+      acoesCoa.push('Solicitar inspeção preventiva da oficina volante nas frotas ' + micro.slice(0, 3).map(function (m) { return m.numero; }).join(', ') + '.');
+    }
+
+    if (/\bflow\b|caminh|leve/.test(q) && !acoesFlow.length) {
+      acoesFlow.push(alertasFlow.length ? ('Atuar nos ' + alertasFlow.length + ' alerta(s) ativos do Controle Flow, começando pelos de velocidade/bate-volta.') : 'Frota rodoviária e veículos leves do Controle Flow operando sem alertas críticos no momento.');
+    }
+    if (!hipoteses.length) {
+      hipoteses.push(ativos.length
+        ? ('Operação com ' + ativos.length + ' alerta(s) ativo(s) (' + alertasCoa.length + ' Coa · ' + alertasFlow.length + ' Flow · ' + criticos.length + ' crítico(s)), sem colapso estrutural de frente.')
+        : 'Operação estabilizada: nenhum gargalo crítico entre colheita (Coa) e transporte (Flow) detectado nos dados atuais.');
+    }
+    if (!acoesCoa.length) {
+      acoesCoa.push(alertasCoa.length ? ('Tratar os ' + alertasCoa.length + ' alerta(s) da mesa Coa por ordem de severidade e tempo de parada.') : 'Manter monitoramento preventivo de sincronismo CTT e apontamento de bordo.');
+    }
+    if (!acoesFlow.length) {
+      acoesFlow.push(alertasFlow.length ? ('Tratar os ' + alertasFlow.length + ' alerta(s) da mesa Flow (caminhões e leves) priorizando segurança e giro de viagem.') : 'Manter cadência de despacho de caminhões equilibrada entre as frentes ativas.');
+    }
+
+    var impacto = 'Moenda: ' + (moenda.entregaTonHora || 0) + '/' + (moenda.metaTonHora || 420) + ' t/h · Custo improdutivo acumulado no turno: R$ ' + Math.round(Number(custo.totalRs) || 0).toLocaleString('pt-BR');
+    var msgRadio = 'Atenção Coa e Flow: ' + (acoesCoa[0] || '') + ' ' + (acoesFlow[0] || '');
+
+    var linhas = [
+      '• Diagnóstico Causa-Raiz:',
+      '  - ' + hipoteses.join('\n  - '),
+      '',
+      '• Impacto Operacional & Financeiro:',
+      '  - ' + impacto,
+      '',
+      '• Ações Imediatas — Controle Coa:',
+      '  - ' + acoesCoa.join('\n  - '),
+      '',
+      '• Ações Imediatas — Controle Flow:',
+      '  - ' + acoesFlow.join('\n  - '),
+      '',
+      '• Mensagem Pronta de Rádio / WhatsApp:',
+      '  "' + msgRadio.trim() + '"'
+    ];
+
+    return {
+      ok: true,
+      origem: 'especialista-local',
+      modelo: 'Motor Causal COA/FLOW v6.0',
+      hipotesesCausaRaiz: hipoteses,
+      acoesCoa: acoesCoa,
+      acoesFlow: acoesFlow,
+      impactoEstimado: impacto,
+      mensagemRadio: msgRadio.trim(),
+      analise: linhas.join('\n')
+    };
+  }
+
   return Object.freeze({
     norm: norm,
     alarmeTrocaDeTurno: alarmeTrocaDeTurno,
@@ -1708,6 +1946,9 @@
     setorControle: setorControle,
     CATEGORIAS: CATEGORIAS,
     PARADAS: PARADAS,
+    VOZES_GEMINI_BR: VOZES_GEMINI_BR,
+    GRUPOS_PADRAO_USINA: GRUPOS_PADRAO_USINA,
+    FRENTES_PADRAO_USINA: FRENTES_PADRAO_USINA,
     paradaImprodutiva: paradaImprodutiva,
     limiteParada: limiteParada,
     liderFrente: liderFrente,
@@ -1716,6 +1957,8 @@
     limiteRefeicao: limiteRefeicao,
     mapaEquipamentos: mapaEquipamentos,
     normalizeCfg: normalizeCfg,
+    ehAlertaCritico: ehAlertaCritico,
+    grupoEquipamentoPermitido: grupoEquipamentoPermitido,
     notificar: notificar,
     montarFala: montarFala,
     ehAlertaSeguranca: ehAlertaSeguranca,
@@ -1737,6 +1980,7 @@
     avaliarRiscoIncendio303030: avaliarRiscoIncendio303030,
     gerarPlacarPositivoTurno: gerarPlacarPositivoTurno,
     interpretarComandoCoa: interpretarComandoCoa,
+    raciocinarOperacaoCoa: raciocinarOperacaoCoa,
     operandoSemOperador: operandoSemOperador,
     meiaChaveParada: meiaChaveParada,
     abastecendoComMotorLigado: abastecendoComMotorLigado,

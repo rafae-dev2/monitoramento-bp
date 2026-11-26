@@ -799,18 +799,23 @@ with sync_playwright() as pw:
     page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 22")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
     assert page.locator('#cfg-categorias input[aria-label="Notificar: Frente dividida (validar FUT)"]').is_checked(), 'Frente dividida deve aparecer ligada por padrão nas preferências'
+    page.click('#tab-cfg-tempos')
     assert page.locator('#cfg-gestao-frente').is_checked(), 'Atenção gestão deve ter opção mestre ligada por padrão'
+    page.click('#tab-cfg-vozes')
     assert page.locator('#cfg-glossario').get_attribute('autocomplete') == 'off', 'textarea do glossário precisa ter atributo autocomplete válido'
     assert 'AG=Aguardando' in page.locator('#cfg-glossario').get_attribute('placeholder'), 'placeholder do glossário deve permanecer acessível'
+    page.click('#tab-cfg-tempos')
     page.locator('#cfg-gestao-frente').uncheck()
     page.click('#cfg-salvar')
     assert page.evaluate('MonitoramentoAlertas.config().gestaoFrenteAtiva === false'), 'toggle de gestão deve salvar desligado'
     page.click('#btn-cfg')
+    page.click('#tab-cfg-tempos')
     assert not page.locator('#cfg-gestao-frente').is_checked(), 'toggle mestre deve persistir após reabrir preferências'
     page.locator('#cfg-gestao-frente').check()
     page.click('#cfg-salvar')
     assert page.evaluate('MonitoramentoAlertas.config().gestaoFrenteAtiva === true'), 'toggle de gestão deve poder ser religado'
     page.click('#btn-cfg')
+    page.click('#tab-cfg-vozes')
     sample = page.locator('#cfg-glossario-previa').text_content()
     assert 'Aguardando colhedora parada rápida' in sample, sample
     assert page.evaluate("AlertasPolicy.aplicarGlossario('AG. SEQUENC. DE TRABALHO')") == 'Aguardando sequência DE TRABALHO'
@@ -822,16 +827,19 @@ with sync_playwright() as pw:
     page.click('#cfg-salvar')
     assert page.evaluate("MonitoramentoAlertas.config().glossarioFala") == 'AG=Esperando\nCOLH=colhedora'
     page.click('#btn-cfg')
+    page.click('#tab-cfg-vozes')
     assert page.locator('#cfg-glossario').input_value() == 'AG=Esperando\nCOLH=colhedora', 'glossário persiste após fechar e reabrir'
     page.click('#cfg-fechar-x')
     page.click('#btn-cfg')
     print('OK: expansão de AG/COLH, prévia, substituição personalizada e persistência do glossário')
+    page.click('#tab-cfg-alertas')
     page.fill('#cfg-busca-categoria', 'fila')
     vis = page.evaluate("[...document.querySelectorAll('#cfg-categorias > *')].filter(x => !x.classList.contains('hide')).length")
     assert 1 <= vis < 22, f'busca de categorias deve filtrar ({vis})'
     page.fill('#cfg-busca-categoria', 'xyzinexistente')
     assert page.locator('#cfg-categorias-vazio').is_visible(), 'mensagem de nenhum alerta'
     page.fill('#cfg-busca-categoria', '')
+    page.click('#tab-cfg-sgpa')
     page.evaluate("document.querySelectorAll('details.catalogo-detalhes').forEach(d => d.open = true)")
     page.fill('#cfg-busca-regra', 'velocidade')
     txt = page.locator('#cfg-regras-contagem').text_content()
@@ -840,17 +848,19 @@ with sync_playwright() as pw:
     page.fill('#cfg-busca-regra', '')
     page.evaluate("document.querySelectorAll('details.catalogo-detalhes').forEach(d => d.open = false)")
     print('OK: barras de pesquisa em Quais alertas devem notificar e Regras auditadas:', txt)
-    page.locator('.catalogo-detalhes').first.locator('summary').click()
     page.fill('#cfg-busca-tipo','12480')
     assert page.locator('#cfg-tipos input[role=switch]').count()==1
     assert page.locator('#cfg-tipos input[role=switch]').is_checked(), 'Tipo marcado individualmente deve permanecer ligado com categoria genérica desligada'
     page.locator('#cfg-tipos input[role=switch]').uncheck()
     assert page.evaluate("MonitoramentoAlertas.config().tiposNotificacao['12480'] === false")
     assert page.evaluate("JSON.parse(localStorage.getItem('bperes.alertas.cfg.v2')).tiposNotificacao['12480'] === false")
+    page.fill('#cfg-busca-tipo', '')
+    page.click('#tab-cfg-alertas')
     page.locator('#cfg-categorias input[aria-label="Notificar: Aguardando caminhão"]').uncheck()
     assert page.evaluate('MonitoramentoAlertas.config().notificarCategorias.aguardandoCaminhao === false')
     assert page.locator('#cfg-vel').count()==0
     assert page.locator('#cfg-velcan').count()==0
+    page.click('#tab-cfg-tudo')
     responsive_sizes = [(320, 640), (412, 915), (768, 1024), (1280, 900)]
     for width, height in responsive_sizes:
         page.set_viewport_size({'width': width, 'height': height})
@@ -1012,6 +1022,7 @@ with sync_playwright() as pw:
       });
     }""")
     page.wait_for_function('typeof window.__voiceChanged === "function"', timeout=2000)
+    page.click('#tab-cfg-vozes')
     assert page.locator('#cfg-gerenciar-vozes').is_visible(), 'O APK deve oferecer acesso ao gerenciador de vozes Android'
     page.click('#cfg-gerenciar-vozes')
     assert page.evaluate('window.__voiceManageCount === 1'), 'O botão deve chamar a ponte nativa para instalar/gerenciar vozes'
@@ -1578,9 +1589,79 @@ with sync_playwright() as pw:
     }""")
     print('OK: Regressão v5.2.0 (Trator 32275 383min sem repetição + Frente 3 reconhecida + Velocidade 100% Oficial SGPA) validada')
 
+    # Validação Integrada v6.0.0: Preferências em Abas, Modo Somente Críticos, Todos os 2.972 alertas SGPA, Grupos & Frentes, Vozes Brasileiras Gemini e Copiloto IA
+    page.evaluate("""async () => {
+      __test.reset();
+      __test.capturarFalas();
+      MonitoramentoAlertas.abrirConfig('alertas');
+      const abasCfg = [...document.querySelectorAll('#cfg-abas [data-cfg-aba]')].map(b => b.dataset.cfgAba);
+      if (abasCfg.join(',') !== 'alertas,sgpa,escopo,tempos,vozes,ia,tudo') {
+        throw new Error('Abas de Preferências inesperadas: ' + abasCfg.join(','));
+      }
+
+      // 1) Catálogo Completo SGPA: todos os 2.972 alertas acessíveis e escolha individual + ⭐ Crítico
+      MonitoramentoAlertas.selecionarAbaConfig('sgpa');
+      if (!document.getElementById('cfg-todos-tipos').checked) {
+        throw new Error('Catálogo completo SGPA (2.972 alertas) deve vir marcado na aba SGPA');
+      }
+      if (document.querySelectorAll('#cfg-tipos .alert-switch').length < 100) {
+        throw new Error('Aba SGPA deveria listar os alertas do catálogo completo para escolha individual');
+      }
+
+      // 2) Modo Somente Alertas Críticos + código SGPA promovido com ⭐ Crítico
+      MonitoramentoAlertas.configurar({
+        ativo: true, voz: true, popup: true, som: false, vibrar: false,
+        somenteCriticos: true,
+        tiposCriticos: { '12744': true },
+      });
+      __test.espelharAlarmes([
+        { cdEquipamento: 'CR-01', cdId: 'CR-OCIOSO', cdTpAlarme: 11, descTpAlarme: 'MOTOR OCIOSO', descEquipamento: '3100 - Trator', descFrente: 'Frente 1', fgOnline: true },
+        { cdEquipamento: 'CR-02', cdId: 'CR-VEL', cdTpAlarme: 5, descTpAlarme: 'VELOCIDADE', descEquipamento: '4410 - Caminhão Canavieiro', descFrente: 'Frente 1', vlAlarme: 88, fgOnline: true },
+        { cdEquipamento: 'CR-03', cdId: 'CR-STAR', cdTpAlarme: 12744, descTpAlarme: 'SEM APONTAMENTO', descEquipamento: '57850 - Colhedora', descFrente: 'Frente 1', fgOnline: true },
+      ]);
+      const aOcioso = MonitoramentoAlertas.ativos().find(a => a.numero === '3100');
+      const aVel = MonitoramentoAlertas.ativos().find(a => a.numero === '4410');
+      const aStar = MonitoramentoAlertas.ativos().find(a => a.numero === '57850');
+      if (!aOcioso || aOcioso.notificar !== false) throw new Error('No modo Somente Críticos, Motor Ocioso comum não deve notificar');
+      if (!aVel || aVel.notificar !== true) throw new Error('No modo Somente Críticos, Velocidade Oficial SGPA deve notificar');
+      if (!aStar || aStar.notificar !== true) throw new Error('Código 12744 marcado com ⭐ Crítico pelo usuário deve notificar mesmo no modo Somente Críticos');
+
+      // 3) Seleção de Grupos de Equipamentos + Frentes
+      MonitoramentoAlertas.selecionarAbaConfig('escopo');
+      if (document.querySelectorAll('#cfg-grupos-eq .chip').length < 10) {
+        throw new Error('Aba Frentes & Grupos deve exibir os grupos de equipamentos da usina');
+      }
+      MonitoramentoAlertas.configurar({ somenteCriticos: false, gruposEquipamento: ['COLHEDORAS'] });
+      if (MonitoramentoAlertas.ativos().some(a => a.numero === '4410' || a.numero === '3100') || !MonitoramentoAlertas.ativos().some(a => a.numero === '57850')) {
+        throw new Error('Filtro gruposEquipamento=[COLHEDORAS] deve manter apenas a Colhedora 57850 nos ativos: ' + JSON.stringify(MonitoramentoAlertas.ativos().map(a => a.numero)));
+      }
+      MonitoramentoAlertas.configurar({ gruposEquipamento: [] });
+
+      // 4) Novas Vozes Brasileiras Gemini na aba Vozes
+      MonitoramentoAlertas.selecionarAbaConfig('vozes');
+      const vozesGeminiOpts = [...document.querySelectorAll('#cfg-voz-gemini option')].map(o => o.value);
+      for (const vEsp of ['Kore', 'Aoede', 'Puck', 'Charon', 'Fenrir', 'Leda', 'Zephyr', 'Orus']) {
+        if (!vozesGeminiOpts.includes(vEsp)) throw new Error('Voz brasileira Gemini ausente no seletor: ' + vEsp);
+      }
+      document.getElementById('cfg-fechar-x').click();
+
+      // 5) Aba 🧠 IA (Copiloto de Raciocínio Operacional COA & FLOW)
+      MonitoramentoAlertas.abrirPainel('ia');
+      if (document.getElementById('lista-ia').classList.contains('hide')) throw new Error('Aba 🧠 IA não abriu na Central');
+      const diag = await MonitoramentoAlertas.executarAnaliseIa('Quais ações imediatas para Coa e Flow?');
+      if (!diag || !diag.analise.includes('Diagnóstico Causa-Raiz') || !diag.analise.includes('Controle Coa') || !diag.analise.includes('Controle Flow')) {
+        throw new Error('Copiloto IA não retornou diagnóstico estruturado COA/FLOW: ' + JSON.stringify(diag));
+      }
+      if (!document.querySelector('#lista-ia .ia-resposta-texto').textContent.includes('Diagnóstico Causa-Raiz')) {
+        throw new Error('Painel visual do Copiloto IA não renderizou a análise');
+      }
+      __test.restaurarFalas();
+    }""")
+    print('OK: Central v6.0.0 (6 Abas em Preferências, Modo Somente Críticos, 2.972 Alertas SGPA + ⭐, Grupos & Frentes, Vozes Brasileiras Gemini e Copiloto IA) validada')
+
     assert not errors, errors
     assert not any(m=='POST' for m,u in requests), 'Teste tentou POST'
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+19} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+20} grupos de verificações.')

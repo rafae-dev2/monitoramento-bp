@@ -423,4 +423,22 @@ assert.match(policy.montarFala({ codigo: 11, numero: '3510', texto: 'motor ocios
 assert.equal(policy.aplicarGlossario('Atenção C O A e F L O W'), 'Atenção Coa e Flow');
 assert.equal(policy.interpretarComandoCoa('alertas flow').acao, 'flow');
 
-console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 + v5.1 + v5.2 passaram.');
+// v6.0.0: Modo Somente Críticos + marcação individual SGPA + Grupos de Equipamentos + Vozes Gemini Brasil + Motor Causal IA.
+assert.equal(policy.notificar({ somenteCriticos: true }, { regra: 'refeicao', severidade: 2 }), false, 'Modo Somente Críticos silencia refeição (sev 2)');
+assert.equal(policy.notificar({ somenteCriticos: true }, { regra: 'velocidade', severidade: 3, codigo: '5' }), true, 'Modo Somente Críticos mantém Velocidade SGPA');
+assert.equal(policy.notificar({ somenteCriticos: true, tiposCriticos: { '12744': true } }, { codigo: '12744', descricao: 'SEM APONTAMENTO', severidade: 1 }), true, 'Código SGPA marcado com ⭐ Crítico passa no Modo Somente Críticos');
+assert.equal(policy.grupoEquipamentoPermitido({ gruposEquipamento: ['COLHEDORAS'] }, { tipo: 'COLHEDORA', nome: '57838 - Colhedora JD' }), true);
+assert.equal(policy.grupoEquipamentoPermitido({ gruposEquipamento: ['COLHEDORAS'] }, { tipo: 'CAMINHÃO CANAVIEIRO', nome: '4401 - Caminhão' }), false);
+assert.equal(policy.grupoEquipamentoPermitido({ setorMonitorado: 'FLOW' }, { tipo: 'TRATOR DE PNEU LEVE', grupoEquipamento: 'CAMINHÕES BOMBEIROS' }), true);
+assert.equal(policy.grupoEquipamentoPermitido({ setorMonitorado: 'FLOW' }, { tipo: 'COLHEDORA', grupoEquipamento: 'Frente 1' }), false);
+assert.ok(Array.isArray(policy.VOZES_GEMINI_BR) && policy.VOZES_GEMINI_BR.length >= 12);
+const diagIa = policy.raciocinarOperacaoCoa({
+  ativos: [{ numero: '7002', classe: 'Transbordo', setor: 'COA', regra: 'aguardandoCaminhao', severidade: 2, texto: 'aguardando caminhão' }],
+  resumoCtt: { frentes: [{ frente: 'Frente 3', colhedorasTotal: 2, colhedorasColhendo: 2, transbordos905: 3, caminhoesFila: 0 }], sugestoesBalanceamento: [] },
+  moenda: { entregaTonHora: 280, metaTonHora: 420, pctMeta: 67, status: 'risco', deficitTonHora: 140 },
+  custoTurno: { totalRs: 4200 },
+}, 'Qual o gargalo da Frente 3?');
+assert.equal(diagIa.ok, true);
+assert.match(diagIa.analise, /Frente 3 sofre fome logística.*Ações Imediatas — Controle Coa.*Ações Imediatas — Controle Flow/s);
+
+console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 + v5.1 + v5.2 + v6.0 passaram.');

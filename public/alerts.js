@@ -31,8 +31,9 @@
 (() => {
   'use strict';
 
-  const VERSAO = '5.2.0';
+  const VERSAO = '6.0.0';
   const KEY_PAINEL_FIXO = 'bperes.visual.painel-fixo.v1';
+  const KEY_GEMINI_KEY = 'bperes.ia.geminiKey.v1';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -199,17 +200,26 @@
     maxAtrasoMin: 20, // ignorar equipamento sem sinal há mais que isso
     espelharServidor: true,
     incluirOutros: true, // novas instalações notificam todos; valor legado é preservado
+    somenteCriticos: false, // quando true, filtra notificações/fala apenas para alertas críticos e códigos marcados
     notificarCategorias: {},
     tiposNotificacao: {},
+    tiposCriticos: {}, // codigo SGPA => true/false personalizado pelo usuário
     calcularLocal: true,
     usarStream: true,
     frentes: [],
+    gruposEquipamento: [],
+    setorMonitorado: 'todos', // 'todos' | 'FLOW' | 'COA'
     equipamentos: '',
     seguirSelecaoMapa: false,
     selecaoMapa: [],
     popup: true,
     som: true,
     voz: true,
+    motorVoz: 'auto', // 'auto' (Gemini Brasil se configurado -> Sistema) | 'gemini' | 'sistema'
+    vozGemini: 'Kore', // Voz Gemini Brasil principal / COA
+    vozGeminiFlow: 'Puck', // Voz Gemini Brasil para Controle FLOW quando vozDuplaSetor=true
+    vozDuplaSetor: true,
+    estiloDirecaoGemini: 'comando', // 'comando' | 'calmo' | 'urgente'
     vozNome: '',
     vozURI: '',
     perfilVoz: 'padrao',
@@ -225,6 +235,8 @@
     alertaQuedaSgpa: true,
     reescalarCriticos: true,
     reescalarCriticosMin: 5,
+    iaAtiva: true,
+    modeloIa: 'gemini-2.5-flash',
     silencioAte: 0,
   };
 
@@ -250,8 +262,16 @@
     try { return localStorage.getItem(KEY_PAINEL_FIXO) === '1'; } catch { return false; }
   })();
   let filtroAtivos = 'todos';
+  let abaConfigAtiva = 'alertas';
+  let filtroCatalogoSgpa = 'todos';
+  let iaServidorConfigurado = false;
+  let iaCarregando = false;
+  let ultimaAnaliseIa = null;
+  let historicoChatIa = [];
+  let audioGeminiAtivo = null;
+  const cacheAudioGemini = new Map(); // chave => data:audio/wav;base64,...
   const microParadasMapa = new Map(); // id → { paradoDesde, episodios: [{ duracaoMin, fimMs }] }
-  const frotaMudaAvisada = new Set(); // numero/id já avisado no episódio atual de perda de sinal
+  const frotaMudaAvisada = new Map ? new Set() : new Set(); // numero/id já avisado no episódio atual de perda de sinal
   let timerResumoRajada = null;
   let excedentesRajada = 0;
   let ultimoResumoCtt = { frentes: [], sugestoesBalanceamento: [], frotasMudas: [], totais: {} };
@@ -310,6 +330,7 @@
     },
     quadros: 0,
     frentes: [],
+    gruposEquipamento: [],
   };
 
   function carregar(chave, padrao) {
@@ -1342,11 +1363,16 @@
     const lista = Array.isArray(linhas) ? linhas : [];
     const vistos = new Set();
     const frentes = new Set(estado.frentes);
+    const gruposSet = new Set(estado.gruposEquipamento || []);
     for (const row of lista) {
       const id = String(row.cdEquipamento || '');
       if (!id) continue;
       vistos.add(id);
-      if (row.descGrupoEquipamento) frentes.add(row.descGrupoEquipamento);
+      if (row.descFrente) frentes.add(String(row.descFrente).trim());
+      if (row.descGrupoEquipamento) {
+        frentes.add(String(row.descGrupoEquipamento).trim());
+        gruposSet.add(String(row.descGrupoEquipamento).trim());
+      }
       const existente = frota.get(id) || {};
       const frenteAtual = frenteDoRegistro(row, existente, true);
       const grupoAtual = grupoDoRegistro(row, existente);
@@ -1357,7 +1383,7 @@
         frente: frenteAtual,
         grupoEquipamento: grupoAtual,
       };
-      if (!frenteSelecionada({ frente: frenteAtual, frenteInferida: existente.frenteInferida, grupoEquipamento: grupoAtual }) && !manterParaInferencia(candidato)) {
+      if ((!frenteSelecionada({ frente: frenteAtual, frenteInferida: existente.frenteInferida, grupoEquipamento: grupoAtual }) || !policy.grupoEquipamentoPermitido(cfg, candidato)) && !manterParaInferencia(candidato)) {
         atualizarFrenteAtivos(id, frenteAtual, grupoAtual);
         frota.delete(id);
         reconciliarEscopo();
@@ -1368,7 +1394,7 @@
       e.nome = p.nome || e.nome;
       e.numero = p.numero;
       e.tipo = row.descTpEquipamento || e.tipo;
-      e.tipoCompleto = row.descFullTpEquipamento || e.tipoCompleto;
+      e.tipoCompleto = row.descFullTpEquipamento || existente.tipoCompleto;
       e.frente = frenteAtual;
       e.grupoEquipamento = grupoAtual;
       const temDescricaoOperacao = row.descOperacao != null && String(row.descOperacao).trim() !== '';
@@ -1407,7 +1433,8 @@
       e.vistoEm = agora();
     }
     atualizarFrentesInferidas(agora());
-    estado.frentes = [...frentes].sort();
+    estado.frentes = [...frentes].filter(Boolean).sort();
+    estado.gruposEquipamento = [...gruposSet].filter(Boolean).sort();
     // largura de banda/limite de requisições: só guarda o que a unidade tem hoje
     const corte = agora() - 30 * 60000;
     for (const [id, e] of frota) if (e.vistoEm < corte && !ativos.has(id + '|velocidade')) frota.delete(id);
@@ -1636,6 +1663,7 @@
       if (!ctx.selecao.has(String(e.id)) && !ctx.selecao.has(String(e.numero))) return false;
     }
     if (!frenteSelecionada(e)) return false;
+    if (!policy.grupoEquipamentoPermitido(cfg, e)) return false;
     const lista = (cfg.equipamentos || '')
       .split(/[^0-9A-Za-z]+/)
       .map((s) => s.trim())
@@ -3382,11 +3410,138 @@
       .replace(/\bF\s+L\s+O\s+W\b|\bFLOW\b/g, 'Flow');
   }
 
+  function obterChaveGeminiLocal() {
+    try {
+      return String(localStorage.getItem(KEY_GEMINI_KEY) || '').trim();
+    } catch {
+      return '';
+    }
+  }
+
+  function salvarChaveGeminiLocal(chave) {
+    try {
+      const limpa = String(chave || '').trim();
+      if (limpa) localStorage.setItem(KEY_GEMINI_KEY, limpa);
+      else localStorage.removeItem(KEY_GEMINI_KEY);
+    } catch {
+      /* sem storage */
+    }
+  }
+
+  function geminiDisponivel() {
+    return Boolean(iaServidorConfigurado || obterChaveGeminiLocal());
+  }
+
+  function pcm16Base64ParaWavUrl(pcmBase64, sampleRate = 24000) {
+    const bin = atob(pcmBase64);
+    const len = bin.length;
+    const wav = new Uint8Array(44 + len);
+    const view = new DataView(wav.buffer);
+    const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) wav[off + i] = s.charCodeAt(i); };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + len, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, 'data');
+    view.setUint32(40, len, true);
+    for (let i = 0; i < len; i++) wav[44 + i] = bin.charCodeAt(i);
+    let out = '';
+    const chunk = 8192;
+    for (let i = 0; i < wav.length; i += chunk) {
+      out += String.fromCharCode.apply(null, wav.subarray(i, i + chunk));
+    }
+    return 'data:audio/wav;base64,' + btoa(out);
+  }
+
+  function escolherVozGeminiItem(item, texto) {
+    const padraoCoa = String(cfg.vozGemini || 'Kore').trim() || 'Kore';
+    if (!cfg.vozDuplaSetor) return padraoCoa;
+    const setorItem = (item && item.setor) || (/^Atenção Flow/i.test(texto) ? 'FLOW' : 'COA');
+    return setorItem === 'FLOW' ? (String(cfg.vozGeminiFlow || 'Puck').trim() || 'Puck') : padraoCoa;
+  }
+
+  async function requisitarAudioGemini(texto, voz, estilo) {
+    const chaveCache = `${voz}|${estilo}|${texto}`;
+    if (cacheAudioGemini.has(chaveCache)) return cacheAudioGemini.get(chaveCache);
+    const chaveLocal = obterChaveGeminiLocal();
+    let dataUrl = '';
+
+    if (ctx.proxy && ctx.audit) {
+      try {
+        const r = await fetch('/.netlify/functions/session?acao=ia_voz', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ texto, voz, estilo, apiKey: chaveLocal || undefined }),
+        });
+        const j = await r.json().catch(() => null);
+        if (r.ok && j && j.ok && j.audioBase64) {
+          dataUrl = `data:${j.mimeType || 'audio/wav'};base64,${j.audioBase64}`;
+        }
+      } catch {
+        /* fallback para chamada direta se houver chave local */
+      }
+    }
+
+    if (!dataUrl && chaveLocal) {
+      const direcao = estilo === 'urgente'
+        ? 'Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, tom urgente, firme e nítido de sala de controle operacional, lendo exatamente o texto a seguir sem acrescentar palavras:'
+        : estilo === 'calmo'
+          ? 'Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, cadência pausada e serena, lendo exatamente o texto a seguir sem acrescentar palavras:'
+          : 'Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, dicção clara e firme de centro de operações agrícolas, lendo exatamente o texto a seguir sem acrescentar palavras:';
+      const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': chaveLocal },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `${direcao}\n"${texto}"` }] }],
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voz } } },
+          },
+        }),
+      });
+      const j = await r.json().catch(() => null);
+      const parts = (((j || {}).candidates || [])[0] || {}).content && j.candidates[0].content.parts || [];
+      const part = parts.find((p) => p && p.inlineData && p.inlineData.data);
+      if (r.ok && part) {
+        const mime = String(part.inlineData.mimeType || '');
+        if (/audio\/(?:wav|mpeg|mp3|ogg)/i.test(mime)) {
+          dataUrl = `data:${mime};base64,${part.inlineData.data}`;
+        } else {
+          const mRate = /rate=(\d{4,6})/i.exec(mime);
+          dataUrl = pcm16Base64ParaWavUrl(part.inlineData.data, mRate ? Number(mRate[1]) : 24000);
+        }
+      }
+    }
+
+    if (!dataUrl) throw new Error('Áudio Gemini indisponível');
+    if (cacheAudioGemini.size >= 45) {
+      const primeira = cacheAudioGemini.keys().next().value;
+      if (primeira !== undefined) cacheAudioGemini.delete(primeira);
+    }
+    cacheAudioGemini.set(chaveCache, dataUrl);
+    return dataUrl;
+  }
+
   function falar(texto, opcoes) {
     if (!cfg.voz) return;
     const emergencia = !!(opcoes && opcoes.emergencia);
     const textoFalado = paraPronunciaNatural(texto);
-    const item = { texto: textoFalado, oficial: !!(opcoes && opcoes.oficial) || emergencia, emergencia, retentou: false };
+    const setor = opcoes && opcoes.alerta ? opcoes.alerta.setor : (/^Atenção Flow/i.test(textoFalado) ? 'FLOW' : 'COA');
+    const item = {
+      texto: textoFalado,
+      oficial: !!(opcoes && opcoes.oficial) || emergencia,
+      emergencia,
+      setor,
+      forcarGemini: !!(opcoes && opcoes.forcarGemini),
+      retentou: false,
+    };
     ultimaFalaEmitida = { texto: item.texto, ts: agora(), oficial: item.oficial, emergencia };
     if (!(opcoes && opcoes.toastExibido)) {
       if (opcoes && opcoes.alerta) mostrarToast(opcoes.alerta, false);
@@ -3424,11 +3579,61 @@
     setTimeout(descargarFila, 80);
   }
 
+  function deveUsarVozGemini(item) {
+    if (item && item.semGemini) return false;
+    if (item && item.forcarGemini) return geminiDisponivel();
+    if (cfg.motorVoz === 'sistema') return false;
+    if (cfg.motorVoz === 'gemini' || cfg.motorVoz === 'auto') return geminiDisponivel();
+    return false;
+  }
+
   function descargarFila() {
     if (falando || vozBloqueada || !fila.length) return;
     limparTimersVozWeb();
     const item = fila.shift();
     const texto = paraPronunciaNatural(item.texto);
+
+    if (deveUsarVozGemini(item) && typeof Audio !== 'undefined') {
+      falando = true;
+      const vozG = escolherVozGeminiItem(item, texto);
+      const estiloG = item.emergencia ? 'urgente' : (cfg.estiloDirecaoGemini || 'comando');
+      requisitarAudioGemini(texto, vozG, estiloG)
+        .then((dataUrl) => {
+          if (!falando) return;
+          const player = new Audio(dataUrl);
+          audioGeminiAtivo = player;
+          player.volume = Math.max(0, Math.min(1, Number(cfg.volume) || 1));
+          player.playbackRate = Math.max(0.6, Math.min(1.6, Number(cfg.taxa) || 1));
+          const encerrar = () => {
+            if (audioGeminiAtivo === player) audioGeminiAtivo = null;
+            falando = false;
+            setTimeout(descargarFila, 140);
+          };
+          player.onended = encerrar;
+          player.onerror = () => {
+            if (audioGeminiAtivo === player) audioGeminiAtivo = null;
+            falando = false;
+            fila.unshift(Object.assign({}, item, { semGemini: true }));
+            setTimeout(descargarFila, 60);
+          };
+          const playPromise = player.play();
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => {
+              if (audioGeminiAtivo === player) audioGeminiAtivo = null;
+              falando = false;
+              fila.unshift(Object.assign({}, item, { semGemini: true }));
+              setTimeout(descargarFila, 60);
+            });
+          }
+        })
+        .catch(() => {
+          falando = false;
+          fila.unshift(Object.assign({}, item, { semGemini: true }));
+          setTimeout(descargarFila, 50);
+        });
+      return;
+    }
+
     const nativa = ponteNativa();
     const s = sintetizador();
     const uriVoz = String(cfg.vozURI || '');
@@ -3537,6 +3742,13 @@
     fila = [];
     falando = false;
     limparTimersVozWeb();
+    if (audioGeminiAtivo) {
+      try {
+        audioGeminiAtivo.pause();
+        audioGeminiAtivo.src = '';
+      } catch { /* ignora */ }
+      audioGeminiAtivo = null;
+    }
     if (timerVozNativa) {
       clearTimeout(timerVozNativa);
       timerVozNativa = null;
@@ -4117,6 +4329,9 @@
   }
 
   function montar() {
+    const opcoesVozesGemini = (policy.VOZES_GEMINI_BR || [])
+      .map((v) => `<option value="${esc(v.id)}">${esc(v.nome)}</option>`)
+      .join('');
     const host = document.createElement('div');
     host.innerHTML = `
 <div id="alertas" class="hide" role="dialog" aria-label="Central de alertas">
@@ -4124,7 +4339,7 @@
     <header>
       <div class="titulo">
         <img src="/icons/logo.png" alt="" width="28" height="28" />
-        <div><strong>Central de alertas · COA</strong><span id="alertas-status" class="fine"></span></div>
+        <div><strong>Central de alertas · COA &amp; FLOW</strong><span id="alertas-status" class="fine"></span></div>
       </div>
       <div class="painel-head-acoes">
         <button id="alertas-fixar" class="icone" type="button" title="Fixar painel na lateral esquerda ao lado do mapa (Split-Screen)" aria-label="Fixar painel lateral" aria-pressed="false">📌</button>
@@ -4136,6 +4351,7 @@
         <button class="aba ativa" data-aba="ativos">Ativos <span id="cont-ativos" class="pill">0</span></button>
         <button class="aba" data-aba="frentes">Frentes <span id="cont-frentes" class="pill">0</span></button>
         <button class="aba" data-aba="comboio">Comboio <span id="cont-comboio" class="pill">0</span></button>
+        <button class="aba" data-aba="ia" title="Copiloto de Inteligência Artificial COA &amp; FLOW">🧠 IA</button>
         <button class="aba" data-aba="historico">Histórico <span id="cont-hist" class="pill">0</span></button>
       </div>
       <div class="atalhos">
@@ -4147,7 +4363,7 @@
       </div>
     </div>
     <div class="busca-central" role="search">
-      <input id="alertas-busca" type="search" aria-label="Buscar por frota, alerta ou operador" aria-controls="lista-ativos lista-frentes lista-comboio lista-historico" placeholder="Frota, frente, alerta ou operador" autocomplete="off">
+      <input id="alertas-busca" type="search" aria-label="Buscar por frota, alerta ou operador" aria-controls="lista-ativos lista-frentes lista-comboio lista-ia lista-historico" placeholder="Frota, frente, alerta ou operador" autocomplete="off">
       <button id="alertas-busca-limpar" class="icone hide" type="button" title="Limpar busca" aria-label="Limpar busca">✕</button>
     </div>
     <div id="ativos-triagem" class="ativos-triagem" role="toolbar" aria-label="Filtros rápidos de alertas">
@@ -4170,6 +4386,7 @@
     <div id="lista-ativos" class="lista"></div>
     <div id="lista-frentes" class="lista hide"></div>
     <div id="lista-comboio" class="lista hide"></div>
+    <div id="lista-ia" class="lista hide"></div>
     <div id="lista-historico" class="lista hide"></div>
     <footer>
       <button id="btn-limpar">Limpar ativos</button>
@@ -4222,193 +4439,347 @@
 </div>
 
 <div id="cfg-alertas" class="hide" role="dialog" aria-modal="true" aria-labelledby="cfg-titulo">
-  <div class="card cfg">
+  <div class="card cfg cfg-com-abas">
     <div class="cfg-topo">
       <span aria-hidden="true"></span>
       <img class="marca" src="/icons/logo.png" alt="" width="48" height="48" />
       <button id="cfg-fechar-x" class="icone cfg-fechar-x" type="button" title="Fechar preferências" aria-label="Fechar preferências">✕</button>
     </div>
-    <h2 id="cfg-titulo">Preferências de alertas</h2>
-    <p class="fine">Sempre que um alerta for falado, o cartão flutuante aparece automaticamente na lateral. A locução diferencia <b>Atenção Flow</b> (caminhões e veículos leves) e <b>Atenção Coa</b> (tratores, transbordos, colheita e linha amarela) com pronúncia natural. Alertas calculados localmente ficam na central e no histórico; só “Motor ocioso sem apontamento”, confirmado no SGPA, pode ser falado como exceção (sem notificação do sistema).</p>
-    <div class="fonte-oficial"><strong>Velocidade: somente portal oficial SGPA</strong><span>O aplicativo nunca calcula velocidade localmente: só notifica e fala quando o portal SGPA abrir o alarme oficial do equipamento.</span></div>
-    <section class="push-optin" aria-labelledby="push-optin-titulo">
-      <div class="push-optin-cabecalho"><span class="push-simbolo" aria-hidden="true">◉</span><div><h3 id="push-optin-titulo">Notificações Push neste aparelho</h3><span class="push-dispositivo">Ativação individual, controlada por você</span></div></div>
-      <p>O Push envia apenas alarmes oficiais SGPA selecionados — não envia cálculos locais. Categorias e tipos, frentes, equipamentos e o escopo da seleção do mapa se aplicam por dispositivo. A entrega usa polling do backend, com até 1 minuto de intervalo; não é instantânea.</p>
-      <p id="push-status" class="push-status" role="status" aria-live="polite">Verificando disponibilidade…</p>
-      <div class="push-acoes"><button id="push-ativar" class="primary" type="button">Ativar notificações Push neste aparelho</button><button id="push-desligar" class="push-desligar hide" type="button">Desligar notificações Push neste aparelho</button></div>
-    </section>
-    <h3 class="secao-alertas">Tema visual</h3>
-    <div class="grade">
-      <label class="campo"><span>Tema da interface neste aparelho</span>
-        <select id="cfg-acabamento">
-          <option value="vidro">Liquid Glass (vidro escuro refrativo estilo iPhone)</option>
-          <option value="black">Tema Black (preto puro · máximo contraste)</option>
-        </select>
-      </label>
+    <h2 id="cfg-titulo">Preferências e Controle Personalizado</h2>
+    <p class="fine">Organize exatamente o que deseja monitorar: escolha apenas alertas críticos ou personalize cada um dos alertas do SGPA, filtre grupos de equipamentos e frentes, ajuste tempos, vozes brasileiras Gemini e o Copiloto IA.</p>
+
+    <div id="cfg-abas" class="cfg-abas" role="tablist" aria-label="Seções de preferências">
+      <button type="button" role="tab" id="tab-cfg-alertas" class="cfg-aba on" data-cfg-aba="alertas" aria-selected="true">🚨 Alertas &amp; Críticos</button>
+      <button type="button" role="tab" id="tab-cfg-sgpa" class="cfg-aba" data-cfg-aba="sgpa" aria-selected="false">📋 Catálogo SGPA</button>
+      <button type="button" role="tab" id="tab-cfg-escopo" class="cfg-aba" data-cfg-aba="escopo" aria-selected="false">🚜 Frentes &amp; Grupos</button>
+      <button type="button" role="tab" id="tab-cfg-tempos" class="cfg-aba" data-cfg-aba="tempos" aria-selected="false">⚙️ Ajustes &amp; Tempos</button>
+      <button type="button" role="tab" id="tab-cfg-vozes" class="cfg-aba" data-cfg-aba="vozes" aria-selected="false">🎙️ Vozes Gemini</button>
+      <button type="button" role="tab" id="tab-cfg-ia" class="cfg-aba" data-cfg-aba="ia" aria-selected="false">🧠 IA &amp; Sistema</button>
+      <button type="button" role="tab" id="tab-cfg-tudo" class="cfg-aba" data-cfg-aba="tudo" aria-selected="false" title="Mostrar todas as seções de uma vez">📑 Tudo</button>
     </div>
-    <p class="fine">Aplica na hora neste aparelho (também disponível como atalho rápido em ⚙ Centro de Comando COA). O Tema Black usa preto puro sem transparência, ideal para telões claros ou máxima nitidez.</p>
-    <h3 class="secao-alertas">Modo Sentinela COA (2º plano e anti-perda)</h3>
-    <p class="fine">Garante que o computador (aba minimizada ou atrás de outros sistemas) e o APK Android continuem monitorando e falando os alertas, além de avisar imediatamente caso o sinal do SGPA caia.</p>
-    <div class="switches">
-      <label class="chk"><input id="cfg-sentinela" type="checkbox"><span>Manter voz e monitoramento vivos em 2º plano (Sentinela COA — PC e APK Android)</span></label>
-      <label class="chk"><input id="cfg-wakelock" type="checkbox"><span>Impedir desligamento automático da tela (Wake Lock)</span></label>
-      <label class="chk"><input id="cfg-queda-sgpa" type="checkbox"><span>Avisar por som e voz se perder comunicação com o SGPA (&gt; 2 min)</span></label>
-      <label class="chk"><input id="cfg-reescalar-criticos" type="checkbox"><span>Re-alertar por voz alertas críticos pendentes sem confirmação</span></label>
-    </div>
-    <div class="grade">
-      <label class="campo"><span>Repetir crítico não confirmado a cada (min)</span><input id="cfg-reescalar-min" type="number" min="1" step="1" inputmode="numeric"></label>
-    </div>
-    <div class="voice-actions">
-      <button id="cfg-bateria-android" type="button" class="hide">Desativar restrição de bateria do Android (recomendado p/ 2º plano)</button>
-      <button id="cfg-abrir-pip" type="button">Abrir mini-painel flutuante COA (sempre visível no PC)</button>
-    </div>
-    <p class="rotulo">Quais alertas devem notificar</p>
-    <div class="busca-modulo"><input id="cfg-busca-categoria" type="search" placeholder="Pesquisar alerta (ex.: fila, velocidade, refeição)" aria-label="Pesquisar alertas" autocomplete="off"></div>
-    <div id="cfg-categorias" class="alert-switch-list"></div>
-    <p id="cfg-categorias-vazio" class="busca-vazia hide">Nenhum alerta encontrado.</p>
-    <details class="catalogo-detalhes">
-      <summary>Escolher tipos individuais do SGPA</summary>
-      <p id="cfg-catalogo-status" class="fine">Carregando catálogo auditado…</p>
-      <label class="campo"><span>Buscar por nome ou código oficial</span><input id="cfg-busca-tipo" type="search" placeholder="Pesquisar por nome ou código (ex.: velocidade, 12724)" autocomplete="off"></label>
-      <div class="catalogo-filtros"><label class="chk"><input id="cfg-todos-tipos" type="checkbox"><span>Mostrar catálogo geral, não só tipos utilizados/conhecidos</span></label><button id="cfg-atualizar-catalogo" type="button">Atualizar SGPA</button></div>
-      <p class="fine">Um tipo marcado individualmente recebe aviso mesmo se a categoria geral estiver desligada; a fala depende da chave “Falar alerta em português”. Desmarque para silenciar o código. O catálogo geral não significa que todos esses alarmes estão configurados para esta unidade.</p>
-      <div id="cfg-tipos" class="alert-switch-list catalogo-lista"></div>
-      <button id="cfg-mais-tipos" type="button" class="hide">Mostrar mais tipos</button>
-    </details>
-    <details class="catalogo-detalhes"><summary>Regras auditadas da unidade</summary><p id="cfg-regras-status" class="fine"></p><div class="busca-modulo"><input id="cfg-busca-regra" type="search" placeholder="Pesquisar regra, tipo de equipamento ou condição" aria-label="Pesquisar regras auditadas" autocomplete="off"></div><p id="cfg-regras-contagem" class="busca-contagem"></p><div id="cfg-regras-auditadas" class="regras-auditadas"></div><p class="fine">Inventário para consulta. As expressões permanecem executadas pelo SGPA, sem recriar condições ambíguas no aplicativo.</p></details>
-    <h3 class="secao-alertas">Leitura e cálculos complementares</h3>
-    <p class="fine">RPM e ociosidade podem ter cálculo local complementar. Se o motor estiver ocioso e a descrição atual da operação SGPA confirmar “Sem Apontamento”, a central registra um alerta local combinado após o tempo configurado. Só esse alerta confirmado pode ser falado (exibindo o cartão lateral ao falar); não gera notificação do sistema. Os demais cálculos locais ficam na central/histórico sem fala nem notificação. A espera por caminhão usa a operação da telemetria mesmo com esses cálculos desligados.</p>
-    <div class="grade">
-      <label class="campo"><span>RPM máxima do motor</span><input id="cfg-rpm" type="number" min="0" step="10" inputmode="numeric"></label>
-      <label class="campo"><span>Motor ocioso (min)</span><input id="cfg-ocioso" type="number" min="1" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Sem apontamento (min)</span><input id="cfg-sem-ponto" type="number" min="1" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Repetir o mesmo alerta a cada (min)</span><input id="cfg-cooldown" type="number" min="0" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Máx. de alertas falados por ciclo</span><input id="cfg-maxvoz" type="number" min="1" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Intervalo de leitura (s)</span><input id="cfg-int" type="number" min="30" step="5" inputmode="numeric"></label>
-      <label class="campo"><span>Leituras p/ confirmar</span><input id="cfg-amostras" type="number" min="1" max="5" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Ignorar sem sinal há (min)</span><input id="cfg-atraso" type="number" min="1" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>RPM abaixo disto é ocioso</span><input id="cfg-rpmoci" type="number" min="0" step="10" inputmode="numeric"></label>
-    </div>
-    <label class="campo"><span>Só estes equipamentos (separados por espaço ou vírgula; vazio = todos)</span>
-      <input id="cfg-eq" type="text" placeholder="ex.: 8833 4462 74073" spellcheck="false" autocomplete="off"></label>
-    <p class="rotulo">Frentes / grupos monitorados</p>
-    <p class="fine">Marque somente os grupos que deseja monitorar. Com um ou mais marcados, alertas fora desses grupos saem dos ativos; sem nenhum marcado, vale a unidade toda.</p>
-    <div id="cfg-frentes" class="chips"></div>
-    <h3 class="secao-alertas">Controle de refeições</h3>
-    <p class="fine">Defina o tempo de refeição de cada grupo. Quando o equipamento ficar na operação de refeição do SGPA além do limite, a central gera o alarme “Refeição excedida” (fala e notificação com o app aberto). Grupos em “Não controlar” são ignorados.</p>
-    <div id="cfg-refeicoes" class="refeicao-lista"></div>
-    <label class="campo"><span>Por equipamento (prevalece sobre o grupo): número=minutos</span>
-      <input id="cfg-refeicao-eq" type="text" placeholder="ex.: 6614=30, 8833=60, 4462=0" spellcheck="false" autocomplete="off"></label>
-    <h3 class="secao-alertas">Paradas improdutivas (ranking SGPA)</h3>
-    <p class="fine">Códigos que mais tiraram produtividade no último mês. Alerta quando o equipamento fica na operação além da tolerância (minutos). Use 0 para não alertar.</p>
-    <div id="cfg-paradas" class="grade"></div>
-    <h3 class="secao-alertas">Escalonamento da cobrança</h3>
-    <p class="fine">Se a parada continuar depois do primeiro alerta, o app repete como URGENTE e depois pede para acionar o líder da frente. Use 0 para desligar o nível.</p>
-    <div class="grade">
-      <label class="campo"><span>Urgente após a tolerância (+min)</span><input id="cfg-esc1" type="number" min="0" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Acionar líder após a tolerância (+min)</span><input id="cfg-esc2" type="number" min="0" step="1" inputmode="numeric"></label>
-    </div>
-    <label class="campo"><span>Líder de cada frente (frente=nome, separados por ;)</span>
-      <input id="cfg-lideres" type="text" placeholder="ex.: Frente 1=João; Frente 2=Pedro" spellcheck="false" autocomplete="off"></label>
-    <h3 class="secao-alertas">Gestão por frente</h3>
-    <p class="fine">Alertas de equilíbrio da frente (o problema é do despacho, não do operador). Use 0 para desligar.</p>
-    <label class="chk"><input id="cfg-gestao-frente" type="checkbox"><span>Ativar alertas “Atenção gestão” por frente</span></label>
-    <p class="fine">Desligar interrompe novos alertas de gestão e remove os ativos correspondentes; o histórico é preservado. Oscilações momentâneas na contagem não reiniciam o cooldown por frente e regra.</p>
-    <div class="grade">
-      <label class="campo"><span>Fila: nº de equipamentos aguardando carregamento</span><input id="cfg-fila-frente" type="number" min="0" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Todas as colhedoras paradas há (min)</span><input id="cfg-sem-colh" type="number" min="0" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Transbordos aguardando colhedora (nº)</span><input id="cfg-transb-ag" type="number" min="0" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Frota muda: sem telemetria há (min)</span><input id="cfg-frota-muda" type="number" min="0" step="5" inputmode="numeric"></label>
-      <label class="campo"><span>Meta SLA de atendimento COA (min)</span><input id="cfg-sla-min" type="number" min="1" step="1" inputmode="numeric"></label>
-    </div>
-    <h3 class="secao-alertas">Inteligência v4.0: Moenda, Custos R$, Comboio e Auditoria</h3>
-    <p class="fine">Alimenta o Termômetro de Moenda (t/h), o Taxímetro Financeiro do Turno (R$), a fila inteligente do Uber do Comboio/Oficina e a auditoria automática de falso apontamento.</p>
-    <div class="switches">
-      <label class="chk"><input id="cfg-auditar-apontamento" type="checkbox"><span>Auditar falso apontamento (operação SGPA incoerente com velocidade/motor)</span></label>
-      <label class="chk"><input id="cfg-manut-preditiva" type="checkbox"><span>Manutenção preditiva (avisar ao atingir 3 alertas mecânicos/RPM em 4h)</span></label>
-    </div>
-    <div class="grade">
-      <label class="campo"><span>Falso apontamento: tolerância (min)</span><input id="cfg-inconsistencia-min" type="number" min="0" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Bate-volta máx. caminhão (min)</span><input id="cfg-batevolta-min" type="number" min="0" step="5" inputmode="numeric"></label>
-      <label class="campo"><span>Meta de moagem da usina (t/h)</span><input id="cfg-meta-moenda" type="number" min="0" step="10" inputmode="numeric"></label>
-      <label class="campo"><span>Produtividade p/ colhedora (t/h)</span><input id="cfg-ton-colh" type="number" min="10" step="5" inputmode="numeric"></label>
-      <label class="campo"><span>Custo parada Colhedora (R$/h)</span><input id="cfg-custo-colh" type="number" min="0" step="10" inputmode="numeric"></label>
-      <label class="campo"><span>Custo parada Transbordo (R$/h)</span><input id="cfg-custo-tb" type="number" min="0" step="10" inputmode="numeric"></label>
-      <label class="campo"><span>Custo parada Caminhão (R$/h)</span><input id="cfg-custo-cam" type="number" min="0" step="10" inputmode="numeric"></label>
-      <label class="campo"><span>Preço do Diesel (R$/L)</span><input id="cfg-custo-diesel" type="number" min="1" step="0.1" inputmode="decimal"></label>
-    </div>
-    <h3 class="secao-alertas">Pente-Fino COA v5.0 (“Zero Agulha”)</h3>
-    <p class="fine">Regras de precisão baseadas no catálogo auditado da Branco Peres (DESLIGAR_CHAVE_GERAL, CHUVA_DESLIGAR_CHAVE_GERAL, ABAST_INS_ML) e no efeito serrote das micro-paradas. Use 0 para desligar cada regra. Abastecimento com motor ligado é segurança: nunca é silenciado pelo Modo Chuva.</p>
-    <div class="switches">
-      <label class="chk"><input id="cfg-pentefino-ativo" type="checkbox"><span>Ativar regras Pente-Fino (sem operador, chave geral, abastecimento c/ motor ligado)</span></label>
-      <label class="chk"><input id="cfg-microparadas-ativo" type="checkbox"><span>Detectar micro-paradas crônicas (efeito serrote / picadinho)</span></label>
-    </div>
-    <div class="grade">
-      <label class="campo"><span>Operando sem operador há (min)</span><input id="cfg-sem-operador-min" type="number" min="0" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Chave geral ligada c/ motor parado (min)</span><input id="cfg-chave-geral-min" type="number" min="0" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Abastecimento c/ motor ligado (min)</span><input id="cfg-abast-motor-min" type="number" min="0" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Picadinho: nº de micro-paradas em 60 min</span><input id="cfg-picadinho-qtd" type="number" min="2" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Picadinho: minutos perdidos somados</span><input id="cfg-picadinho-soma" type="number" min="5" step="1" inputmode="numeric"></label>
-    </div>
-    <h3 class="secao-alertas">Pronúncia dos termos (glossário)</h3>
-    <p class="fine">Ensine a voz a falar abreviações do SGPA. Uma regra por linha, no formato <b>termo=como falar</b>. O glossário já transforma <b>AG colhedora parada rápida</b> em <b>Aguardando colhedora parada rápida</b>. Exemplos: <code>AG=Aguardando</code>, <code>COLH=colhedora</code>. Deixar vazio depois do = faz a voz omitir o termo (ex.: <code>HR=</code>). Vale para todos os alertas falados; maiúsculas e acentos não importam. Depois, toque em Salvar preferências.</p>
-    <textarea id="cfg-glossario" aria-label="Glossário de pronúncia" rows="6" spellcheck="false" autocomplete="off" placeholder="AG=Aguardando&#10;COLH=colhedora&#10;HR="></textarea>
-    <p class="fine" id="cfg-glossario-padrao"></p>
-    <div class="grade">
-      <label class="campo"><span>Testar frase</span><input id="cfg-glossario-teste" type="text" value="AG colhedora parada rápida" autocomplete="off"></label>
-    </div>
-    <p id="cfg-glossario-previa" class="fine"></p>
-    <button id="cfg-glossario-ouvir" type="button">Ouvir pronúncia</button>
-    <h3 class="secao-alertas">Fontes, vozes e perfis de locução COA</h3>
-    <div class="switches">
-      <label class="chk"><input id="cfg-liga" type="checkbox"><span>Central de alertas ligada</span></label>
-      <label class="chk"><input id="cfg-local" type="checkbox"><span>Cálculo complementar: RPM e motor ocioso</span></label>
-      <label class="chk"><input id="cfg-serv" type="checkbox"><span>Receber alarmes oficiais SGPA (stream e consulta)</span></label>
-      <label class="chk"><input id="cfg-stream" type="checkbox"><span>Conexão ao vivo (stream de eventos do mapa)</span></label>
-      <label class="chk"><input id="cfg-mapa" type="checkbox"><span>Alertar só do que foi clicado no mapa</span></label>
-      <label class="chk"><input id="cfg-popup" type="checkbox"><span>Pop-up na tela</span></label>
-      <label class="chk"><input id="cfg-som" type="checkbox"><span>Som de aviso</span></label>
-      <label class="chk"><input id="cfg-voz" type="checkbox"><span>Falar o alerta em português</span></label>
-      <label class="chk"><input id="cfg-notif" type="checkbox"><span>Notificação do sistema (app instalado)</span></label>
-      <label class="chk"><input id="cfg-vib" type="checkbox"><span>Vibrar no celular</span></label>
-      <label class="chk"><input id="cfg-repete" type="checkbox"><span>Repetir a fala enquanto durar o alerta</span></label>
-    </div>
-    <div class="grade">
-      <label class="campo"><span>Perfil de locução COA</span>
-        <select id="cfg-perfil-voz">
-          <option value="padrao">Padrão equilibrado</option>
-          <option value="coa-firme">Locutor firme COA (comando)</option>
-          <option value="clara-pausada">Locução clara e pausada (rádio/ruído)</option>
-          <option value="urgente">Alerta rápido operacional</option>
-          <option value="personalizado">Personalizado (manual)</option>
-        </select>
-      </label>
-      <label class="campo"><span>Sinal sonoro pré-alerta</span>
-        <select id="cfg-estilo-toque">
-          <option value="gongo-coa">Gongo harmônico COA</option>
-          <option value="radio-bip">Bip duplo de rádio PTT</option>
-          <option value="sirene-curta">Pulso rápido de atenção</option>
-          <option value="padrao">Triângulo clássico</option>
-        </select>
-      </label>
-      <label class="campo"><span>Voz do sistema / aparelho</span><select id="cfg-vozel"></select></label>
-      <label class="campo"><span>Volume <b id="lb-vol"></b></span><input id="cfg-vol" type="range" min="0" max="1" step="0.05"></label>
-      <label class="campo"><span>Ritmo <b id="lb-taxa"></b></span><input id="cfg-taxa" type="range" min="0.6" max="1.6" step="0.05"></label>
-      <label class="campo"><span>Tom <b id="lb-tom"></b></span><input id="cfg-tom" type="range" min="0.6" max="1.4" step="0.05"></label>
-    </div>
-    <div class="voice-actions">
-      <div class="voice-btn-row">
-        <button id="cfg-previa-voz" type="button">▶ Ouvir prévia desta voz</button>
-        <button id="cfg-gerenciar-vozes" type="button" class="hide">Instalar ou gerenciar vozes do Android</button>
+
+    <!-- ABA 1: ALERTAS & CRÍTICOS -->
+    <section class="cfg-painel-aba" data-cfg-painel="alertas" aria-labelledby="tab-cfg-alertas">
+      <div class="fonte-oficial"><strong>Velocidade: somente portal oficial SGPA</strong><span>O aplicativo nunca calcula velocidade localmente: só notifica e fala quando o portal SGPA abrir o alarme oficial do equipamento.</span></div>
+      <div class="criticos-box">
+        <label class="chk criticos-destaque">
+          <input id="cfg-somente-criticos" type="checkbox">
+          <span><b>🔥 Modo Somente Alertas Críticos</b> — avisa e fala apenas ocorrências críticas (Emergência, Velocidade SGPA, RPM Máxima, Motor, Frente Dividida, Abastecimento c/ Motor Ligado, Risco de Moenda e códigos SGPA que você marcar com ⭐)</span>
+        </label>
+        <div class="cfg-presets-barra">
+          <button type="button" id="cfg-preset-criticos" class="preset-btn crit">🔥 Ativar Só Críticos</button>
+          <button type="button" id="cfg-preset-todas" class="preset-btn">✅ Marcar todas categorias</button>
+          <button type="button" id="cfg-preset-nenhuma" class="preset-btn">🔇 Silenciar categorias</button>
+          <button type="button" id="cfg-ir-sgpa" class="preset-btn dest">📋 Escolher um por um no SGPA →</button>
+        </div>
       </div>
-      <p class="fine">Dica COA: no computador com Microsoft Edge, selecione as vozes naturais gratuitas (<i>Francisca Natural</i> ou <i>Antonio Natural</i>); no Android, toque em “Instalar ou gerenciar vozes” para baixar variantes de alta definição em português do Brasil. Todos os perfis funcionam 100% localmente, sem custos externos.</p>
+      <p class="rotulo">Quais categorias gerais devem notificar e falar</p>
+      <div class="busca-modulo"><input id="cfg-busca-categoria" type="search" placeholder="Pesquisar categoria (ex.: fila, velocidade, refeição, chave geral)" aria-label="Pesquisar alertas" autocomplete="off"></div>
+      <div id="cfg-categorias" class="alert-switch-list"></div>
+      <p id="cfg-categorias-vazio" class="busca-vazia hide">Nenhum alerta encontrado.</p>
+    </section>
+
+    <!-- ABA 2: CATÁLOGO COMPLETO SGPA (TODOS OS 2.972 ALERTAS) -->
+    <section class="cfg-painel-aba hide" data-cfg-painel="sgpa" aria-labelledby="tab-cfg-sgpa">
+      <h3 class="secao-alertas">Todos os Alertas do Sistema SGPA (Escolha um por um)</h3>
+      <p class="fine">Aqui estão todos os códigos do SGPA. Ligue ou desligue cada alerta individualmente como preferir, ou marque <b>⭐ Crítico</b> para que ele avise mesmo quando o modo “Somente Alertas Críticos” estiver ativo.</p>
+      <p id="cfg-catalogo-status" class="fine">Carregando catálogo completo do SGPA…</p>
+      <div class="grade">
+        <label class="campo"><span>Buscar alerta SGPA por nome ou código oficial</span><input id="cfg-busca-tipo" type="search" placeholder="Ex.: velocidade, 12724, chave geral, rpm, comboio, 10820…" autocomplete="off"></label>
+      </div>
+      <div class="cfg-chips-catalogo" id="cfg-filtros-sgpa" role="toolbar" aria-label="Filtrar catálogo SGPA">
+        <button type="button" class="chip on" data-sgpa-filtro="todos">Todos do SGPA</button>
+        <button type="button" class="chip" data-sgpa-filtro="usina">Utilizados na Usina</button>
+        <button type="button" class="chip" data-sgpa-filtro="personalizados">Escolhidos por Mim</button>
+        <button type="button" class="chip" data-sgpa-filtro="criticos">⭐ Marcados Críticos</button>
+        <button type="button" class="chip" data-sgpa-filtro="velocidade">Velocidade SGPA</button>
+        <button type="button" class="chip" data-sgpa-filtro="motor">Motor &amp; RPM</button>
+      </div>
+      <div class="catalogo-filtros">
+        <label class="chk"><input id="cfg-todos-tipos" type="checkbox" checked><span>Exibir catálogo completo do SGPA (todos os 2.972 códigos)</span></label>
+        <div class="catalogo-acoes-lote">
+          <button id="cfg-sgpa-ligar-visiveis" type="button" title="Ativar todos os alertas listados na busca atual">✓ Ativar listados</button>
+          <button id="cfg-sgpa-desligar-visiveis" type="button" title="Silenciar todos os alertas listados na busca atual">✕ Silenciar listados</button>
+          <button id="cfg-sgpa-limpar-custom" type="button" title="Restaurar escolhas individuais para o padrão das categorias">↺ Padrão</button>
+          <button id="cfg-atualizar-catalogo" type="button">Atualizar SGPA</button>
+        </div>
+      </div>
+      <div id="cfg-tipos" class="alert-switch-list catalogo-lista catalogo-expandido"></div>
+      <button id="cfg-mais-tipos" type="button" class="hide">Mostrar mais alertas do SGPA (+150)</button>
+
+      <details class="catalogo-detalhes" style="margin-top:12px"><summary>Regras auditadas da unidade (consulta técnica)</summary><p id="cfg-regras-status" class="fine"></p><div class="busca-modulo"><input id="cfg-busca-regra" type="search" placeholder="Pesquisar regra, tipo de equipamento ou condição" aria-label="Pesquisar regras auditadas" autocomplete="off"></div><p id="cfg-regras-contagem" class="busca-contagem"></p><div id="cfg-regras-auditadas" class="regras-auditadas"></div><p class="fine">Inventário para consulta. As expressões permanecem executadas pelo SGPA.</p></details>
+    </section>
+
+    <!-- ABA 3: FRENTES & GRUPOS DE EQUIPAMENTOS -->
+    <section class="cfg-painel-aba hide" data-cfg-painel="escopo" aria-labelledby="tab-cfg-escopo">
+      <h3 class="secao-alertas">Mesa de Controle (Setor Operacional)</h3>
+      <p class="fine">Filtre rapidamente por mesa de controle ou monitore a usina inteira.</p>
+      <div class="grade">
+        <label class="campo"><span>Setor monitorado neste aparelho</span>
+          <select id="cfg-setor-monitorado">
+            <option value="todos">🌐 Unidade Inteira (Controle Coa + Controle Flow)</option>
+            <option value="COA">🚜 Somente Controle Coa (Colhedoras, Tratores, Transbordos e Linha Amarela)</option>
+            <option value="FLOW">🚛 Somente Controle Flow (Todos os Caminhões, Bombeiros e Veículos Leves)</option>
+          </select>
+        </label>
+      </div>
+
+      <h3 class="secao-alertas">Grupos de Equipamentos</h3>
+      <p class="fine">Selecione exatamente quais grupos de equipamentos deseja acompanhar. Se nenhum estiver marcado, todos os grupos do setor escolhido serão monitorados.</p>
+      <div class="cfg-presets-barra">
+        <button type="button" id="cfg-grupos-todos" class="preset-btn">Limpar filtro (Todos os grupos)</button>
+        <button type="button" id="cfg-grupos-flow" class="preset-btn">🚛 Marcar grupos Flow</button>
+        <button type="button" id="cfg-grupos-coa" class="preset-btn">🚜 Marcar grupos Coa</button>
+      </div>
+      <div id="cfg-grupos-eq" class="chips"></div>
+      <div class="cfg-add-inline">
+        <input id="cfg-novo-grupo" type="text" placeholder="Adicionar outro grupo do SGPA (ex.: APOIO IRRIGAÇÃO)" autocomplete="off">
+        <button id="cfg-btn-add-grupo" type="button">+ Incluir grupo</button>
+      </div>
+
+      <h3 class="secao-alertas">Frentes de Operação</h3>
+      <p class="fine">Marque somente as frentes que deseja monitorar. Sem nenhuma marcada, vale a unidade toda.</p>
+      <div class="cfg-presets-barra">
+        <button type="button" id="cfg-frentes-limpar" class="preset-btn">Limpar seleção (Todas as frentes)</button>
+      </div>
+      <div id="cfg-frentes" class="chips"></div>
+      <div class="cfg-add-inline">
+        <input id="cfg-nova-frente" type="text" placeholder="Adicionar frente personalizada (ex.: Frente 6)" autocomplete="off">
+        <button id="cfg-btn-add-frente" type="button">+ Incluir frente</button>
+      </div>
+
+      <h3 class="secao-alertas">Equipamentos Específicos e Seleção do Mapa</h3>
+      <label class="campo"><span>Monitorar somente estas frotas (separadas por espaço ou vírgula; vazio = todas)</span>
+        <input id="cfg-eq" type="text" placeholder="ex.: 8833 4462 57838" spellcheck="false" autocomplete="off"></label>
+      <div class="switches" style="margin-top:8px">
+        <label class="chk"><input id="cfg-mapa" type="checkbox"><span>Alertar somente do equipamento que foi clicado no mapa</span></label>
+      </div>
+    </section>
+
+    <!-- ABA 4: AJUSTES & TEMPOS -->
+    <section class="cfg-painel-aba hide" data-cfg-painel="tempos" aria-labelledby="tab-cfg-tempos">
+      <h3 class="secao-alertas">Tempos Gerais, RPM, Ociosidade e Leitura</h3>
+      <p class="fine">Ajuste livremente cada limite, tolerância e intervalo de repetição conforme sua operação.</p>
+      <div class="grade">
+        <label class="campo"><span>RPM máxima do motor</span><input id="cfg-rpm" type="number" min="0" step="10" inputmode="numeric"></label>
+        <label class="campo"><span>Motor ocioso (min)</span><input id="cfg-ocioso" type="number" min="1" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Sem apontamento (min)</span><input id="cfg-sem-ponto" type="number" min="1" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Repetir o mesmo alerta a cada (min)</span><input id="cfg-cooldown" type="number" min="0" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Máx. de alertas falados por ciclo</span><input id="cfg-maxvoz" type="number" min="1" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Intervalo de leitura (s)</span><input id="cfg-int" type="number" min="30" step="5" inputmode="numeric"></label>
+        <label class="campo"><span>Leituras p/ confirmar</span><input id="cfg-amostras" type="number" min="1" max="5" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Ignorar sem sinal há (min)</span><input id="cfg-atraso" type="number" min="1" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>RPM abaixo disto é ocioso</span><input id="cfg-rpmoci" type="number" min="0" step="10" inputmode="numeric"></label>
+      </div>
+
+      <h3 class="secao-alertas">Gestão por Frente e Escalonamento</h3>
+      <label class="chk"><input id="cfg-gestao-frente" type="checkbox"><span>Ativar alertas “Atenção gestão” por frente</span></label>
+      <div class="grade" style="margin-top:6px">
+        <label class="campo"><span>Fila: nº de equipamentos aguardando carregamento</span><input id="cfg-fila-frente" type="number" min="0" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Todas as colhedoras paradas há (min)</span><input id="cfg-sem-colh" type="number" min="0" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Transbordos aguardando colhedora (nº)</span><input id="cfg-transb-ag" type="number" min="0" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Frota muda: sem telemetria há (min)</span><input id="cfg-frota-muda" type="number" min="0" step="5" inputmode="numeric"></label>
+        <label class="campo"><span>Meta SLA de atendimento COA (min)</span><input id="cfg-sla-min" type="number" min="1" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Urgente após a tolerância (+min)</span><input id="cfg-esc1" type="number" min="0" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Acionar líder após a tolerância (+min)</span><input id="cfg-esc2" type="number" min="0" step="1" inputmode="numeric"></label>
+      </div>
+      <label class="campo"><span>Líder de cada frente (frente=nome, separados por ;)</span>
+        <input id="cfg-lideres" type="text" placeholder="ex.: Frente 1=João; Frente 2=Pedro" spellcheck="false" autocomplete="off"></label>
+
+      <h3 class="secao-alertas">Paradas Improdutivas (Ajuste cada operação — 0 desliga)</h3>
+      <div class="cfg-presets-barra">
+        <button type="button" id="cfg-paradas-padrao" class="preset-btn">↺ Restaurar tempos padrão</button>
+      </div>
+      <div id="cfg-paradas" class="grade"></div>
+
+      <h3 class="secao-alertas">Controle de Refeições</h3>
+      <div id="cfg-refeicoes" class="refeicao-lista"></div>
+      <label class="campo"><span>Por equipamento (prevalece sobre o grupo): número=minutos</span>
+        <input id="cfg-refeicao-eq" type="text" placeholder="ex.: 6614=30, 8833=60, 4462=0" spellcheck="false" autocomplete="off"></label>
+
+      <h3 class="secao-alertas">Auditoria Fina v5.0, Moenda (t/h) e Custos (R$)</h3>
+      <div class="switches">
+        <label class="chk"><input id="cfg-auditar-apontamento" type="checkbox"><span>Auditar falso apontamento (operação SGPA incoerente com velocidade/motor)</span></label>
+        <label class="chk"><input id="cfg-manut-preditiva" type="checkbox"><span>Manutenção preditiva (avisar ao atingir 3 alertas mecânicos/RPM em 4h)</span></label>
+        <label class="chk"><input id="cfg-pentefino-ativo" type="checkbox"><span>Regras Pente-Fino (sem operador, chave geral, abastecimento c/ motor ligado)</span></label>
+        <label class="chk"><input id="cfg-microparadas-ativo" type="checkbox"><span>Detectar micro-paradas crônicas (efeito serrote / picadinho)</span></label>
+      </div>
+      <div class="grade">
+        <label class="campo"><span>Falso apontamento: tolerância (min)</span><input id="cfg-inconsistencia-min" type="number" min="0" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Bate-volta máx. caminhão (min)</span><input id="cfg-batevolta-min" type="number" min="0" step="5" inputmode="numeric"></label>
+        <label class="campo"><span>Operando sem operador há (min)</span><input id="cfg-sem-operador-min" type="number" min="0" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Chave geral c/ motor parado (min)</span><input id="cfg-chave-geral-min" type="number" min="0" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Abastecimento c/ motor ligado (min)</span><input id="cfg-abast-motor-min" type="number" min="0" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Picadinho: nº micro-paradas (60m)</span><input id="cfg-picadinho-qtd" type="number" min="2" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Picadinho: soma perdida (min)</span><input id="cfg-picadinho-soma" type="number" min="5" step="1" inputmode="numeric"></label>
+        <label class="campo"><span>Meta de moagem da usina (t/h)</span><input id="cfg-meta-moenda" type="number" min="0" step="10" inputmode="numeric"></label>
+        <label class="campo"><span>Produtividade p/ colhedora (t/h)</span><input id="cfg-ton-colh" type="number" min="10" step="5" inputmode="numeric"></label>
+        <label class="campo"><span>Custo parada Colhedora (R$/h)</span><input id="cfg-custo-colh" type="number" min="0" step="10" inputmode="numeric"></label>
+        <label class="campo"><span>Custo parada Transbordo (R$/h)</span><input id="cfg-custo-tb" type="number" min="0" step="10" inputmode="numeric"></label>
+        <label class="campo"><span>Custo parada Caminhão (R$/h)</span><input id="cfg-custo-cam" type="number" min="0" step="10" inputmode="numeric"></label>
+        <label class="campo"><span>Preço do Diesel (R$/L)</span><input id="cfg-custo-diesel" type="number" min="1" step="0.1" inputmode="decimal"></label>
+      </div>
+    </section>
+
+    <!-- ABA 5: NOVAS VOZES BRASILEIRAS GEMINI & GLOSSÁRIO -->
+    <section class="cfg-painel-aba hide" data-cfg-painel="vozes" aria-labelledby="tab-cfg-vozes">
+      <div class="gemini-voice-card">
+        <div class="gemini-voice-head">
+          <strong>✨ Novas Vozes Brasileiras Google Gemini (pt-BR Ultra-Realistas)</strong>
+          <span id="cfg-gemini-voz-status" class="pill">Pronto p/ configurar</span>
+        </div>
+        <p class="fine">Síntese neural de última geração do Gemini com entonação brasileira natural para sala de controle. Se a internet oscilar, o app faz fallback automático em menos de 1s para a voz local sem perder nenhum alerta.</p>
+        <div class="grade">
+          <label class="campo"><span>Motor principal de voz</span>
+            <select id="cfg-motor-voz">
+              <option value="auto">✨ Automático Inteligente (Voz Gemini Brasil → Voz Local se offline)</option>
+              <option value="gemini">🎙️ Priorizar Novas Vozes Brasileiras Gemini</option>
+              <option value="sistema">💻 Somente Vozes Locais do Aparelho / Navegador</option>
+            </select>
+          </label>
+          <label class="campo"><span>Estilo de direção vocal Gemini</span>
+            <select id="cfg-estilo-gemini">
+              <option value="comando">Comando Operacional Claro e Firme</option>
+              <option value="calmo">Locução Pausada e Serena</option>
+              <option value="urgente">Alerta Rápido de Rádio</option>
+            </select>
+          </label>
+          <label class="campo"><span>Voz Gemini Brasil — Controle Coa / Principal</span>
+            <select id="cfg-voz-gemini">${opcoesVozesGemini}</select>
+          </label>
+          <label class="campo"><span>Voz Gemini Brasil — Controle Flow (Caminhões/Leves)</span>
+            <select id="cfg-voz-gemini-flow">${opcoesVozesGemini}</select>
+          </label>
+        </div>
+        <div class="switches" style="margin-top:6px">
+          <label class="chk"><input id="cfg-voz-dupla" type="checkbox"><span>Diferenciar timbre de voz automaticamente entre <b>Atenção Coa</b> (ex.: Kore) e <b>Atenção Flow</b> (ex.: Puck)</span></label>
+        </div>
+        <div class="voice-btn-row" style="margin-top:8px">
+          <button id="cfg-testar-voz-gemini" type="button" class="primary">▶ Ouvir Voz Gemini Brasil (Coa &amp; Flow)</button>
+        </div>
+      </div>
+
+      <h3 class="secao-alertas">Vozes Locais do Sistema / Android e Ajustes de Áudio</h3>
+      <div class="grade">
+        <label class="campo"><span>Perfil de locução COA</span>
+          <select id="cfg-perfil-voz">
+            <option value="padrao">Padrão equilibrado</option>
+            <option value="coa-firme">Locutor firme COA (comando)</option>
+            <option value="clara-pausada">Locução clara e pausada (rádio/ruído)</option>
+            <option value="urgente">Alerta rápido operacional</option>
+            <option value="personalizado">Personalizado (manual)</option>
+          </select>
+        </label>
+        <label class="campo"><span>Sinal sonoro pré-alerta</span>
+          <select id="cfg-estilo-toque">
+            <option value="gongo-coa">Gongo harmônico COA</option>
+            <option value="radio-bip">Bip duplo de rádio PTT</option>
+            <option value="sirene-curta">Pulso rápido de atenção</option>
+            <option value="padrao">Triângulo clássico</option>
+          </select>
+        </label>
+        <label class="campo"><span>Voz local de backup (Navegador / Android)</span><select id="cfg-vozel"></select></label>
+        <label class="campo"><span>Volume <b id="lb-vol"></b></span><input id="cfg-vol" type="range" min="0" max="1" step="0.05"></label>
+        <label class="campo"><span>Ritmo <b id="lb-taxa"></b></span><input id="cfg-taxa" type="range" min="0.6" max="1.6" step="0.05"></label>
+        <label class="campo"><span>Tom <b id="lb-tom"></b></span><input id="cfg-tom" type="range" min="0.6" max="1.4" step="0.05"></label>
+      </div>
+      <div class="voice-actions">
+        <div class="voice-btn-row">
+          <button id="cfg-previa-voz" type="button">▶ Ouvir prévia desta voz</button>
+          <button id="cfg-gerenciar-vozes" type="button" class="hide">Instalar ou gerenciar vozes do Android</button>
+        </div>
+      </div>
+
+      <h3 class="secao-alertas">Pronúncia dos Termos (Glossário)</h3>
+      <p class="fine">Ensine a voz a falar abreviações do SGPA (uma por linha: <code>AG=Aguardando</code>, <code>COLH=colhedora</code>, <code>HR=</code>).</p>
+      <textarea id="cfg-glossario" aria-label="Glossário de pronúncia" rows="5" spellcheck="false" autocomplete="off" placeholder="AG=Aguardando&#10;COLH=colhedora&#10;HR="></textarea>
+      <p class="fine" id="cfg-glossario-padrao"></p>
+      <div class="grade">
+        <label class="campo"><span>Testar frase</span><input id="cfg-glossario-teste" type="text" value="AG colhedora parada rápida" autocomplete="off"></label>
+      </div>
+      <p id="cfg-glossario-previa" class="fine"></p>
+      <button id="cfg-glossario-ouvir" type="button">Ouvir pronúncia</button>
+    </section>
+
+    <!-- ABA 6: IA COPILOTO & SISTEMA -->
+    <section class="cfg-painel-aba hide" data-cfg-painel="ia" aria-labelledby="tab-cfg-ia">
+      <div class="gemini-voice-card">
+        <div class="gemini-voice-head">
+          <strong>🧠 Inteligência Artificial — Copiloto de Raciocínio COA &amp; FLOW</strong>
+          <span id="cfg-ia-status-badge" class="pill">Motor Híbrido Ativo</span>
+        </div>
+        <p class="fine">O aplicativo já traz um <b>Motor Causal Especialista COA/FLOW</b> funcionando na hora sem chave externa. Para liberar também o raciocínio generativo <b>Google Gemini 2.5 Flash Thinking</b> e as <b>Novas Vozes Brasileiras Gemini</b>, informe uma chave gratuita do Google AI Studio abaixo (salva apenas neste aparelho) ou configure <code>GEMINI_API_KEY</code> no Netlify.</p>
+        <div class="switches">
+          <label class="chk"><input id="cfg-ia-ativa" type="checkbox"><span>Ativar Copiloto de IA na Central e botão “🧠 IA” nos cartões de alerta</span></label>
+        </div>
+        <div class="grade" style="margin-top:6px">
+          <label class="campo"><span>Chave Google Gemini API neste aparelho (opcional · <code>AIza...</code>)</span>
+            <input id="cfg-gemini-key" type="password" placeholder="Cole sua chave AIza... do Google AI Studio (ou deixe no servidor)" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="campo"><span>Modelo de raciocínio Gemini</span>
+            <select id="cfg-modelo-ia">
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash Thinking (Rápido + Raciocínio Profundo)</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro (Análise Estratégica Máxima)</option>
+            </select>
+          </label>
+        </div>
+        <div class="voice-btn-row" style="margin-top:8px">
+          <button id="cfg-testar-ia" type="button" class="primary">🧠 Testar Raciocínio da IA Agora</button>
+          <button id="cfg-limpar-key" type="button">Limpar chave local</button>
+        </div>
+      </div>
+
+      <h3 class="secao-alertas">Canais de Alerta e Fontes</h3>
+      <div class="switches">
+        <label class="chk"><input id="cfg-liga" type="checkbox"><span>Central de alertas ligada</span></label>
+        <label class="chk"><input id="cfg-serv" type="checkbox"><span>Receber alarmes oficiais SGPA (stream e consulta)</span></label>
+        <label class="chk"><input id="cfg-stream" type="checkbox"><span>Conexão ao vivo (stream de eventos do mapa)</span></label>
+        <label class="chk"><input id="cfg-local" type="checkbox"><span>Cálculo complementar: RPM e motor ocioso</span></label>
+        <label class="chk"><input id="cfg-popup" type="checkbox"><span>Pop-up flutuante na lateral</span></label>
+        <label class="chk"><input id="cfg-som" type="checkbox"><span>Som de aviso</span></label>
+        <label class="chk"><input id="cfg-voz" type="checkbox"><span>Falar o alerta em português</span></label>
+        <label class="chk"><input id="cfg-notif" type="checkbox"><span>Notificação do sistema (app instalado)</span></label>
+        <label class="chk"><input id="cfg-vib" type="checkbox"><span>Vibrar no celular</span></label>
+        <label class="chk"><input id="cfg-repete" type="checkbox"><span>Repetir a fala enquanto durar o alerta</span></label>
+      </div>
+
+      <h3 class="secao-alertas">Tema Visual e Modo Sentinela 2º Plano</h3>
+      <div class="grade">
+        <label class="campo"><span>Tema da interface neste aparelho</span>
+          <select id="cfg-acabamento">
+            <option value="vidro">Liquid Glass (vidro escuro refrativo estilo iPhone)</option>
+            <option value="black">Tema Black (preto puro · máximo contraste)</option>
+          </select>
+        </label>
+        <label class="campo"><span>Repetir crítico não confirmado a cada (min)</span><input id="cfg-reescalar-min" type="number" min="1" step="1" inputmode="numeric"></label>
+      </div>
+      <div class="switches" style="margin-top:6px">
+        <label class="chk"><input id="cfg-sentinela" type="checkbox"><span>Manter voz e monitoramento vivos em 2º plano (Sentinela COA — PC e APK Android)</span></label>
+        <label class="chk"><input id="cfg-wakelock" type="checkbox"><span>Impedir desligamento automático da tela (Wake Lock)</span></label>
+        <label class="chk"><input id="cfg-queda-sgpa" type="checkbox"><span>Avisar por som e voz se perder comunicação com o SGPA (&gt; 2 min)</span></label>
+        <label class="chk"><input id="cfg-reescalar-criticos" type="checkbox"><span>Re-alertar por voz alertas críticos pendentes sem confirmação</span></label>
+      </div>
+      <div class="voice-actions">
+        <button id="cfg-bateria-android" type="button" class="hide">Desativar restrição de bateria do Android (recomendado p/ 2º plano)</button>
+        <button id="cfg-abrir-pip" type="button">Abrir mini-painel flutuante COA (sempre visível no PC)</button>
+      </div>
+
+      <section class="push-optin" aria-labelledby="push-optin-titulo" style="margin-top:12px">
+        <div class="push-optin-cabecalho"><span class="push-simbolo" aria-hidden="true">◉</span><div><h3 id="push-optin-titulo">Notificações Push neste aparelho</h3><span class="push-dispositivo">Ativação individual, controlada por você</span></div></div>
+        <p>O Push envia apenas alarmes oficiais SGPA selecionados — não envia cálculos locais.</p>
+        <p id="push-status" class="push-status" role="status" aria-live="polite">Verificando disponibilidade…</p>
+        <div class="push-acoes"><button id="push-ativar" class="primary" type="button">Ativar notificações Push neste aparelho</button><button id="push-desligar" class="push-desligar hide" type="button">Desligar notificações Push neste aparelho</button></div>
+      </section>
+    </section>
+
+    <div class="cfg-rodape-fixo">
+      <div class="row">
+        <button id="cfg-salvar" class="primary">Salvar preferências</button>
+        <button id="cfg-teste2">Ouvir exemplo</button>
+        <button id="cfg-fechar">Fechar</button>
+      </div>
+      <p id="cfg-aviso" class="fine"></p>
     </div>
-    <div class="row">
-      <button id="cfg-salvar" class="primary">Salvar preferências</button>
-      <button id="cfg-teste2">Ouvir exemplo</button>
-      <button id="cfg-fechar">Fechar</button>
-    </div>
-    <p id="cfg-aviso" class="fine"></p>
   </div>
 </div>`;
     // dentro do #stage para a barra do app (com o sino) continuar visível
@@ -4424,6 +4795,7 @@
       ativos: $('lista-ativos'),
       frentes: $('lista-frentes'),
       comboio: $('lista-comboio'),
+      ia: $('lista-ia'),
       historico: $('lista-historico'),
       busca: $('alertas-busca'),
       buscaLimpar: $('alertas-busca-limpar'),
@@ -4490,7 +4862,7 @@
       configurar({ silencioAte: agora() + 30 * 60000 });
       mostrarAviso('Alertas silenciados por 30 minutos — o histórico continua.', 'info');
     };
-    $('btn-cfg').onclick = abrirConfig;
+    $('btn-cfg').onclick = () => abrirConfig();
     $('btn-limpar').onclick = () => {
       ativos.clear();
       for (const st of estados.values()) st.emitido = false;
@@ -4523,6 +4895,202 @@
     try {
       if (localStorage.getItem(KEY_TELAO) === '1') alternarTelao(true, false);
     } catch { /* sem storage */ }
+
+    // Navegação por abas em Preferências
+    el.cfg.querySelectorAll('[data-cfg-aba]').forEach((btnAba) => {
+      btnAba.onclick = () => selecionarAbaConfig(btnAba.dataset.cfgAba);
+    });
+    if ($('cfg-ir-sgpa')) $('cfg-ir-sgpa').onclick = () => selecionarAbaConfig('sgpa');
+    if ($('cfg-somente-criticos')) {
+      $('cfg-somente-criticos').onchange = () => {
+        configurar({ somenteCriticos: $('cfg-somente-criticos').checked });
+        renderSelecao();
+        renderAtivos();
+      };
+    }
+    if ($('cfg-preset-criticos')) {
+      $('cfg-preset-criticos').onclick = () => {
+        if ($('cfg-somente-criticos')) $('cfg-somente-criticos').checked = true;
+        configurar({ somenteCriticos: true });
+        renderSelecao();
+        renderAtivos();
+        mostrarAviso('🔥 Modo Somente Alertas Críticos ativado.', 'info');
+      };
+    }
+    if ($('cfg-preset-todas')) {
+      $('cfg-preset-todas').onclick = () => {
+        const todas = {};
+        for (const id of Object.keys(DESCRICOES_CATEGORIAS)) todas[id] = true;
+        if ($('cfg-somente-criticos')) $('cfg-somente-criticos').checked = false;
+        configurar({ somenteCriticos: false, notificarCategorias: todas });
+        renderSelecao();
+        renderAtivos();
+      };
+    }
+    if ($('cfg-preset-nenhuma')) {
+      $('cfg-preset-nenhuma').onclick = () => {
+        const nenhuma = {};
+        for (const id of Object.keys(DESCRICOES_CATEGORIAS)) nenhuma[id] = false;
+        configurar({ notificarCategorias: nenhuma });
+        renderSelecao();
+        renderAtivos();
+      };
+    }
+
+    // Filtros e ações em lote do catálogo completo SGPA
+    el.cfg.querySelectorAll('[data-sgpa-filtro]').forEach((chip) => {
+      chip.onclick = () => {
+        filtroCatalogoSgpa = chip.dataset.sgpaFiltro || 'todos';
+        el.cfg.querySelectorAll('[data-sgpa-filtro]').forEach((c) => c.classList.toggle('on', c === chip));
+        limiteTipos = 150;
+        renderTipos();
+      };
+    });
+    if ($('cfg-sgpa-ligar-visiveis')) {
+      $('cfg-sgpa-ligar-visiveis').onclick = () => {
+        const lista = obterTiposFiltradosSgpa();
+        const patchTipos = {};
+        for (const t of lista) patchTipos[t.codigo] = true;
+        configurar({ tiposNotificacao: patchTipos });
+        renderTipos();
+        renderAtivos();
+        mostrarAviso(`✓ ${lista.length} tipo(s) SGPA ativados individualmente.`, 'info');
+      };
+    }
+    if ($('cfg-sgpa-desligar-visiveis')) {
+      $('cfg-sgpa-desligar-visiveis').onclick = () => {
+        const lista = obterTiposFiltradosSgpa();
+        const patchTipos = {};
+        for (const t of lista) patchTipos[t.codigo] = false;
+        configurar({ tiposNotificacao: patchTipos });
+        renderTipos();
+        renderAtivos();
+        mostrarAviso(`🔇 ${lista.length} tipo(s) SGPA silenciados individualmente.`, 'info');
+      };
+    }
+    if ($('cfg-sgpa-limpar-custom')) {
+      $('cfg-sgpa-limpar-custom').onclick = () => {
+        cfg.tiposNotificacao = {};
+        cfg.tiposCriticos = {};
+        salvar(KEY_CFG, cfg);
+        renderTipos();
+        renderAtivos();
+        mostrarAviso('Escolhas individuais do SGPA restauradas para o padrão das categorias.', 'info');
+      };
+    }
+
+    // Controles de Grupos de Equipamentos e Frentes
+    if ($('cfg-setor-monitorado')) {
+      $('cfg-setor-monitorado').onchange = () => {
+        configurar({ setorMonitorado: $('cfg-setor-monitorado').value });
+      };
+    }
+    if ($('cfg-grupos-todos')) {
+      $('cfg-grupos-todos').onclick = () => {
+        configurar({ gruposEquipamento: [] });
+        renderGruposEquipamento();
+      };
+    }
+    if ($('cfg-grupos-flow')) {
+      $('cfg-grupos-flow').onclick = () => {
+        const flowGrupos = ['CAMINHÕES CANAVIEIROS', 'CAMINHÕES CANAVIEIRO TERC', 'CAMINHÕES BOMBEIROS', 'CAMINHÕES COMBOIO', 'CAMINHÕES PIPA / APOIO', 'CAMINHÕES MUNCK / PRANCHA', 'VEÍCULOS LEVES'];
+        configurar({ gruposEquipamento: flowGrupos });
+        renderGruposEquipamento();
+      };
+    }
+    if ($('cfg-grupos-coa')) {
+      $('cfg-grupos-coa').onclick = () => {
+        const coaGrupos = ['COLHEDORAS', 'TRATORES', 'TRANSBORDOS', 'LINHA AMARELA', 'OFICINA VOLANTE'];
+        configurar({ gruposEquipamento: coaGrupos });
+        renderGruposEquipamento();
+      };
+    }
+    if ($('cfg-btn-add-grupo')) {
+      $('cfg-btn-add-grupo').onclick = () => {
+        const inp = $('cfg-novo-grupo');
+        const val = inp ? inp.value.trim() : '';
+        if (!val) return;
+        estado.gruposEquipamento = [...new Set([...(estado.gruposEquipamento || []), val])].sort();
+        const set = new Set(cfg.gruposEquipamento || []);
+        set.add(val);
+        inp.value = '';
+        configurar({ gruposEquipamento: [...set] });
+        renderGruposEquipamento();
+      };
+    }
+    if ($('cfg-frentes-limpar')) {
+      $('cfg-frentes-limpar').onclick = () => {
+        configurar({ frentes: [] });
+        renderFrentesConfig();
+      };
+    }
+    if ($('cfg-btn-add-frente')) {
+      $('cfg-btn-add-frente').onclick = () => {
+        const inp = $('cfg-nova-frente');
+        const val = inp ? inp.value.trim() : '';
+        if (!val) return;
+        estado.frentes = [...new Set([...(estado.frentes || []), val])].sort();
+        const set = new Set(cfg.frentes || []);
+        set.add(val);
+        inp.value = '';
+        configurar({ frentes: [...set] });
+        renderFrentesConfig();
+        renderRefeicoes();
+      };
+    }
+    if ($('cfg-paradas-padrao')) {
+      $('cfg-paradas-padrao').onclick = () => {
+        cfg.paradasLimites = {};
+        salvar(KEY_CFG, cfg);
+        renderParadas();
+        mostrarAviso('Tempos padrão de paradas improdutivas restaurados.', 'info');
+      };
+    }
+
+    // Vozes Gemini Brasil & Teste de IA
+    if ($('cfg-testar-voz-gemini')) {
+      $('cfg-testar-voz-gemini').onclick = () => {
+        if ($('cfg-gemini-key') && $('cfg-gemini-key').value.trim()) {
+          salvarChaveGeminiLocal($('cfg-gemini-key').value.trim());
+        }
+        configurar({
+          voz: true,
+          motorVoz: $('cfg-motor-voz') ? $('cfg-motor-voz').value : 'gemini',
+          vozGemini: $('cfg-voz-gemini') ? $('cfg-voz-gemini').value : 'Kore',
+          vozGeminiFlow: $('cfg-voz-gemini-flow') ? $('cfg-voz-gemini-flow').value : 'Puck',
+          vozDuplaSetor: $('cfg-voz-dupla') ? $('cfg-voz-dupla').checked : true,
+          estiloDirecaoGemini: $('cfg-estilo-gemini') ? $('cfg-estilo-gemini').value : 'comando',
+        });
+        atualizarStatusGeminiUi();
+        if (!geminiDisponivel()) {
+          mostrarAviso('Para usar as novas vozes brasileiras Gemini, cole uma chave gratuita Google AI Studio na aba 🧠 IA & Sistema (ou defina GEMINI_API_KEY no Netlify). Ouvindo na voz local atual…', 'info');
+        }
+        falar('Atenção Coa: nova voz brasileira do Gemini ativa na sala de controle. Colhedora cinco sete oito três oito operando na Frente 1.', { oficial: true, forcarGemini: true });
+      };
+    }
+    if ($('cfg-testar-ia')) {
+      $('cfg-testar-ia').onclick = () => {
+        if ($('cfg-gemini-key')) salvarChaveGeminiLocal($('cfg-gemini-key').value.trim());
+        configurar({
+          iaAtiva: $('cfg-ia-ativa') ? $('cfg-ia-ativa').checked : true,
+          modeloIa: $('cfg-modelo-ia') ? $('cfg-modelo-ia').value : 'gemini-2.5-flash',
+        });
+        atualizarStatusGeminiUi();
+        fecharConfig();
+        abrirPainel('ia');
+        executarAnaliseIa('Faça um diagnóstico operacional rápido da usina agora.');
+      };
+    }
+    if ($('cfg-limpar-key')) {
+      $('cfg-limpar-key').onclick = () => {
+        salvarChaveGeminiLocal('');
+        if ($('cfg-gemini-key')) $('cfg-gemini-key').value = '';
+        cacheAudioGemini.clear();
+        atualizarStatusGeminiUi();
+        mostrarAviso('Chave Gemini local removida deste aparelho.', 'info');
+      };
+    }
+
     $('cfg-fechar').onclick = fecharConfig;
     $('cfg-fechar-x').onclick = fecharConfig;
     $('cfg-salvar').onclick = lerConfig;
@@ -4606,11 +5174,11 @@
       $('cfg-abrir-pip').onclick = () => alternarJanelaFlutuante();
     }
     $('cfg-teste2').onclick = () => falar(policy.montarFala({ regra: 'velocidade', numero: '8833', valor: 85 }, cfg));
-    $('cfg-busca-tipo').oninput = () => { limiteTipos = 80; renderTipos(); };
+    $('cfg-busca-tipo').oninput = () => { limiteTipos = 150; renderTipos(); };
     if ($('cfg-busca-categoria')) $('cfg-busca-categoria').oninput = filtrarCategorias;
     if ($('cfg-busca-regra')) $('cfg-busca-regra').oninput = filtrarRegras;
-    $('cfg-todos-tipos').onchange = () => { limiteTipos = 80; renderTipos(); };
-    $('cfg-mais-tipos').onclick = () => { limiteTipos += 80; renderTipos(); };
+    $('cfg-todos-tipos').onchange = () => { limiteTipos = 150; renderTipos(); };
+    $('cfg-mais-tipos').onclick = () => { limiteTipos += 150; renderTipos(); };
     $('cfg-atualizar-catalogo').onclick = atualizarCatalogo;
     el.cfg.addEventListener('click', (ev) => {
       if (ev.target === el.cfg) fecharConfig();
@@ -4618,18 +5186,36 @@
     renderPushStatus();
   }
 
+  function selecionarAbaConfig(aba) {
+    const validas = ['alertas', 'sgpa', 'escopo', 'tempos', 'vozes', 'ia', 'tudo'];
+    abaConfigAtiva = validas.includes(aba) ? aba : 'alertas';
+    if (!el.cfg) return abaConfigAtiva;
+    el.cfg.querySelectorAll('[data-cfg-aba]').forEach((b) => {
+      const ativa = b.dataset.cfgAba === abaConfigAtiva;
+      b.classList.toggle('on', ativa);
+      b.setAttribute('aria-selected', ativa ? 'true' : 'false');
+    });
+    el.cfg.querySelectorAll('[data-cfg-painel]').forEach((sec) => {
+      const mostrar = abaConfigAtiva === 'tudo' || sec.dataset.cfgPainel === abaConfigAtiva;
+      sec.classList.toggle('hide', !mostrar);
+    });
+    return abaConfigAtiva;
+  }
+
   function selecionarAbaCentral(aba) {
     if (!el.painel) return;
-    const alvo = aba === 'frentes' || aba === 'comboio' || aba === 'historico' ? aba : 'ativos';
+    const alvo = aba === 'frentes' || aba === 'comboio' || aba === 'ia' || aba === 'historico' ? aba : 'ativos';
     for (const x of el.painel.querySelectorAll('.aba')) x.classList.toggle('ativa', x.dataset.aba === alvo);
     if (el.ativos) el.ativos.classList.toggle('hide', alvo !== 'ativos');
     if (el.frentes) el.frentes.classList.toggle('hide', alvo !== 'frentes');
     if (el.comboio) el.comboio.classList.toggle('hide', alvo !== 'comboio');
+    if (el.ia) el.ia.classList.toggle('hide', alvo !== 'ia');
     if (el.historico) el.historico.classList.toggle('hide', alvo !== 'historico');
     const triagem = $('ativos-triagem');
     if (triagem) triagem.classList.toggle('hide', alvo !== 'ativos');
     if (alvo === 'frentes') renderFrentes();
     else if (alvo === 'comboio') renderComboio();
+    else if (alvo === 'ia') renderCopilotoIa();
     else renderAtivos();
   }
 
@@ -5513,6 +6099,9 @@
     }
     if (el.escopo) {
       const pedacos = [];
+      if (cfg.setorMonitorado === 'FLOW' || cfg.setorMonitorado === 'COA') pedacos.push('mesa ' + cfg.setorMonitorado);
+      if (cfg.somenteCriticos) pedacos.push('🔥 só críticos');
+      if (cfg.gruposEquipamento && cfg.gruposEquipamento.length) pedacos.push(cfg.gruposEquipamento.length + ' grupo(s)');
       if (cfg.frentes.length) pedacos.push(cfg.frentes.length + ' frente(s)');
       if ((cfg.equipamentos || '').trim()) pedacos.push('lista de equipamentos');
       if (cfg.seguirSelecaoMapa) pedacos.push('seleção do mapa');
@@ -5618,6 +6207,7 @@
         <button data-q="ouvir">▶ ouvir</button>
         <button data-q="mapa">📍 ver no mapa</button>
         <button data-q="whats" title="Copiar cobrança padronizada COA e abrir WhatsApp">💬 cobrar</button>
+        ${cfg.iaAtiva !== false ? '<button data-q="ia" title="Analisar causa-raiz e plano de ação deste alerta com IA">🧠 IA</button>' : ''}
         ${comAccoes ? '<button data-q="snz">🤫 15 min</button>' : ''}
         ${comAccoes && !reconhecido ? '<button data-q="ack">✓ reconhecer</button>' : comAccoes ? '<span class="a-chip verde">🛠️ Em acompanhamento</span>' : ''}
         <button data-q="fechar" class="fim">✕</button>
@@ -5628,6 +6218,13 @@
     };
     d.querySelector('[data-q="mapa"]').onclick = () => abrirNoMapa(a);
     d.querySelector('[data-q="whats"]').onclick = () => cobrarNoWhatsApp(a);
+    const btnIaCard = d.querySelector('[data-q="ia"]');
+    if (btnIaCard) {
+      btnIaCard.onclick = () => {
+        abrirPainel('ia');
+        executarAnaliseIa(`Analise a causa-raiz e o que fazer agora para ${a.classe} ${a.numero}: ${a.nome} (${a.texto}).`, a);
+      };
+    }
     const snz = d.querySelector('[data-q="snz"]');
     if (snz)
       snz.onclick = () => {
@@ -5919,9 +6516,11 @@
 
   /* ------------------------------ config ------------------------------ */
 
-  function abrirConfig() {
+  function abrirConfig(aba) {
     if (!el.cfg) montar();
     renderConfig();
+    if (aba) selecionarAbaConfig(aba);
+    else selecionarAbaConfig(abaConfigAtiva || 'alertas');
     el.cfg.classList.remove('hide');
     $('cfg-fechar-x').focus();
     carregarCatalogo().then(renderSelecao).catch(() => {});
@@ -5956,11 +6555,11 @@
     microParadasCronicas: 'Pente-Fino v5.0 (efeito serrote / picadinho): 4+ micro-paradas curtas em 60 min somando tempo improdutivo relevante sem estourar um único alerta longo.',
     generico: 'Demais tipos oficiais, com o nome original do SGPA.',
   };
-  let limiteTipos = 80;
+  let limiteTipos = 150;
 
-  function chaveNotificacao(nome, detalhe, ligada, onChange) {
+  function chaveNotificacao(nome, detalhe, ligada, onChange, opcoesExtras) {
     const label = document.createElement('label');
-    label.className = 'alert-switch';
+    label.className = 'alert-switch' + (opcoesExtras && opcoesExtras.critico ? ' is-critico' : '');
     const texto = document.createElement('span');
     texto.className = 'alert-switch-text';
     const titulo = document.createElement('strong');
@@ -5977,6 +6576,20 @@
     track.className = 'alert-switch-track';
     track.setAttribute('aria-hidden', 'true');
     input.onchange = () => onChange(input.checked);
+    if (opcoesExtras && typeof opcoesExtras.onToggleCritico === 'function') {
+      const btnStar = document.createElement('button');
+      btnStar.type = 'button';
+      btnStar.className = 'sgpa-star-btn' + (opcoesExtras.critico ? ' on' : '');
+      btnStar.title = opcoesExtras.critico ? 'Marcado como Crítico (clique para desmarcar)' : 'Marcar este código SGPA como Crítico (avisa mesmo no modo Somente Críticos)';
+      btnStar.textContent = opcoesExtras.critico ? '⭐ Crítico' : '☆ Crítico';
+      btnStar.onclick = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        opcoesExtras.onToggleCritico(!opcoesExtras.critico);
+      };
+      label.append(texto, btnStar, input, track);
+      return label;
+    }
     label.append(texto, input, track);
     return label;
   }
@@ -5987,7 +6600,9 @@
     box.innerHTML = '';
     for (const id of Object.keys(DESCRICOES_CATEGORIAS)) {
       const r = REGRAS[id];
-      box.appendChild(chaveNotificacao(r.nome, DESCRICOES_CATEGORIAS[id], cfg.notificarCategorias[id] !== false, (ligada) => {
+      const ehCrit = policy.ehAlertaCritico(cfg, { regra: id, severidade: r.severidade });
+      const desc = (cfg.somenteCriticos && !ehCrit ? '⏸ Filtrada pelo modo Somente Críticos · ' : '') + DESCRICOES_CATEGORIAS[id];
+      box.appendChild(chaveNotificacao(r.nome, desc, cfg.notificarCategorias[id] !== false, (ligada) => {
         configurar({ notificarCategorias: { [id]: ligada } });
         renderAtivos();
         renderTipos();
@@ -6034,13 +6649,30 @@
     const c = $('cfg-regras-contagem');
     if (c) c.textContent = r.total ? `Mostrando ${r.vis} de ${r.total} regras` : '';
   }
+
+  function obterTiposFiltradosSgpa() {
+    const busca = norm(($('cfg-busca-tipo') || {}).value);
+    const todos = !$('cfg-todos-tipos') || $('cfg-todos-tipos').checked;
+    return (catalogo.tipos || []).filter((t) => {
+      if (policy.alarmeTrocaDeTurno(t.codigo, t.nome)) return false;
+      const cat = policy.categoria(t.codigo, t.nome);
+      const ehCrit = policy.ehAlertaCritico(cfg, { codigo: t.codigo, descricao: t.nome, regra: cat });
+      const temCustom = Object.prototype.hasOwnProperty.call(cfg.tiposNotificacao, t.codigo) || Object.prototype.hasOwnProperty.call(cfg.tiposCriticos || {}, t.codigo);
+      if (filtroCatalogoSgpa === 'usina' && !(t.observado || t.conhecido || t.correspondenciaNomeRegra)) return false;
+      if (filtroCatalogoSgpa === 'personalizados' && !temCustom) return false;
+      if (filtroCatalogoSgpa === 'criticos' && !ehCrit) return false;
+      if (filtroCatalogoSgpa === 'velocidade' && cat !== 'velocidade') return false;
+      if (filtroCatalogoSgpa === 'motor' && cat !== 'rpm' && cat !== 'motorCondicao' && cat !== 'ocioso') return false;
+      if (!todos && !busca && filtroCatalogoSgpa === 'todos' && !(t.observado || t.conhecido || t.correspondenciaNomeRegra)) return false;
+      if (busca && !norm(t.nome + ' ' + t.codigo).includes(busca)) return false;
+      return true;
+    }).sort((a, b) => Number(!!b.observado) - Number(!!a.observado) || a.nome.localeCompare(b.nome, 'pt-BR') || String(a.codigo).localeCompare(String(b.codigo)));
+  }
+
   function renderTipos() {
     const box = $('cfg-tipos');
     if (!box) return;
-    const busca = norm(($('cfg-busca-tipo') || {}).value);
-    const todos = $('cfg-todos-tipos') && $('cfg-todos-tipos').checked;
-    const lista = catalogo.tipos.filter((t) => !policy.alarmeTrocaDeTurno(t.codigo, t.nome) && (todos || busca || t.observado || t.conhecido || t.correspondenciaNomeRegra) && (!busca || norm(t.nome + ' ' + t.codigo).includes(busca)))
-      .sort((a, b) => Number(!!b.observado) - Number(!!a.observado) || a.nome.localeCompare(b.nome, 'pt-BR') || String(a.codigo).localeCompare(String(b.codigo)));
+    const lista = obterTiposFiltradosSgpa();
     box.innerHTML = '';
     for (const t of lista.slice(0, limiteTipos)) {
       const categoria = policy.categoria(t.codigo, t.nome);
@@ -6048,31 +6680,53 @@
       const valorTipo = Object.prototype.hasOwnProperty.call(cfg.tiposNotificacao, t.codigo)
         ? cfg.tiposNotificacao[t.codigo]
         : undefined;
-      const selecionada = valorTipo === true || (valorTipo !== false && categoriaLigada);
-      const contexto = t.observado ? 'presente nos filtros/observado' : t.correspondenciaNomeRegra ? 'nome também no inventário de regras' : t.conhecido ? 'tipo conhecido' : 'catálogo geral';
-      const efeitoTipo = valorTipo === true && !categoriaLigada
-        ? ' · seleção individual ativa'
+      const criticoMarcado = policy.ehAlertaCritico(cfg, { codigo: t.codigo, descricao: t.nome, regra: categoria });
+      const selecionada = valorTipo === true || (valorTipo !== false && categoriaLigada && (!cfg.somenteCriticos || criticoMarcado));
+      const contexto = t.observado ? 'ativo na usina' : t.correspondenciaNomeRegra ? 'regra auditada' : t.conhecido ? 'conhecido' : 'catálogo SGPA';
+      const efeitoTipo = valorTipo === true
+        ? ' · ativado por você'
         : valorTipo === false
-          ? ' · silenciado individualmente'
-          : !categoriaLigada
-            ? ' · categoria silenciada'
-            : '';
+          ? ' · silenciado por você'
+          : cfg.somenteCriticos && !criticoMarcado
+            ? ' · pausado pelo modo Só Críticos'
+            : !categoriaLigada
+              ? ' · categoria silenciada'
+              : '';
       const descricao = `Código ${t.codigo} · ${REGRAS[categoria].nome} · ${contexto}${efeitoTipo}`;
-      box.appendChild(chaveNotificacao(t.nome, descricao, selecionada, (ligada) => {
-        configurar({ tiposNotificacao: { [t.codigo]: ligada } });
-        renderAtivos();
-      }));
+      box.appendChild(chaveNotificacao(
+        t.nome,
+        descricao,
+        selecionada,
+        (ligada) => {
+          configurar({ tiposNotificacao: { [t.codigo]: ligada } });
+          renderAtivos();
+          renderTipos();
+        },
+        {
+          critico: criticoMarcado,
+          onToggleCritico: (novoCrit) => {
+            const patchCrit = { [t.codigo]: novoCrit };
+            const patchNotif = novoCrit ? { [t.codigo]: true } : {};
+            configurar({ tiposCriticos: patchCrit, tiposNotificacao: patchNotif });
+            renderTipos();
+            renderAtivos();
+          },
+        },
+      ));
     }
     if (!lista.length) {
       const vazio = document.createElement('p');
       vazio.className = 'fine';
-      vazio.textContent = catalogo.tipos.length ? 'Nenhum tipo encontrado. Tente outro nome ou código.' : 'O catálogo ainda está carregando. Alarmes oficiais recebidos continuam entrando na central.';
+      vazio.textContent = catalogo.tipos.length ? 'Nenhum alerta do SGPA encontrado para este filtro.' : 'O catálogo ainda está carregando. Alarmes oficiais recebidos continuam entrando na central.';
       box.appendChild(vazio);
     }
     const status = $('cfg-catalogo-status');
-    if (status) status.textContent = `${catalogo.tipos.length} tipos no catálogo · ${lista.length} nesta busca · auditoria ${catalogo.auditadoEm || 'indisponível'}. Chaves salvas automaticamente neste aparelho.`;
+    if (status) status.textContent = `${catalogo.tipos.length} alertas no sistema SGPA · ${lista.length} exibidos neste filtro · auditoria ${catalogo.auditadoEm || 'indisponível'}. Escolha cada um como preferir.`;
     const mais = $('cfg-mais-tipos');
-    if (mais) mais.classList.toggle('hide', lista.length <= limiteTipos);
+    if (mais) {
+      mais.classList.toggle('hide', lista.length <= limiteTipos);
+      if (lista.length > limiteTipos) mais.textContent = `Mostrar mais alertas do SGPA (faltam ${lista.length - limiteTipos})`;
+    }
   }
 
   function nomeTipo(codigo) {
@@ -6307,6 +6961,311 @@
     const eq = $('cfg-refeicao-eq');
     return { refeicaoGrupos: grupos, refeicaoEquipamentos: eq ? eq.value.trim() : '' };
   }
+  function atualizarStatusGeminiUi() {
+    const chaveLocal = obterChaveGeminiLocal();
+    const conectado = Boolean(iaServidorConfigurado || chaveLocal);
+    const origemTxt = iaServidorConfigurado
+      ? '✨ Gemini Conectado (Servidor Netlify)'
+      : chaveLocal
+        ? '✨ Gemini Conectado (Chave neste aparelho)'
+        : '🧠 Motor Causal Local Ativo (adicione chave p/ Gemini)';
+    const badgeIa = $('cfg-ia-status-badge');
+    if (badgeIa) {
+      badgeIa.textContent = origemTxt;
+      badgeIa.classList.toggle('verde', conectado);
+    }
+    const badgeVoz = $('cfg-gemini-voz-status');
+    if (badgeVoz) {
+      badgeVoz.textContent = conectado
+        ? `✨ Voz ${cfg.vozGemini || 'Kore'} pronta`
+        : 'Chave Gemini pendente (usando voz local)';
+      badgeVoz.classList.toggle('verde', conectado);
+    }
+  }
+
+  async function verificarStatusIaServidor() {
+    if (!ctx.proxy || !ctx.audit) {
+      atualizarStatusGeminiUi();
+      return false;
+    }
+    try {
+      const r = await fetch('/.netlify/functions/session?acao=ia_status', { cache: 'no-store' });
+      const j = await r.json().catch(() => null);
+      if (r.ok && j && j.ok) {
+        iaServidorConfigurado = Boolean(j.servidorConfigurado);
+      }
+    } catch {
+      /* mantém estado anterior */
+    }
+    atualizarStatusGeminiUi();
+    return iaServidorConfigurado;
+  }
+
+  function montarContextoIa(alertaFoco) {
+    const resCtt = resumoFrentes();
+    const moenda = policy.calcularTermometroMoenda(resCtt, cfg);
+    const fin = custoTurno();
+    const comboio = filaComboio();
+    const listaAtivos = [...ativos.values()].slice(0, 25).map((a) => ({
+      numero: a.numero,
+      classe: a.classe,
+      setor: setorDoAlerta(a),
+      regra: a.regra,
+      nome: a.nome,
+      severidade: a.severidade,
+      texto: a.texto,
+      fonte: a.fonte,
+      operador: a.operador || '',
+      e: a.e ? {
+        frente: a.e.frente || '',
+        grupoEquipamento: a.e.grupoEquipamento || '',
+        operacao: a.e.operacao || '',
+        velocidade: a.e.velocidade,
+        rpm: a.e.rpm,
+      } : null,
+    }));
+    const foco = alertaFoco ? {
+      numero: alertaFoco.numero,
+      classe: alertaFoco.classe,
+      setor: setorDoAlerta(alertaFoco),
+      regra: alertaFoco.regra,
+      nome: alertaFoco.nome,
+      severidade: alertaFoco.severidade,
+      texto: alertaFoco.texto,
+      operador: alertaFoco.operador || '',
+      e: alertaFoco.e ? {
+        frente: alertaFoco.e.frente || '',
+        grupoEquipamento: alertaFoco.e.grupoEquipamento || '',
+        operacao: alertaFoco.e.operacao || '',
+        velocidade: alertaFoco.e.velocidade,
+        rpm: alertaFoco.e.rpm,
+      } : null,
+    } : null;
+    return {
+      unidade: ctx.unidade || 'Usina Branco Peres',
+      horario: new Date().toLocaleString('pt-BR'),
+      ativos: listaAtivos,
+      resumoCtt: {
+        frentes: (resCtt.frentes || []).map((f) => ({
+          frente: f.frente,
+          semaforo: f.semaforo,
+          colhedorasTotal: f.colhTotal,
+          colhedorasColhendo: f.colhColhendo,
+          colhedorasParadas: f.colhParadas,
+          transbordosAtivos: f.tbAtivos,
+          transbordos905: f.tbAgCam,
+          caminhoesFila: f.camFila,
+        })),
+        sugestoesBalanceamento: resCtt.sugestoesBalanceamento || [],
+      },
+      moenda,
+      custoTurno: fin,
+      filaComboio: { chamados: (comboio.chamados || []).slice(0, 5) },
+      alertaFoco: foco,
+    };
+  }
+
+  async function executarAnaliseIa(pergunta, alertaFoco) {
+    const contexto = montarContextoIa(alertaFoco);
+    const questao = String(pergunta || 'Faça o diagnóstico de causa-raiz das frentes e alertas ativos e separe o plano de ação entre Controle Coa e Controle Flow.').trim();
+    const baseLocal = policy.raciocinarOperacaoCoa(contexto, questao);
+    ultimaAnaliseIa = Object.assign({ pergunta: questao, ts: agora() }, baseLocal);
+    iaCarregando = geminiDisponivel();
+    renderCopilotoIa();
+
+    const chaveLocal = obterChaveGeminiLocal();
+    if (!iaServidorConfigurado && !chaveLocal) {
+      iaCarregando = false;
+      historicoChatIa.unshift(ultimaAnaliseIa);
+      if (historicoChatIa.length > 8) historicoChatIa.length = 8;
+      renderCopilotoIa();
+      return ultimaAnaliseIa;
+    }
+
+    try {
+      let respIa = null;
+      if (ctx.proxy && ctx.audit) {
+        const r = await fetch('/.netlify/functions/session?acao=ia_raciocinio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pergunta: questao,
+            contexto,
+            modelo: cfg.modeloIa || 'gemini-2.5-flash',
+            apiKey: chaveLocal || undefined,
+          }),
+        });
+        const j = await r.json().catch(() => null);
+        if (r.ok && j && j.ok && j.analise) respIa = j;
+      }
+      if (!respIa && chaveLocal) {
+        const modelo = cfg.modeloIa || 'gemini-2.5-flash';
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': chaveLocal },
+          body: JSON.stringify({
+            contents: [{
+              role: 'user',
+              parts: [{
+                text: `Você é o Copiloto Sênior da Usina Branco Peres (SGPA Solinftec), separando ações do Controle Coa (colhedoras, tratores, transbordos, linha amarela) e Controle Flow (todos os caminhões, bombeiros como Caminhão e veículos leves). Velocidade é exclusivamente oficial SGPA. Analise com raciocínio profundo de causa-raiz e responda em português do Brasil claro:\nCONTEXTO:\n${JSON.stringify(contexto)}\n\nPERGUNTA:\n${questao}`,
+              }],
+            }],
+            generationConfig: { temperature: 0.25, maxOutputTokens: 1300 },
+          }),
+        });
+        const j = await r.json().catch(() => null);
+        const parts = (((j || {}).candidates || [])[0] || {}).content && j.candidates[0].content.parts || [];
+        const txt = parts.filter((p) => p && typeof p.text === 'string' && !p.thought).map((p) => p.text).join('\n').trim();
+        if (r.ok && txt) respIa = { ok: true, origem: 'gemini', modelo, analise: txt };
+      }
+      if (respIa) {
+        ultimaAnaliseIa = Object.assign({}, baseLocal, respIa, { pergunta: questao, ts: agora() });
+      }
+    } catch {
+      /* preserva raciocínio causal especialista local sem interromper o operador */
+    } finally {
+      iaCarregando = false;
+      historicoChatIa.unshift(ultimaAnaliseIa);
+      if (historicoChatIa.length > 8) historicoChatIa.length = 8;
+      renderCopilotoIa();
+    }
+    return ultimaAnaliseIa;
+  }
+
+  function renderCopilotoIa() {
+    if (!el.ia) return;
+    if (!ultimaAnaliseIa) {
+      ultimaAnaliseIa = Object.assign({ pergunta: 'Diagnóstico automático da operação atual', ts: agora() }, policy.raciocinarOperacaoCoa(montarContextoIa(null), ''));
+    }
+    const conectado = geminiDisponivel();
+    const origemBadge = ultimaAnaliseIa.origem === 'gemini'
+      ? `✨ Google Gemini (${esc(ultimaAnaliseIa.modelo || 'gemini-2.5-flash')})`
+      : '🧠 Motor Causal Especialista COA & FLOW';
+    el.ia.innerHTML = `
+      <div class="ia-copiloto-card">
+        <div class="ia-copiloto-head">
+          <div>
+            <strong>🧠 Copiloto IA · Raciocínio Operacional COA &amp; FLOW</strong>
+            <small class="fine">${origemBadge}${iaCarregando ? ' · refinando raciocínio neural Gemini…' : ''}</small>
+          </div>
+          <button type="button" id="ia-btn-cfg" class="preset-btn">${conectado ? '✨ Voz/IA Gemini ON' : '🔑 Ativar Gemini'}</button>
+        </div>
+        <div class="ia-atalhos">
+          <button type="button" data-ia-prompt="Faça o diagnóstico completo de causa-raiz dos gargalos das frentes e alertas ativos agora.">🔍 Causa-Raiz Geral</button>
+          <button type="button" data-ia-prompt="Quais ações imediatas o Controle Flow deve tomar agora nos caminhões e veículos leves?">🚛 Foco Controle Flow</button>
+          <button type="button" data-ia-prompt="Quais ações imediatas o Controle Coa deve tomar agora nas colhedoras, tratores e transbordos?">🚜 Foco Controle Coa</button>
+          <button type="button" data-ia-prompt="Qual frente está gerando maior perda financeira R$ ou risco de moenda e como destravar?">💸 Maior Impacto R$ / Moenda</button>
+          <button type="button" data-ia-prompt="Gere um resumo executivo curto para o coordenador agrícola no WhatsApp.">📋 Resumo p/ Gestor</button>
+        </div>
+        <form id="ia-pergunta-form" class="ia-form">
+          <input id="ia-pergunta-input" type="text" placeholder="Pergunte qualquer coisa à IA sobre frentes, filas, frotas ou alertas…" autocomplete="off">
+          <button type="submit" class="primary">${iaCarregando ? '⏳…' : 'Perguntar'}</button>
+        </form>
+        <div class="ia-resposta-box">
+          <div class="ia-resposta-meta">
+            <span>📌 <b>Solicitação:</b> ${esc(ultimaAnaliseIa.pergunta || 'Diagnóstico atual')}</span>
+            <span>${hora(ultimaAnaliseIa.ts || agora())}</span>
+          </div>
+          <pre class="ia-resposta-texto">${esc(ultimaAnaliseIa.analise || '')}</pre>
+          <div class="ia-resposta-acoes">
+            <button type="button" id="ia-ouvir" class="primary">🔊 Ouvir na Voz Gemini</button>
+            <button type="button" id="ia-copiar">📋 Copiar análise</button>
+            <button type="button" id="ia-whats">💬 Enviar WhatsApp</button>
+          </div>
+        </div>
+      </div>
+    `;
+    const btnCfg = $('ia-btn-cfg');
+    if (btnCfg) btnCfg.onclick = () => abrirConfig('ia');
+    el.ia.querySelectorAll('[data-ia-prompt]').forEach((b) => {
+      b.onclick = () => executarAnaliseIa(b.dataset.iaPrompt);
+    });
+    const form = $('ia-pergunta-form');
+    if (form) {
+      form.onsubmit = (ev) => {
+        ev.preventDefault();
+        const inp = $('ia-pergunta-input');
+        const q = inp ? inp.value.trim() : '';
+        if (q) executarAnaliseIa(q);
+      };
+    }
+    const btnOuvir = $('ia-ouvir');
+    if (btnOuvir) {
+      btnOuvir.onclick = () => {
+        const resumoFalado = ultimaAnaliseIa.mensagemRadio || String(ultimaAnaliseIa.analise || '').replace(/[•"]/g, '').slice(0, 420);
+        falar(resumoFalado, { oficial: true, forcarGemini: true });
+      };
+    }
+    const btnCop = $('ia-copiar');
+    if (btnCop) btnCop.onclick = () => copiarTextoArea(ultimaAnaliseIa.analise || '', 'Análise da IA copiada!');
+    const btnWa = $('ia-whats');
+    if (btnWa) {
+      btnWa.onclick = () => {
+        const txt = `*🧠 Diagnóstico IA — COA & FLOW (${ctx.unidade || 'Branco Peres'})*\n\n${ultimaAnaliseIa.analise || ''}`;
+        copiarTextoArea(txt, 'Diagnóstico IA copiado p/ WhatsApp.', 'https://wa.me/?text=' + encodeURIComponent(txt));
+      };
+    }
+  }
+
+  function renderGruposEquipamento() {
+    const box = $('cfg-grupos-eq');
+    if (!box) return;
+    box.innerHTML = '';
+    const lista = [...new Set([
+      ...(policy.GRUPOS_PADRAO_USINA || []),
+      ...(estado.gruposEquipamento || []),
+      ...(cfg.gruposEquipamento || []),
+    ])];
+    const selecionadosNorm = new Set((cfg.gruposEquipamento || []).map(norm));
+    for (const g of lista) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      const ativo = selecionadosNorm.has(norm(g));
+      b.className = 'chip' + (ativo ? ' on' : '');
+      b.textContent = g;
+      b.onclick = () => {
+        const atual = new Map((cfg.gruposEquipamento || []).map((x) => [norm(x), x]));
+        if (atual.has(norm(g))) atual.delete(norm(g));
+        else atual.set(norm(g), g);
+        configurar({ gruposEquipamento: [...atual.values()] });
+        renderGruposEquipamento();
+        renderAtivos();
+        renderCabecalho();
+        cicloImediato();
+      };
+      box.appendChild(b);
+    }
+  }
+
+  function renderFrentesConfig() {
+    const box = $('cfg-frentes');
+    if (!box) return;
+    box.innerHTML = '';
+    const lista = [...new Set([
+      ...(policy.FRENTES_PADRAO_USINA || []),
+      ...(estado.frentes || []),
+      ...(cfg.frentes || []),
+    ])];
+    for (const f of lista) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      const ativo = (cfg.frentes || []).some((x) => norm(x) === norm(f));
+      b.className = 'chip' + (ativo ? ' on' : '');
+      b.textContent = f;
+      b.onclick = () => {
+        const set = new Map((cfg.frentes || []).map((x) => [norm(x), x]));
+        if (set.has(norm(f))) set.delete(norm(f));
+        else set.set(norm(f), f);
+        configurar({ frentes: [...set.values()] });
+        b.classList.toggle('on', set.has(norm(f)));
+        renderAtivos();
+        renderCabecalho();
+        cicloImediato();
+      };
+      box.appendChild(b);
+    }
+  }
+
   function renderConfig() {
     if (!$('cfg-rpm')) return;
     renderSelecao();
@@ -6346,15 +7305,25 @@
       'cfg-taxa': cfg.taxa,
       'cfg-tom': cfg.tom,
       'cfg-reescalar-min': cfg.reescalarCriticosMin != null ? cfg.reescalarCriticosMin : 5,
+      'cfg-setor-monitorado': cfg.setorMonitorado || 'todos',
+      'cfg-motor-voz': cfg.motorVoz || 'auto',
+      'cfg-voz-gemini': cfg.vozGemini || 'Kore',
+      'cfg-voz-gemini-flow': cfg.vozGeminiFlow || 'Puck',
+      'cfg-estilo-gemini': cfg.estiloDirecaoGemini || 'comando',
+      'cfg-modelo-ia': cfg.modeloIa || 'gemini-2.5-flash',
     };
     for (const [id, v] of Object.entries(valores)) {
       if ($(id)) $(id).value = v;
     }
+    if ($('cfg-gemini-key')) $('cfg-gemini-key').value = obterChaveGeminiLocal();
     if ($('cfg-perfil-voz')) $('cfg-perfil-voz').value = PERFIS_VOZ[cfg.perfilVoz] ? cfg.perfilVoz : 'padrao';
     if ($('cfg-estilo-toque')) $('cfg-estilo-toque').value = cfg.estiloToque || 'gongo-coa';
     if ($('cfg-acabamento')) $('cfg-acabamento').value = normalizarTema(document.documentElement.dataset.acabamento);
     const checks = {
       'cfg-liga': cfg.ativo,
+      'cfg-somente-criticos': !!cfg.somenteCriticos,
+      'cfg-voz-dupla': cfg.vozDuplaSetor !== false,
+      'cfg-ia-ativa': cfg.iaAtiva !== false,
       'cfg-gestao-frente': cfg.gestaoFrenteAtiva !== false,
       'cfg-auditar-apontamento': cfg.auditarApontamento !== false,
       'cfg-manut-preditiva': cfg.manutencaoPreditivaAtiva !== false,
@@ -6388,39 +7357,17 @@
     if (bateriaAndroid) bateriaAndroid.classList.toggle('hide', !(ponteVoz && typeof ponteVoz.otimizarBateria === 'function'));
     preencherVozes();
     renderPushStatus();
+    atualizarStatusGeminiUi();
 
     renderRefeicoes();
     renderParadas();
     iniciarGlossario();
-    const box = $('cfg-frentes');
-    box.innerHTML = '';
-    const lista = (estado.frentes || []).slice();
-    if (!lista.length) {
-      const i = document.createElement('span');
-      i.className = 'fine';
-      i.textContent = 'as frentes aparecem aqui depois da primeira leitura da telemetria';
-      box.appendChild(i);
-    }
-    for (const f of lista) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'chip' + (cfg.frentes.includes(f) ? ' on' : '');
-      b.textContent = f;
-      b.onclick = () => {
-        const set = new Set(cfg.frentes);
-        if (set.has(f)) set.delete(f);
-        else set.add(f);
-        configurar({ frentes: [...set] });
-        b.classList.toggle('on', set.has(f));
-        renderAtivos();
-        renderCabecalho();
-        cicloImediato();
-      };
-      box.appendChild(b);
-    }
+    renderGruposEquipamento();
+    renderFrentesConfig();
     $('cfg-aviso').textContent =
-      (ponteNativa() ? 'Voz: usando o motor de voz do aparelho (Android). ' : '') +
-      (sintetizador() ? '' : 'Este navegador não expõe voz: o alerta sai com som e pop-up. ') +
+      (geminiDisponivel() ? `Voz Gemini Brasil pronta (${cfg.vozGemini || 'Kore'}). ` : '') +
+      (ponteNativa() ? 'Voz local: motor Android. ' : '') +
+      (sintetizador() ? '' : 'Este navegador não expõe voz local: o alerta sai com som e pop-up. ') +
       'Limite do portal: 10 requisições/min — mantenha o intervalo em 30 s ou mais.';
   }
 
@@ -6431,8 +7378,18 @@
       const v = Number(elInput.value);
       return Number.isFinite(v) ? v : d;
     };
+    if ($('cfg-gemini-key')) salvarChaveGeminiLocal($('cfg-gemini-key').value);
     const patch = {
       ativo: $('cfg-liga').checked,
+      somenteCriticos: $('cfg-somente-criticos') ? $('cfg-somente-criticos').checked : !!cfg.somenteCriticos,
+      setorMonitorado: $('cfg-setor-monitorado') ? $('cfg-setor-monitorado').value : cfg.setorMonitorado || 'todos',
+      motorVoz: $('cfg-motor-voz') ? $('cfg-motor-voz').value : cfg.motorVoz || 'auto',
+      vozGemini: $('cfg-voz-gemini') ? $('cfg-voz-gemini').value : cfg.vozGemini || 'Kore',
+      vozGeminiFlow: $('cfg-voz-gemini-flow') ? $('cfg-voz-gemini-flow').value : cfg.vozGeminiFlow || 'Puck',
+      vozDuplaSetor: $('cfg-voz-dupla') ? $('cfg-voz-dupla').checked : cfg.vozDuplaSetor !== false,
+      estiloDirecaoGemini: $('cfg-estilo-gemini') ? $('cfg-estilo-gemini').value : cfg.estiloDirecaoGemini || 'comando',
+      iaAtiva: $('cfg-ia-ativa') ? $('cfg-ia-ativa').checked : cfg.iaAtiva !== false,
+      modeloIa: $('cfg-modelo-ia') ? $('cfg-modelo-ia').value : cfg.modeloIa || 'gemini-2.5-flash',
       calcularLocal: $('cfg-local').checked,
       espelharServidor: $('cfg-serv').checked,
       usarStream: $('cfg-stream').checked,
@@ -6627,24 +7584,32 @@
     const antes = cfg;
     const pushAntes = JSON.stringify(preferenciasPush());
     patch = patch || {};
-    const escopoAlterado = ['frentes', 'equipamentos', 'seguirSelecaoMapa', 'selecaoMapa'].some((k) => Object.prototype.hasOwnProperty.call(patch, k));
+    const escopoAlterado = ['frentes', 'gruposEquipamento', 'setorMonitorado', 'equipamentos', 'seguirSelecaoMapa', 'selecaoMapa'].some((k) => Object.prototype.hasOwnProperty.call(patch, k));
+    const notificacaoAlterada = ['somenteCriticos', 'notificarCategorias', 'tiposNotificacao', 'tiposCriticos'].some((k) => Object.prototype.hasOwnProperty.call(patch, k));
     const selecaoMapa = Object.prototype.hasOwnProperty.call(patch, 'selecaoMapa')
       ? (Array.isArray(patch.selecaoMapa) ? [...new Set(patch.selecaoMapa.map(String))] : [])
       : (Array.isArray(cfg.selecaoMapa) ? [...new Set(cfg.selecaoMapa.map(String))] : []);
     cfg = policy.normalizeCfg(Object.assign({}, cfg, patch, {
       notificarCategorias: Object.assign({}, cfg.notificarCategorias, patch.notificarCategorias),
       tiposNotificacao: Object.assign({}, cfg.tiposNotificacao, patch.tiposNotificacao),
+      tiposCriticos: Object.assign({}, cfg.tiposCriticos, patch.tiposCriticos),
       selecaoMapa,
     }));
     cfg.incluirOutros = cfg.notificarCategorias.generico;
     if (cfg.gestaoFrenteAtiva === false) limparAlertasGestao();
     if (!Array.isArray(ctx.selecao)) ctx.selecao = new Set(selecaoMapa);
     if (Object.prototype.hasOwnProperty.call(patch, 'selecaoMapa')) ctx.selecao = new Set(selecaoMapa);
+    if (notificacaoAlterada) {
+      for (const a of ativos.values()) {
+        a.notificar = (a.fonte === 'portal' || localComCanais(a)) && policy.notificar(cfg, a);
+      }
+      renderAtivos();
+    }
     if (escopoAlterado) {
       reconciliarEscopo();
       renderAtivos();
     }
-    if (!cfg.ativo || !cfg.voz || patch.notificarCategorias || patch.tiposNotificacao) pararVoz();
+    if (!cfg.ativo || !cfg.voz || patch.notificarCategorias || patch.tiposNotificacao || Object.prototype.hasOwnProperty.call(patch, 'somenteCriticos')) pararVoz();
     if (!cfg.ativo || !cfg.usarStream) { fecharStream(); estado.stream = 'desligado'; }
     else if ((!antes.ativo || !antes.usarStream) && ctx.token) abrirStream();
     else if (worker && antes.sentinelaSegundoPlano !== cfg.sentinelaSegundoPlano) {
@@ -6732,6 +7697,7 @@
       });
     }
     configurar({});
+    verificarStatusIaServidor().catch(() => {});
     inicializarPush();
     carregarCatalogo().catch(() => {});
     abrirStream();
@@ -6804,6 +7770,8 @@
     atualizarSessao,
     parar,
     configurar,
+    selecionarAbaConfig,
+    executarAnaliseIa,
     testar,
     falar,
     pararVoz,
@@ -6837,6 +7805,7 @@
     fecharPassagemTurno,
     abrirPainel,
     fecharPainel,
+    abrirConfig,
     abrirStream,
     ciclo: cicloImediato,
     exportarCsv,

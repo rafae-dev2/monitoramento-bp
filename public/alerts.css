@@ -3270,3 +3270,219 @@ html[data-acabamento='solido'] .a-telemetria {
   }
 }
 
+/* =====================================================================
+   v6.0 — PREFERÊNCIAS EM ABAS, SÓ CRÍTICOS, CATÁLOGO SGPA COMPLETO,
+   VOZES BRASILEIRAS GEMINI E COPILOTO DE RACIOCÍNIO IA COA & FLOW
+   ===================================================================== */
+
+.cfg-abas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 12px;
+  padding: 6px;
+  border-radius: 13px;
+  background: rgba(5, 11, 18, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.cfg-aba {
+  flex: 1 1 auto;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #cbd5e1;
+  background: rgba(15, 23, 34, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: none;
+  white-space: nowrap;
+}
+
+.cfg-aba.on {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.92), rgba(5, 150, 105, 0.96));
+  border-color: rgba(167, 243, 208, 0.75);
+  color: #022014;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.28);
+}
+
+.cfg-painel-aba {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cfg-rodape-fixo {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.criticos-box {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: linear-gradient(155deg, rgba(69, 10, 10, 0.56) 0%, rgba(17, 24, 39, 0.78) 100%);
+  border: 1px solid rgba(248, 113, 113, 0.42);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.criticos-destaque span {
+  line-height: 1.4;
+}
+
+.cfg-presets-barra,
+.cfg-chips-catalogo,
+.catalogo-acoes-lote,
+.ia-atalhos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.preset-btn {
+  padding: 6px 10px;
+  min-height: 31px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 700;
+  background: rgba(15, 23, 36, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #e2e8f0;
+}
+
+.preset-btn.crit {
+  background: rgba(153, 27, 27, 0.78);
+  border-color: rgba(252, 165, 165, 0.55);
+  color: #fef2f2;
+}
+
+.preset-btn.dest {
+  background: rgba(14, 116, 144, 0.76);
+  border-color: rgba(103, 232, 249, 0.55);
+  color: #ecfeff;
+}
+
+.catalogo-expandido {
+  max-height: min(52vh, 460px);
+}
+
+.sgpa-star-btn {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  min-height: 26px;
+  margin-right: 4px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  background: rgba(15, 23, 36, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #cbd5e1;
+  box-shadow: none;
+}
+
+.sgpa-star-btn.on {
+  background: rgba(161, 98, 7, 0.82);
+  border-color: rgba(253, 224, 71, 0.75);
+  color: #fef9c3;
+}
+
+.cfg-add-inline,
+.ia-form {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  min-width: 0;
+}
+
+.cfg-add-inline input,
+.ia-form input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(4, 10, 18, 0.78);
+  color: #ffffff;
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.gemini-voice-card,
+.ia-copiloto-card {
+  padding: 12px;
+  border-radius: 13px;
+  background: linear-gradient(155deg, rgba(8, 47, 73, 0.62) 0%, rgba(9, 17, 28, 0.88) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.38);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gemini-voice-head,
+.ia-copiloto-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ia-atalhos button {
+  padding: 5px 9px;
+  min-height: 29px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(15, 23, 36, 0.88);
+  border: 1px solid rgba(125, 211, 252, 0.32);
+  color: #e0f2fe;
+}
+
+.ia-resposta-box {
+  padding: 10px;
+  border-radius: 11px;
+  background: rgba(3, 8, 15, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ia-resposta-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.ia-resposta-texto {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #f1f5f9;
+}
+
+.ia-resposta-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+html[data-acabamento='black'] .cfg-abas,
+html[data-acabamento='solido'] .cfg-abas,
+html[data-acabamento='black'] .ia-resposta-box,
+html[data-acabamento='solido'] .ia-resposta-box {
+  background: #020408;
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+

@@ -6,7 +6,7 @@ const thisFile = fileURLToPath(import.meta.url);
 const mode = process.argv[2];
 
 if (!mode) {
-  for (const scenario of ['fresh-inflight', 'unauthorized-concurrent']) {
+  for (const scenario of ['fresh-inflight', 'unauthorized-concurrent', 'gemini-ai-tts']) {
     const output = execFileSync(process.execPath, [thisFile, scenario], { encoding: 'utf8' });
     process.stdout.write(output);
   }
@@ -25,12 +25,15 @@ process.env.SOLINF_PASS = 'fixture-password';
 process.env.PROPS_TTL_SECONDS = '432000';
 process.env.SUPABASE_URL = '';
 process.env.SUPABASE_KEY = '';
+if (mode === 'gemini-ai-tts') process.env.GEMINI_API_KEY = 'AIzaSyFixtureKeyForUnitTestOnly123456';
+else delete process.env.GEMINI_API_KEY;
 delete process.env.APP_KEY;
 
 const { default: handler } = await import('../netlify/functions/session.mjs');
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let logins = 0;
 const requisicoesDados = [];
+const chamadasGemini = [];
 
 function json(dados, status = 200) {
   return new Response(JSON.stringify(dados), {
@@ -42,6 +45,31 @@ function json(dados, status = 200) {
 globalThis.fetch = async (input, init = {}) => {
   const url = new URL(typeof input === 'string' ? input : input.url);
   const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+
+  if (url.hostname === 'generativelanguage.googleapis.com') {
+    const body = JSON.parse(String(init.body || '{}'));
+    chamadasGemini.push({ path: url.pathname, apiKey: headers.get('x-goog-api-key'), body });
+    if (url.pathname.includes('tts')) {
+      const pcmDummy = Buffer.alloc(480, 0).toString('base64');
+      return json({
+        candidates: [{
+          content: {
+            parts: [{ inlineData: { mimeType: 'audio/L16;codec=pcm;rate=24000', data: pcmDummy } }],
+          },
+        }],
+      });
+    }
+    return json({
+      candidates: [{
+        content: {
+          parts: [
+            { text: 'pensamento interno oculto', thought: true },
+            { text: '• Diagnóstico Causa-Raiz:\n  - Frente 3 com falta de caminhão.\n• Ações Imediatas — Controle Coa:\n  - Alinhar transbordos.\n• Ações Imediatas — Controle Flow:\n  - Despachar 2 canavieiros.' },
+          ],
+        },
+      }],
+    });
+  }
 
   if (url.hostname === 'auth.fixture.invalid' && url.pathname.endsWith('/auth-sgpa/create')) {
     logins += 1;
@@ -74,9 +102,9 @@ globalThis.fetch = async (input, init = {}) => {
   throw new Error(`Chamada não prevista no teste: ${init.method || 'GET'} ${url.href}`);
 };
 
-const request = (query = '') => new Request(
+const request = (query = '', init = {}) => new Request(
   `https://pwa.fixture.invalid/.netlify/functions/session${query}`,
-  { method: 'GET', headers: { 'x-forwarded-for': `test-${mode}` } },
+  Object.assign({ method: 'GET', headers: { 'x-forwarded-for': `test-${mode}` } }, init),
 );
 
 if (mode === 'fresh-inflight') {
@@ -109,6 +137,38 @@ if (mode === 'fresh-inflight') {
   assert.equal(requisicoesDados.filter((r) => r.token === 'fixture-token-1').length, 6, 'cada chamada inicial usou a sessão expirada');
   assert.equal(requisicoesDados.filter((r) => r.token === 'fixture-token-2' && r.unidade === '22').length, 6, 'cada retry usou token e unidade novos');
   console.log('OK: seis HTTP 401 concorrentes compartilharam uma renovação e repetiram a rota com a unidade nova.');
+} else if (mode === 'gemini-ai-tts') {
+  const stRes = await handler(request('?acao=ia_status'), {});
+  const stBody = await stRes.json();
+  assert.equal(stRes.status, 200);
+  assert.equal(stBody.servidorConfigurado, true);
+  assert.equal(Array.isArray(stBody.vozes) && stBody.vozes.some((v) => v.id === 'Kore'), true);
+
+  const ttsRes = await handler(request('?acao=ia_voz', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': 'test-gemini' },
+    body: JSON.stringify({ texto: 'Atenção Coa: Colhedora operando na Frente 1.', voz: 'Kore', estilo: 'comando' }),
+  }), {});
+  const ttsBody = await ttsRes.json();
+  assert.equal(ttsRes.status, 200);
+  assert.equal(ttsBody.ok, true);
+  assert.equal(ttsBody.voz, 'Kore');
+  assert.equal(ttsBody.mimeType, 'audio/wav');
+  const wavBuf = Buffer.from(ttsBody.audioBase64, 'base64');
+  assert.equal(wavBuf.subarray(0, 4).toString('ascii'), 'RIFF', 'PCM 24kHz do Gemini deve sair empacotado com cabeçalho RIFF/WAV');
+
+  const iaRes = await handler(request('?acao=ia_raciocinio', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': 'test-gemini' },
+    body: JSON.stringify({ pergunta: 'Qual o gargalo atual?', contexto: { unidade: 'Branco Peres' } }),
+  }), {});
+  const iaBody = await iaRes.json();
+  assert.equal(iaRes.status, 200);
+  assert.equal(iaBody.ok, true);
+  assert.equal(iaBody.origem, 'gemini');
+  assert.doesNotMatch(iaBody.analise, /pensamento interno oculto/, 'partes thought:true do Gemini 2.5 Thinking não devem vazar no texto final');
+  assert.match(iaBody.analise, /Diagnóstico Causa-Raiz/);
+  console.log('OK: rotas ia_status, ia_voz (WAV 24kHz vozes brasileiras Gemini) e ia_raciocinio (Gemini 2.5 Thinking) validadas.');
 } else {
   throw new Error(`Cenário desconhecido: ${mode}`);
 }
