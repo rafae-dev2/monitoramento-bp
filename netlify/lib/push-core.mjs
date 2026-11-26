@@ -22,6 +22,7 @@ export function normalizeAlertResponse(response) {
       throw new Error('SGPA active alarm response contains an invalid record');
     }
     if (isClosed(row.fgOnline)) continue;
+    if (AlertasPolicy.alarmeTrocaDeTurno(row.cdTpAlarme, row.descTpAlarme || row.descAlarme)) continue;
     const alarm = normalizeOfficialAlarm(row);
     if (!alarm) throw new Error('SGPA active alarm record is missing equipment or alarm type');
     alarms.push(alarm);
@@ -41,12 +42,14 @@ export function normalizeOfficialAlarm(row) {
   const equipmentDescription = nonEmpty(row.descEquipamento) || equipmentId;
   const parts = splitEquipmentDescription(equipmentDescription, equipmentId);
   const typeDescription = nonEmpty(row.descTpAlarme) || nonEmpty(row.descAlarme) || `Alarme SGPA ${typeId}`;
+  if (AlertasPolicy.alarmeTrocaDeTurno(typeId, typeDescription)) return null;
   const category = AlertasPolicy.categoria(typeId, typeDescription);
   const rawValue = firstNonEmpty(row.vlAlarme, row.vlAlarmeMaximoAtingido);
   const value = numericValue(rawValue);
   const externalId = nonEmpty(row.cdId);
   const startedAt = alarmTime(row);
   const front = firstNonEmpty(row.descGrupoEquipamento, row.descFrente, row.descGrupo, row.frente) || '';
+  const groupName = nonEmpty(row.descGrupoEquipamento) || '';
   const operation = firstNonEmpty(row.descOperacao, row.operacao) || '';
   const operator = firstNonEmpty(row.nomeOperador, row.descOperador, row.descFuncionario) || '';
   const equipmentType = nonEmpty(row.descTpEquipamento) || '';
@@ -61,6 +64,7 @@ export function normalizeOfficialAlarm(row) {
     numero: parts.number,
     tipo: equipmentType,
     tipoCompleto: fullEquipmentType,
+    grupoEquipamento: String(groupName),
     valor: value,
     e: {
       id: equipmentId,
@@ -69,6 +73,7 @@ export function normalizeOfficialAlarm(row) {
       tipo: equipmentType,
       tipoCompleto: fullEquipmentType,
       frente: String(front),
+      grupoEquipamento: String(groupName),
       operacao: String(operation),
       operador: String(operator),
     },

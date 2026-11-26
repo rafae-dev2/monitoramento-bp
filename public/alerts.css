@@ -3192,6 +3192,34 @@ html[data-acabamento='solido'] :is(.moenda-card, .alo-coa-box, .comboio-sec, .co
   font-weight: 800;
 }
 
+.a-chip.setor-flow {
+  background: rgba(8, 51, 68, 0.88) !important;
+  border-color: rgba(56, 189, 248, 0.68) !important;
+  color: #e0f2fe !important;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.a-chip.setor-coa {
+  background: rgba(6, 78, 59, 0.88) !important;
+  border-color: rgba(52, 211, 153, 0.68) !important;
+  color: #d1fae5 !important;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.triagem-chip[data-filtro-ativos='flow'].on {
+  background: linear-gradient(135deg, rgba(14, 116, 144, 0.88), rgba(8, 51, 68, 0.94));
+  border-color: rgba(56, 189, 248, 0.75);
+  color: #f0f9ff;
+}
+
+.triagem-chip[data-filtro-ativos='coa'].on {
+  background: linear-gradient(135deg, rgba(5, 150, 105, 0.88), rgba(6, 78, 59, 0.94));
+  border-color: rgba(52, 211, 153, 0.75);
+  color: #ecfdf5;
+}
+
 #lista-ativos .alerta.nao-reconhecido {
   border-left-width: 4.5px;
   box-shadow:
@@ -3205,7 +3233,7 @@ html[data-acabamento='solido'] :is(.moenda-card, .alo-coa-box, .comboio-sec, .co
   opacity: 0.9;
 }
 
-/* ---------- Tema Black OLED p/ Pente-Fino v5.0 ---------- */
+/* ---------- Tema Black OLED p/ Pente-Fino v5.1 ---------- */
 
 html[data-acabamento='black'] .ativos-triagem,
 html[data-acabamento='solido'] .ativos-triagem {

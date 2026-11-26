@@ -217,7 +217,7 @@ with sync_playwright() as pw:
       const a = {cdEquipamento:row.cdEquipamento, cdId:'EPISODIO-1', cdTpAlarme:5, descTpAlarme:'VELOCIDADE', vlAlarme:85, fgOnline:true};
       t.espelharAlarmes([a]);
       ok(api.ativos().length===1 && api.ativos()[0].fonte==='portal', 'alarme oficial gera alerta');
-      ok(api.ativos()[0].fala==='Trator zero zero oito três excedeu a velocidade a 85 quilômetros por hora. Verificar.', 'fala oficial usa a classe Trator e preserva zeros e valor normal');
+      ok(api.ativos()[0].fala==='Atenção Coa: Trator zero zero oito três excedeu a velocidade a 85 quilômetros por hora. Verificar.', 'fala oficial usa a classe Trator e preserva zeros e valor normal');
       const n = api.historico().length;
       t.processarQuadros([{type:'alarme',cdEquipamento:row.cdEquipamento,cdTpAlarme:5,descAlarme:'VELOCIDADE',fgOnline:true}]);
       ok(api.historico().length===n && api.ativos()[0].valor===85, 'stream e REST não duplicam nem apagam medição');
@@ -270,7 +270,7 @@ with sync_playwright() as pw:
       t.processarQuadros([frenteDivididaStream]);
       const fdStream=api.ativos().find(a=>a.e.id==='FD-8833' && a.regra==='frenteDividida');
       ok(!!fdStream && fdStream.fonte==='app' && fdStream.notificar && fdStream.numero==='8833' && fdStream.texto.includes('Frente Norte'),'primeiro quadro de Frente dividida no stream gera alerta local imediato com veículo e frente');
-      ok(fdStream.fala.includes('Atenção COA') && fdStream.fala.includes('Frente dividida') && fdStream.fala.includes('sistema FUT') && fdStream.detalhe.includes('não foram alteradas'),'fala orienta validar a chamada no FUT sem atribuir intenção ou alterar operação/fila');
+      ok(fdStream.fala.includes('Atenção Coa') && fdStream.fala.includes('Frente dividida') && fdStream.fala.includes('sistema FUT') && fdStream.detalhe.includes('não foram alteradas'),'fala orienta validar a chamada no FUT sem atribuir intenção ou alterar operação/fila');
       const estadoFdStream=()=>t.estados().find(s=>s.id==='FD-8833' && s.regra==='frenteDividida');
       ok(estadoFdStream().consec===1,'primeiro quadro do equipamento conta uma única observação positiva');
       await new Promise(resolve=>setTimeout(resolve,5));
@@ -302,7 +302,7 @@ with sync_playwright() as pw:
       t.regraParada(truckSpeechRow,inicioParadaCaminhao);
       t.regraParada(truckSpeechRow,inicioParadaCaminhao+31*60_000);
       const falaCaminhaoCarregamento=api.ativos().find(a=>a.regra==='paradaImprodutiva' && a.e.id==='TRUCK-SPEECH-4426');
-      ok(!!falaCaminhaoCarregamento && falaCaminhaoCarregamento.fala==='Caminhão quatro quatro dois seis aguardando carregamento há 31 minutos, se encontra na Frente 1. Verificar.','fala do caminhão 4426 pronuncia a frente de colheita real e não o grupo');
+      ok(!!falaCaminhaoCarregamento && falaCaminhaoCarregamento.fala==='Atenção Flow: Caminhão quatro quatro dois seis aguardando carregamento há 31 minutos, se encontra na Frente 1. Verificar.','fala do caminhão 4426 pronuncia a frente de colheita real e não o grupo');
       t.reset();
       const truckSpeechFazenda={...truckSpeech,cdEquipamento:'TRUCK-SPEECH-FUNDO-25',descFrente:'Fazenda Fundo 25'};
       t.aplicarTelemetria([truckSpeechFazenda]);
@@ -710,7 +710,7 @@ with sync_playwright() as pw:
     }""")
     assert local_measure == {
         'valor': 77, 'fonte': 'telemetria SGPA',
-        'fala': 'Trator zero zero sete sete excedeu a velocidade a 77 quilômetros por hora. Verificar.'
+        'fala': 'Atenção Coa: Trator zero zero sete sete excedeu a velocidade a 77 quilômetros por hora. Verificar.'
     }, local_measure
     print('OK: alarme oficial sem valor usa apenas a telemetria SGPA recente')
 
@@ -796,7 +796,7 @@ with sync_playwright() as pw:
     assert page.locator('#cfg-alertas').evaluate("el => el.classList.contains('hide')"), 'O X deve fechar as preferências'
     assert page.evaluate('document.activeElement.id === "btn-cfg"'), 'Ao fechar, o foco deve voltar ao controle de configurações visível'
     page.click('#btn-cfg')
-    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 24")
+    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 23")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
     assert page.locator('#cfg-categorias input[aria-label="Notificar: Frente dividida (validar FUT)"]').is_checked(), 'Frente dividida deve aparecer ligada por padrão nas preferências'
     assert page.locator('#cfg-gestao-frente').is_checked(), 'Atenção gestão deve ter opção mestre ligada por padrão'
@@ -828,7 +828,7 @@ with sync_playwright() as pw:
     print('OK: expansão de AG/COLH, prévia, substituição personalizada e persistência do glossário')
     page.fill('#cfg-busca-categoria', 'fila')
     vis = page.evaluate("[...document.querySelectorAll('#cfg-categorias > *')].filter(x => !x.classList.contains('hide')).length")
-    assert 1 <= vis < 24, f'busca de categorias deve filtrar ({vis})'
+    assert 1 <= vis < 23, f'busca de categorias deve filtrar ({vis})'
     page.fill('#cfg-busca-categoria', 'xyzinexistente')
     assert page.locator('#cfg-categorias-vazio').is_visible(), 'mensagem de nenhum alerta'
     page.fill('#cfg-busca-categoria', '')
@@ -1089,7 +1089,7 @@ with sync_playwright() as pw:
       MonitoramentoAlertas.configurar({ sentinelaSegundoPlano: true });
       MonitoramentoAlertas.falar('Teste perfil COA firme com tom no Android', { oficial: true });
     }""")
-    page.wait_for_function("window.__nativePitchSpoken.some(x => x.text.includes('perfil COA firme'))", timeout=3000)
+    page.wait_for_function("window.__nativePitchSpoken.some(x => x.text === 'Teste perfil Coa firme com tom no Android')", timeout=3000)
     assert page.evaluate("Math.abs(window.__nativePitchSpoken[0].pitch - 0.88) < 0.01 && Math.abs(window.__nativePitchSpoken[0].rate - 1.05) < 0.01 && window.__bgStates.includes(false) && window.__bgStates.at(-1) === true"), 'Perfil COA deve aplicar taxa/tom e sincronizar serviço Android 2º plano'
     print('OK: rótulos amigáveis, perfil de locução COA, tom encaminhado ao AndroidTTS e ponte de 2º plano validados')
 
@@ -1187,7 +1187,7 @@ with sync_playwright() as pw:
       ]);
       __test.avaliarFrota(Date.now(), 'lotes');
       if (document.getElementById('emergencia-banner').classList.contains('hide')) throw new Error('Banner de emergência não abriu');
-      if (!__test.falasCapturadas().some(f => f.includes('Emergência C O A'))) throw new Error('Voz de emergência não disparou');
+      if (!__test.falasCapturadas().some(f => f.includes('Atenção Flow, emergência! Caminhão nove nove um um'))) throw new Error('Voz de emergência não disparou');
       document.getElementById('emg-ciente').click();
       if (!document.getElementById('emergencia-banner').classList.contains('hide')) throw new Error('Botão Ciente deveria fechar banner de emergência');
 
@@ -1385,9 +1385,96 @@ with sync_playwright() as pw:
     }""")
     print('OK: Pacote Pente-Fino COA v5.0 (Split-Screen, Triagem + Lote, Telemetria Viva, Reincidência e 6 Regras Zero-Agulha) validado')
 
+    # Refinamentos Operacionais v5.1.0: Toast sempre que falar, Remoção Troca de Turno, Bombeiro -> Caminhão e Controle FLOW vs COA
+    page.evaluate("""() => {
+      __test.reset();
+      __test.capturarFalas();
+      if ('turno' in MonitoramentoAlertas.REGRAS) throw new Error('REGRAS não deve mais conter turno');
+      if (document.getElementById('cfg-turno')) throw new Error('#cfg-turno não deve existir no DOM');
+      if ('minutosTurno' in MonitoramentoAlertas.config()) throw new Error('minutosTurno não deve existir em cfg');
+      MonitoramentoAlertas.configurar({ ativo: true, voz: true, popup: false, som: false, vibrar: false, notificacao: false, calcularLocal: true, minutosOcioso: 1, rpmOcioso: 900 });
+      const ts51 = Date.now();
+      const iso51 = new Date(ts51).toISOString();
+      __test.aplicarTelemetria([
+        { cdEquipamento: 'TR-TURNO', descEquipamento: '3201 - Trator', descTpEquipamento: 'TRATOR', descFrente: 'Frente 1', cdOperacao: 925, descOperacao: '925 - Troca de Turno', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', vlTempoSemComunicacao: '0 DIA(S) 00:00:03', fgMonitoramentoAtivo: 'T', dtHrLocal: iso51 },
+      ]);
+      __test.avaliarFrota(ts51 + 20 * 60_000, 'tempo');
+      __test.espelharAlarmes([
+        { cdEquipamento: 'TR-TURNO', cdId: 'TURNO-REST-1', cdTpAlarme: 2849, descTpAlarme: 'TROCA DE TURNO', fgOnline: true },
+        { cdEquipamento: 'TR-TURNO', cdId: 'TURNO-REST-2', cdTpAlarme: 2851, descTpAlarme: 'TROCA DE TURNO EXCEDIDA', fgOnline: true },
+      ]);
+      __test.processarQuadros([
+        { type: 'alarme', cdEquipamento: 'TR-TURNO', cdTpAlarme: 2849, descAlarme: 'TROCA DE TURNO', fgOnline: true },
+      ]);
+      if (MonitoramentoAlertas.ativos().length !== 0 || __test.falasCapturadas().length !== 0) {
+        throw new Error('Troca de Turno deveria ser 100% ignorada: ' + JSON.stringify(MonitoramentoAlertas.ativos()));
+      }
+
+      __test.aplicarTelemetria([
+        { cdEquipamento: 'BM-ERRADO', descEquipamento: '9915 - Trator de Pneu Leve', descTpEquipamento: 'TRATOR DE PNEU LEVE', descGrupoEquipamento: 'CAMINHÕES BOMBEIROS', descFrente: '', descOperacao: '305 - Deslocamento', vlVelocidade: 72, vlParametro4: 1850, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:02', fgMonitoramentoAtivo: 'T', dtHrLocal: iso51 },
+        { cdEquipamento: 'LA-MOTO', descEquipamento: '3510 - Motoniveladora Cat', descTpEquipamento: 'MOTONIVELADORA', descGrupoEquipamento: 'LINHA AMARELA', descFrente: 'Frente 2', descOperacao: '3484 - SEM APONTAMENTO', vlVelocidade: 0, vlParametro4: 750, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:02', fgMonitoramentoAtivo: 'T', dtHrLocal: iso51 },
+        { cdEquipamento: 'VL-LEVE', descEquipamento: '1105 - Strada Apoio', descTpEquipamento: 'TRATOR DE PNEU LEVE', descGrupoEquipamento: 'VEÍCULOS LEVES', descFrente: '', descOperacao: '200 - Deslocamento', vlVelocidade: 68, vlParametro4: 2100, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:02', fgMonitoramentoAtivo: 'T', dtHrLocal: iso51 },
+      ]);
+      __test.espelharAlarmes([
+        { cdEquipamento: 'BM-ERRADO', cdId: 'BM-VEL-1', cdTpAlarme: 5, descTpAlarme: 'VELOCIDADE EXCEDIDA', descGrupoEquipamento: 'CAMINHÕES BOMBEIROS', vlAlarme: 72, fgOnline: true },
+        { cdEquipamento: 'VL-LEVE', cdId: 'VL-VEL-1', cdTpAlarme: 12724, descTpAlarme: 'VL _ 60 KM/H', descGrupoEquipamento: 'VEÍCULOS LEVES', vlAlarme: 68, fgOnline: true },
+      ]);
+      __test.avaliarFrota(ts51, 'lotes');
+      __test.avaliarFrota(ts51 + 2 * 60_000, 'tempo');
+
+      const bmAtivo = MonitoramentoAlertas.ativos().find(a => a.numero === '9915' && a.tipoAlarme === '5');
+      const vlAtivo = MonitoramentoAlertas.ativos().find(a => a.numero === '1105');
+      const laAtivo = MonitoramentoAlertas.ativos().find(a => a.numero === '3510');
+      if (!bmAtivo || bmAtivo.classe !== 'Caminhão' || bmAtivo.setor !== 'FLOW') {
+        throw new Error('Bombeiro com tipo errado TRATOR DE PNEU LEVE deve ser Caminhão / FLOW: ' + JSON.stringify(bmAtivo));
+      }
+      if (!bmAtivo.fala.startsWith('Atenção Flow: Caminhão nove nove um cinco') || /trator|bombeir/i.test(bmAtivo.fala)) {
+        throw new Error('Fala incorreta para grupo Bombeiro: ' + bmAtivo.fala);
+      }
+      if (!vlAtivo || vlAtivo.classe !== 'Veículo' || vlAtivo.setor !== 'FLOW' || !vlAtivo.fala.startsWith('Atenção Flow: Veículo um um zero cinco')) {
+        throw new Error('Veículo Leve deveria falar Atenção Flow: Veículo ...: ' + JSON.stringify(vlAtivo));
+      }
+      if (!laAtivo || laAtivo.classe !== 'Máquina' || laAtivo.setor !== 'COA' || !laAtivo.fala.startsWith('Atenção Coa: Máquina três cinco um zero')) {
+        throw new Error('Linha Amarela deveria falar Atenção Coa: Máquina ...: ' + JSON.stringify(laAtivo));
+      }
+      for (const f of __test.falasCapturadas()) {
+        if (/C O A|F L O W|\\bCOA\\b|\\bFLOW\\b/.test(f)) {
+          throw new Error('Pronúncia proibida soletrada/sigla encontrada na fala: ' + f);
+        }
+      }
+
+      const toastsChaves = [...document.querySelectorAll('#toasts .toast')].map(n => n.dataset.chave);
+      for (const esperado of [bmAtivo.chave, vlAtivo.chave, laAtivo.chave]) {
+        if (!toastsChaves.includes(esperado)) {
+          throw new Error('Alerta falado não apareceu como notificação flutuante lateral (#toasts): ' + esperado + ' em ' + JSON.stringify(toastsChaves));
+        }
+      }
+
+      MonitoramentoAlertas.abrirPainel('ativos');
+      MonitoramentoAlertas.definirFiltroAtivos('flow');
+      const cardsFlow = [...document.querySelectorAll('#lista-ativos .alerta')];
+      if (!cardsFlow.length || !cardsFlow.every(c => c.querySelector('.a-chip.setor-flow'))) {
+        throw new Error('Filtro FLOW deveria listar apenas cartões com badge .setor-flow');
+      }
+      MonitoramentoAlertas.definirFiltroAtivos('coa');
+      const cardsCoa = [...document.querySelectorAll('#lista-ativos .alerta')];
+      if (!cardsCoa.length || !cardsCoa.every(c => c.querySelector('.a-chip.setor-coa'))) {
+        throw new Error('Filtro COA deveria listar apenas cartões com badge .setor-coa');
+      }
+      MonitoramentoAlertas.definirFiltroAtivos('todos');
+      __test.restaurarFalas();
+
+      document.querySelector('#toasts').innerHTML = '';
+      MonitoramentoAlertas.falar('Atenção Flow: teste direto na lateral.');
+      if (document.querySelectorAll('#toasts .aviso, #toasts .toast').length === 0) {
+        throw new Error('MonitoramentoAlertas.falar() direto deveria exibir notificação flutuante na lateral');
+      }
+    }""")
+    print('OK: Refinamentos v5.1.0 (Toast sempre ao falar, Remoção Troca de Turno, Bombeiro -> Caminhão e Atenção Flow vs Atenção Coa sem soletrar) validados')
+
     assert not errors, errors
     assert not any(m=='POST' for m,u in requests), 'Teste tentou POST'
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+17} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+18} grupos de verificações.')

@@ -14,7 +14,7 @@
  *      tempo o alarme está ativo, no relógio do servidor).
  *
  * Velocidade é exclusivamente o alarme oficial do SGPA, sem limiar local.
- * RPM, troca de turno e ociosidade mantêm cálculo local opcional. A operação
+ * RPM e ociosidade mantêm cálculo local opcional. A operação
  * Aguardando Caminhão em tratores/transbordos é rastreada na telemetria.
  * Todos os tipos oficiais entram na central. Alertas oficiais recebem os canais
  * escolhidos pelo usuário. Cálculos locais ficam na central/histórico; só a regra
@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '5.0.0';
+  const VERSAO = '5.1.0';
   const KEY_PAINEL_FIXO = 'bperes.visual.painel-fixo.v1';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
@@ -124,15 +124,12 @@
     11: 'ocioso', // MOTOR OCIOSO
     2343: 'ocioso', // MOTOR OCIOSO canavieiro
     2207: 'ocioso', // MODO OCIOSO
-    2849: 'turno', // Tempo Excedido Troca de Turno - HR
-    2851: 'turno', // Alerta Troca de Turno - HR
   };
 
   const REGRAS = {
     emergencia: { id: 'emergencia', nome: 'Emergência / Incêndio / Bombeiro', icone: '🔥', cor: '#dc2626', severidade: 4 },
     velocidade: { id: 'velocidade', nome: 'Velocidade excedida', icone: '🚨', cor: '#ef4444', severidade: 3 },
     rpm: { id: 'rpm', nome: 'RPM máxima do motor', icone: '⚙️', cor: '#f97316', severidade: 3 },
-    turno: { id: 'turno', nome: 'Preso em troca de turno', icone: '⏱️', cor: '#eab308', severidade: 2 },
     ocioso: { id: 'ocioso', nome: 'Motor ocioso', icone: '🔌', cor: '#38bdf8', severidade: 2 },
     ociosoSemApontamento: { id: 'ociosoSemApontamento', nome: 'Motor ocioso sem apontamento', icone: '🔌', cor: '#d97706', severidade: 2 },
     motorCondicao: { id: 'motorCondicao', nome: 'Motor ligado — condição combinada', icone: 'M', cor: '#06b6d4', severidade: 2 },
@@ -201,7 +198,6 @@
     microParadasSomaMin: 16, // minutos perdidos somados na janela
     paradasLimites: {}, // id da parada → minutos de tolerância (0 = não alertar)
     minutosSemApontamento: 5, // tolerância antes de alertar operação “Sem Apontamento”
-    minutosTurno: 4, // pedido do usuário (o portal usa 3)
     maxAtrasoMin: 20, // ignorar equipamento sem sinal há mais que isso
     espelharServidor: true,
     incluirOutros: true, // novas instalações notificam todos; valor legado é preservado
@@ -800,35 +796,24 @@
     return Number.isFinite(parseado) ? parseado : null;
   }
 
-  /* O que a voz fala antes do número: "Veículo 8833…", "Colhedora 57838…".
+  /* O que a voz fala antes do número: "Veículo 8833…", "Colhedora 57838…", "Caminhão 9911…".
      No tenant o descTpEquipamento é cadastro solto (aparece "TRATOR DE PNEU LEVE"
-     para um carro), então olhamos primeiro o nome/grupo da máquina. */
-  function classeFala(nome, tipo, frente) {
-    const n = norm((nome || '') + ' ' + (frente || ''));
+     para carro ou caminhão bombeiro), então delegamos ao classificador unificado. */
+  function classeFala(nome, tipo, frente, grupoEquipamento) {
+    if (policy && typeof policy.classeEquipamentoFalado === 'function') {
+      return policy.classeEquipamentoFalado({}, { nome, tipo, frente, grupoEquipamento });
+    }
+    const tudo = norm([nome, tipo, frente, grupoEquipamento].filter(Boolean).join(' '));
+    if (/\bbombeir/.test(tudo)) return 'Caminhão';
+    const n = norm([nome, frente, grupoEquipamento].filter(Boolean).join(' '));
     if (/veiculo leve|utilitario|camionete|carro|van |oroche|oroich|automovel|viatura|ambulancia/.test(n)) return 'Veículo';
-    if (/quadriciclo|motocicleta|moto /.test(n)) return 'Quadriciclo';
-    if (/onibus/.test(n)) return 'Ônibus';
-    if (/retroescavadeira|motoniveladora|patrola|escavadeira/.test(n)) return 'Máquina';
-    if (/empilhadeira/.test(n)) return 'Empilhadeira';
-    if (/torre/.test(n)) return 'Torre';
-    if (/vagao|carretaagri/.test(n)) return 'Vagão';
+    if (/linha amarela|pa carregadeira|carregadeira|retroescavadeira|motoniveladora|patrola|escavadeira/.test(n)) return 'Máquina';
     const t = (norm(tipo) + ' ' + norm(nome)).replace(/[^a-z]/g, '');
     if (t.includes('colhedora')) return 'Colhedora';
     if (t.includes('trator')) return 'Trator';
     if (t.includes('transbordo')) return 'Transbordo';
     if (t.includes('caminhao') || t.includes('truck')) return 'Caminhão';
-    if (t.includes('onibus')) return 'Ônibus';
-    if (t.includes('utilitario') || t.includes('van')) return 'Utilitário';
-    if (t.includes('plantadeira') || t.includes('semeadora')) return 'Plantadeira';
-    if (t.includes('pulverizador')) return 'Pulverizador';
-    if (t.includes('carreta') || t.includes('bitrem')) return 'Carreta';
     return 'Veículo';
-  }
-
-  /* "925 - Troca de Turno - HR" => true */
-  function emTrocaDeTurno(desc, cd) {
-    const s = norm(desc);
-    return /troca.?de.?turno/.test(s) || String(cd || '') === '925';
   }
 
   function minutosTxt(n) {
@@ -961,7 +946,7 @@
       ultimoAvisoQuedaSgpa = 0;
       mostrarAviso('Comunicação com o SGPA restabelecida.', 'info');
       if (cfg.ativo && cfg.voz && cfg.alertaQuedaSgpa !== false && ts >= (Number(cfg.silencioAte) || 0)) {
-        falar('Comunicação com o S G P A restabelecida.', { oficial: true });
+        falar('Comunicação com o S G P A restabelecida.', { oficial: true, toastExibido: true });
       }
       renderCabecalho();
     }
@@ -978,11 +963,11 @@
     quedaSgpaAtiva = true;
     ultimoAvisoQuedaSgpa = ts;
     const minutos = Math.max(2, Math.round(semSinalMs / 60_000));
-    mostrarAviso(`Atenção COA: sem comunicação com o SGPA há ${minutos} minutos. Verifique rede ou sessão.`, 'erro');
+    mostrarAviso(`Atenção Coa: sem comunicação com o SGPA há ${minutos} minutos. Verifique rede ou sessão.`, 'erro');
     if (ts >= (Number(cfg.silencioAte) || 0)) {
       if (cfg.som) tocar(3, true);
       if (cfg.voz) {
-        falar(`Atenção C O A: sem comunicação com o S G P A há ${minutos} minutos. Verificar conexão.`, { oficial: true });
+        falar(`Atenção Coa: sem comunicação com o S G P A há ${minutos} minutos. Verificar conexão.`, { oficial: true, toastExibido: true });
       }
     }
     renderCabecalho();
@@ -1277,7 +1262,7 @@
   function quadroAlarme(q) {
     if (!cfg.ativo || !cfg.espelharServidor) return;
     const codigo = String(q.cdTpAlarme || 'desconhecido');
-    if (alarmeFechado(q.fgOnline)) {
+    if (alarmeFechado(q.fgOnline) || policy.alarmeTrocaDeTurno(q.cdTpAlarme, q.descAlarme || q.descTpAlarme)) {
       fecharOficial(String(q.cdEquipamento), codigo);
       return;
     }
@@ -1564,7 +1549,10 @@
         const ts = agora();
         const reconhecido = acks[alerta.chave] && ts - acks[alerta.chave] < 2 * 3600_000;
         const silenciado = ts < (Number(cfg.silencioAte) || 0) || reconhecido;
-        if (cfg.voz && alerta.notificar && !silenciado) falar('Atualização de localização. ' + alerta.fala, { oficial: alerta.fonte === 'portal' });
+        if (cfg.voz && alerta.notificar && !silenciado) {
+          mostrarToast(alerta, false);
+          falar('Atualização de localização. ' + alerta.fala, { oficial: alerta.fonte === 'portal', toastExibido: true });
+        }
       }
       const registro = hist.find((item) => item.chave === alerta.chave);
       if (registro) {
@@ -1808,13 +1796,14 @@
       alerta.ultimoReescalonamento = ts;
       if (cfg.som) tocar(3, true);
       if (cfg.voz) {
-        falar('Alerta crítico pendente sem confirmação. ' + alerta.fala, { oficial: true });
+        mostrarToast(alerta, false);
+        falar('Alerta crítico pendente sem confirmação. ' + alerta.fala, { oficial: true, toastExibido: true });
         faladoEm.set(alerta.chave, ts);
       }
     }
   }
 
-  /* relógio fino: avalia troca de turno/ociosidade entre duas leituras */
+  /* relógio fino: avalia ociosidade e janelas de tempo entre duas leituras */
   function tique() {
     if (!cfg.ativo) return;
     try {
@@ -1954,7 +1943,7 @@
       mudou = true;
       mostrarAviso(`🌧️ Revisar pausa de chuva em ${item.frente} (ativa há ${mins} min).`, 'info');
       if (cfg.som) tocar(2);
-      if (cfg.voz) falar(`Atenção C O A: revisar pausa de chuva na ${item.frente}, ativa há ${mins} minutos.`);
+      if (cfg.voz) falar(`Atenção Coa: revisar pausa de chuva na ${item.frente}, ativa há ${mins} minutos.`, { toastExibido: true });
     }
     if (mudou) salvar(KEY_CHUVAS, chuvas);
   }
@@ -2003,7 +1992,7 @@
       const atual = ociosidadeTurno.itens[id] || {
         id,
         numero: e.numero || id,
-        classe: classeFala(e.nome, e.tipo, e.frente),
+        classe: classeFala(e.nome, e.tipo, e.frente, e.grupoEquipamento),
         frente: e.frente || e.grupoEquipamento || '',
         operador: e.operador || '',
         segAcumulados: 0,
@@ -2188,7 +2177,8 @@
     salvar(KEY_CLIMA, climaCoa);
     const aval = radarIncendio();
     if (aval.bandeira === 'vermelha' && cfg.voz && agora() >= (Number(cfg.silencioAte) || 0)) {
-      falar(`Atenção C O A: regra trinta trinta trinta atingida. Risco extremo de incêndio com ${aval.tempC} graus, umidade ${aval.umidadePct} por cento e vento de ${aval.ventoKmH} quilômetros por hora.`, { oficial: true });
+      mostrarAviso(`🔥 Atenção Coa: regra 30-30-30 atingida — risco extremo de incêndio (${aval.tempC}°C · ${aval.umidadePct}% · vento ${aval.ventoKmH} km/h).`, 'erro');
+      falar(`Atenção Coa: regra trinta trinta trinta atingida. Risco extremo de incêndio com ${aval.tempC} graus, umidade ${aval.umidadePct} por cento e vento de ${aval.ventoKmH} quilômetros por hora.`, { oficial: true, toastExibido: true });
     }
     if (el.comboio && !el.comboio.classList.contains('hide')) renderComboio();
     renderTelaoBar();
@@ -2506,7 +2496,6 @@
         regraSemApontamento(e, ts);
         regraParada(e, ts);
         regraRefeicao(e, ts);
-        regraTurno(e, ts);
         regraOcioso(e, ts);
       }
       observacaoEmAvaliacao = lotes ? `frente:rodada:${rodada}` : null;
@@ -2851,30 +2840,6 @@
     });
   }
 
-  function regraTurno(e, ts) {
-    if (!cfg.calcularLocal) return;
-    const liga = emTrocaDeTurno(e.operacao, e.cdOperacao);
-    const st = marcar(e.id, 'turno', liga, ts, null);
-    if (!st.firing) return;
-    const min = Math.max(1, num(cfg.minutosTurno) || 4);
-    const durou = (ts - inicioReal(st, e)) / 60000;
-    if (durou < min) return;
-    if (!podeDisparar(st, ts)) return;
-    const semOp = semOperador(e.operadorBruto);
-    emitir({
-      chave: st.chave,
-      regra: 'turno',
-      e,
-      valor: Math.round(durou),
-      limite: Math.round(min),
-      texto:
-        `preso em troca de turno há ${minutosTxt(durou)}` +
-        (semOp ? ', sem operador definido — alguém esqueceu de dar a baixa' : ''),
-      detalhe: `${e.nome} · ${e.frente || 'sem frente'} · operação ${e.operacao || '—'} · limiar ${minutosTxt(min)}`,
-      inicio: inicioReal(st, e),
-    });
-  }
-
   function regraOcioso(e, ts) {
     if (!cfg.calcularLocal) return;
     const rpmMax = num(cfg.rpmOcioso);
@@ -2929,7 +2894,10 @@
       const id = String(a.cdEquipamento || '');
       const codigo = String(a.cdTpAlarme || 'desconhecido');
       if (!id) continue;
-      if (alarmeFechado(a.fgOnline)) { fecharOficial(id, codigo); continue; }
+      if (alarmeFechado(a.fgOnline) || policy.alarmeTrocaDeTurno(a.cdTpAlarme, a.descTpAlarme || a.descAlarme)) {
+        fecharOficial(id, codigo);
+        continue;
+      }
       vistos.add(id + '|sgpa:' + codigo);
       emitirAlarmeOficial(a, policy.categoria(a.cdTpAlarme, a.descTpAlarme || a.descAlarme), 'portal');
     }
@@ -2981,6 +2949,11 @@
     if (!cfg.ativo || !cfg.espelharServidor) return;
     const id = String(a.cdEquipamento || '');
     if (!id) return;
+    const codigo = String(a.cdTpAlarme || 'desconhecido');
+    if (policy.alarmeTrocaDeTurno(a.cdTpAlarme, a.descTpAlarme || a.descAlarme)) {
+      fecharOficial(id, codigo);
+      return;
+    }
     const e = mesclar(id);
     if (a.descEquipamento) {
       const p = partirEquipamento(a.descEquipamento, id);
@@ -2996,7 +2969,6 @@
       e.grupoEquipamento = String(a.descGrupoEquipamento).trim();
     }
     if (a.descOperacao) e.operacao = String(a.descOperacao);
-    const codigo = String(a.cdTpAlarme || 'desconhecido');
     const nomeAlarme = a.descTpAlarme || a.descAlarme || nomeTipo(codigo);
     registrarTipo(codigo, nomeAlarme);
     const chave = id + '|sgpa:' + codigo;
@@ -3038,8 +3010,6 @@
       texto = valor !== null ? `excedeu a velocidade a ${Math.round(valor)} km/h` : 'velocidade excedida (alarme oficial do SGPA; medição não informada)';
     } else if (regra === 'rpm') {
       texto = valor !== null ? `RPM do motor: ${milhar(valor)} RPM (alarme oficial do portal)` : 'alarme de RPM do motor (alarme oficial do portal)';
-    } else if (regra === 'turno') {
-      texto = 'tempo excedido em troca de turno (alarme oficial do portal)';
     } else if (regra === 'ocioso') {
       texto = 'motor ocioso (alarme oficial do portal)';
     } else {
@@ -3069,11 +3039,13 @@
           ? { valor, texto, fonteVelocidade, medicaoPendente: false }
           : regra === 'velocidade' ? { texto, medicaoPendente: false } : {};
         Object.assign(anterior, medida, { detalhe: alerta.detalhe, e, numero: e.numero, nomeAlarme });
+        anterior.classe = classeFala(e.nome, e.tipo, e.frente, e.grupoEquipamento);
+        anterior.setor = policy.setorControle(anterior, e);
         anterior.fala = montarFala(anterior);
         anterior.notificar = policy.notificar(cfg, anterior);
         const registro = hist.find((h) => h.chave === chave);
         if (registro && valor !== null) {
-          Object.assign(registro, { valor, texto, fala: anterior.fala, detalhe: alerta.detalhe, fonteVelocidade });
+          Object.assign(registro, { valor, texto, fala: anterior.fala, detalhe: alerta.detalhe, fonteVelocidade, setor: anterior.setor });
           salvar(KEY_HIST, hist);
         }
         renderAtivos();
@@ -3092,7 +3064,7 @@
     const chave = a.chave || `${a.e.id}|${a.regra}`;
     const prev = ativos.get(chave);
     const jaReconhecido = acks[chave] && ts - acks[chave] < 2 * 3600_000;
-    const classe = classeFala(a.e.nome, a.e.tipo, a.e.frente);
+    const classe = classeFala(a.e.nome, a.e.tipo, a.e.frente, a.e.grupoEquipamento);
 
     const alerta = {
       chave,
@@ -3128,6 +3100,7 @@
       contagem: (prev && prev.contagem ? prev.contagem : 0) + 1,
       repeticao: !!prev,
     };
+    alerta.setor = policy.setorControle(alerta, alerta.e);
     alerta.notificar = (alerta.fonte === 'portal' || localComCanais(alerta)) && policy.notificar(cfg, alerta);
     alerta.fala = montarFala(alerta);
     ativos.set(chave, alerta);
@@ -3142,6 +3115,7 @@
         ts,
         chave,
         regra: alerta.regra,
+        setor: alerta.setor,
         tipoAlarme: alerta.tipoAlarme,
         nomeAlarme: alerta.nomeAlarme,
         frente: alerta.e.frente || '',
@@ -3194,12 +3168,15 @@
       demais = ++rajada.voz > Math.max(1, Number(cfg.maxPorCiclo) || 4);
     }
     if (emergencia) mostrarBannerEmergencia(alerta);
-    // Pente-Fino: o cartão visual nunca some na rajada; só a voz é limitada.
-    if (cfg.popup && (oficial || localAberto || a.simulado)) mostrarToast(alerta, silenciado);
+    const vaiFalar = !silenciado && !demais && cfg.voz &&
+      (oficial || localAberto || a.simulado || vozLocalSemPontoConfirmado) &&
+      (emergencia || !alerta.repeticao || cfg.repetirVoz);
+    // Sempre que falar (ou quando pop-up estiver ligado), o cartão flutuante aparece na lateral.
+    if ((cfg.popup && (oficial || localAberto || a.simulado)) || vaiFalar) mostrarToast(alerta, silenciado);
     if (!silenciado && !demais) {
       if ((oficial || localAberto || a.simulado) && cfg.som) tocar(emergencia ? 4 : regra.severidade, emergencia);
-      if (cfg.voz && (oficial || localAberto || a.simulado || vozLocalSemPontoConfirmado) && (emergencia || !alerta.repeticao || cfg.repetirVoz)) {
-        falar(alerta.fala, { oficial, emergencia });
+      if (vaiFalar) {
+        falar(alerta.fala, { oficial, emergencia, toastExibido: true });
         faladoEm.set(chave, ts);
       }
       if ((oficial || localAberto || a.simulado) && cfg.vibrar) vibrar(emergencia ? 4 : regra.severidade);
@@ -3318,8 +3295,12 @@
     lista.sort((x, y) => (y.severidade || 0) - (x.severidade || 0) || (y.ts || 0) - (x.ts || 0));
     const max = Math.max(1, Number(cfg.maxPorCiclo) || 4);
     const pendentes = lista.filter((a) => !(faladoEm.get(a.chave) > ts - 60000));
-    falar(lista.length === 1 ? 'Atenção: um alerta ativo.' : `Atenção: ${lista.length} alertas ativos.`, { oficial: true });
-    pendentes.slice(0, max).forEach((a) => { falar(a.fala, { oficial: a.fonte === 'portal' }); faladoEm.set(a.chave, ts); });
+    falar(lista.length === 1 ? 'Atenção: um alerta ativo.' : `Atenção: ${lista.length} alertas ativos.`, { oficial: true, toastExibido: pendentes.length > 0 });
+    pendentes.slice(0, max).forEach((a) => {
+      mostrarToast(a, false);
+      falar(a.fala, { oficial: a.fonte === 'portal', toastExibido: true });
+      faladoEm.set(a.chave, ts);
+    });
     if (pendentes.length > max) falar(`E mais ${pendentes.length - max} alertas na central.`);
   }
   let fila = [];
@@ -3383,11 +3364,22 @@
     vozEscolhida = v || null;
   }
 
+  function paraPronunciaNatural(texto) {
+    return String(texto == null ? '' : texto)
+      .replace(/\bC\s+O\s+A\b|\bCOA\b/g, 'Coa')
+      .replace(/\bF\s+L\s+O\s+W\b|\bFLOW\b/g, 'Flow');
+  }
+
   function falar(texto, opcoes) {
     if (!cfg.voz) return;
     const emergencia = !!(opcoes && opcoes.emergencia);
-    const item = { texto: String(texto), oficial: !!(opcoes && opcoes.oficial) || emergencia, emergencia, retentou: false };
+    const textoFalado = paraPronunciaNatural(texto);
+    const item = { texto: textoFalado, oficial: !!(opcoes && opcoes.oficial) || emergencia, emergencia, retentou: false };
     ultimaFalaEmitida = { texto: item.texto, ts: agora(), oficial: item.oficial, emergencia };
+    if (!(opcoes && opcoes.toastExibido)) {
+      if (opcoes && opcoes.alerta) mostrarToast(opcoes.alerta, false);
+      else if (el && el.toasts) mostrarAviso('🗣️ ' + textoFalado, 'info');
+    }
     if (emergencia) {
       const pendentes = fila.slice();
       pararVoz();
@@ -3424,7 +3416,7 @@
     if (falando || vozBloqueada || !fila.length) return;
     limparTimersVozWeb();
     const item = fila.shift();
-    const texto = item.texto;
+    const texto = paraPronunciaNatural(item.texto);
     const nativa = ponteNativa();
     const s = sintetizador();
     const uriVoz = String(cfg.vozURI || '');
@@ -4148,6 +4140,8 @@
     </div>
     <div id="ativos-triagem" class="ativos-triagem" role="toolbar" aria-label="Filtros rápidos de alertas">
       <button type="button" class="triagem-chip on" data-filtro-ativos="todos" aria-pressed="true">Todos <b data-cont-filtro="todos">0</b></button>
+      <button type="button" class="triagem-chip" data-filtro-ativos="coa" aria-pressed="false">🚜 COA <b data-cont-filtro="coa">0</b></button>
+      <button type="button" class="triagem-chip" data-filtro-ativos="flow" aria-pressed="false">🚛 FLOW <b data-cont-filtro="flow">0</b></button>
       <button type="button" class="triagem-chip" data-filtro-ativos="pendentes" aria-pressed="false">🔴 Sem ciência <b data-cont-filtro="pendentes">0</b></button>
       <button type="button" class="triagem-chip" data-filtro-ativos="sla" aria-pressed="false">⏱️ SLA <b data-cont-filtro="sla">0</b></button>
       <button type="button" class="triagem-chip" data-filtro-ativos="custo" aria-pressed="false">💸 Maior R$ <b data-cont-filtro="custo">0</b></button>
@@ -4223,7 +4217,7 @@
       <button id="cfg-fechar-x" class="icone cfg-fechar-x" type="button" title="Fechar preferências" aria-label="Fechar preferências">✕</button>
     </div>
     <h2 id="cfg-titulo">Preferências de alertas</h2>
-    <p class="fine">Alertas calculados localmente ficam na central e no histórico. Só “Motor ocioso sem apontamento”, quando confirmado por uma descrição atual do SGPA, pode ser falado como exceção; não gera notificação do sistema. Os demais cálculos locais não são falados nem notificados. A amostra manual do botão de teste não envia notificação do sistema.</p>
+    <p class="fine">Sempre que um alerta for falado, o cartão flutuante aparece automaticamente na lateral. A locução diferencia <b>Atenção Flow</b> (caminhões e veículos leves) e <b>Atenção Coa</b> (tratores, transbordos, colheita e linha amarela) com pronúncia natural. Alertas calculados localmente ficam na central e no histórico; só “Motor ocioso sem apontamento”, confirmado no SGPA, pode ser falado como exceção (sem notificação do sistema).</p>
     <div class="fonte-oficial"><strong>Velocidade: somente SGPA</strong><span>O app notifica quando o SGPA emitir o alarme. Os limites são os cadastrados no portal, não um cálculo genérico do aplicativo.</span></div>
     <section class="push-optin" aria-labelledby="push-optin-titulo">
       <div class="push-optin-cabecalho"><span class="push-simbolo" aria-hidden="true">◉</span><div><h3 id="push-optin-titulo">Notificações Push neste aparelho</h3><span class="push-dispositivo">Ativação individual, controlada por você</span></div></div>
@@ -4271,12 +4265,11 @@
     </details>
     <details class="catalogo-detalhes"><summary>Regras auditadas da unidade</summary><p id="cfg-regras-status" class="fine"></p><div class="busca-modulo"><input id="cfg-busca-regra" type="search" placeholder="Pesquisar regra, tipo de equipamento ou condição" aria-label="Pesquisar regras auditadas" autocomplete="off"></div><p id="cfg-regras-contagem" class="busca-contagem"></p><div id="cfg-regras-auditadas" class="regras-auditadas"></div><p class="fine">Inventário para consulta. As expressões permanecem executadas pelo SGPA, sem recriar condições ambíguas no aplicativo.</p></details>
     <h3 class="secao-alertas">Leitura e cálculos complementares</h3>
-    <p class="fine">RPM, ociosidade e troca de turno podem ter cálculo local complementar. Se o motor estiver ocioso e a descrição atual da operação SGPA confirmar “Sem Apontamento”, a central registra um alerta local combinado após o tempo configurado. Só esse alerta confirmado pode ser falado; não gera notificação do sistema, som, vibração ou pop-up. Os demais cálculos locais ficam na central/histórico sem fala nem notificação. A espera por caminhão usa a operação da telemetria mesmo com esses cálculos desligados.</p>
+    <p class="fine">RPM e ociosidade podem ter cálculo local complementar. Se o motor estiver ocioso e a descrição atual da operação SGPA confirmar “Sem Apontamento”, a central registra um alerta local combinado após o tempo configurado. Só esse alerta confirmado pode ser falado (exibindo o cartão lateral ao falar); não gera notificação do sistema. Os demais cálculos locais ficam na central/histórico sem fala nem notificação. A espera por caminhão usa a operação da telemetria mesmo com esses cálculos desligados.</p>
     <div class="grade">
       <label class="campo"><span>RPM máxima do motor</span><input id="cfg-rpm" type="number" min="0" step="10" inputmode="numeric"></label>
       <label class="campo"><span>Motor ocioso (min)</span><input id="cfg-ocioso" type="number" min="1" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Sem apontamento (min)</span><input id="cfg-sem-ponto" type="number" min="1" step="1" inputmode="numeric"></label>
-      <label class="campo"><span>Troca de turno (min)</span><input id="cfg-turno" type="number" min="1" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Repetir o mesmo alerta a cada (min)</span><input id="cfg-cooldown" type="number" min="0" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Máx. de alertas falados por ciclo</span><input id="cfg-maxvoz" type="number" min="1" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Intervalo de leitura (s)</span><input id="cfg-int" type="number" min="30" step="5" inputmode="numeric"></label>
@@ -4358,7 +4351,7 @@
     <h3 class="secao-alertas">Fontes, vozes e perfis de locução COA</h3>
     <div class="switches">
       <label class="chk"><input id="cfg-liga" type="checkbox"><span>Central de alertas ligada</span></label>
-      <label class="chk"><input id="cfg-local" type="checkbox"><span>Cálculo complementar: RPM, motor ocioso e troca de turno</span></label>
+      <label class="chk"><input id="cfg-local" type="checkbox"><span>Cálculo complementar: RPM e motor ocioso</span></label>
       <label class="chk"><input id="cfg-serv" type="checkbox"><span>Receber alarmes oficiais SGPA (stream e consulta)</span></label>
       <label class="chk"><input id="cfg-stream" type="checkbox"><span>Conexão ao vivo (stream de eventos do mapa)</span></label>
       <label class="chk"><input id="cfg-mapa" type="checkbox"><span>Alertar só do que foi clicado no mapa</span></label>
@@ -4585,7 +4578,7 @@
         configurar(patch);
         escolherVoz();
         if (cfg.som) tocar(2);
-        falar('Atenção C O A: prévia de voz ativa. Colhedora cinco sete oito três oito operando normalmente na Frente 1.', { oficial: true });
+        falar('Atenção Coa: prévia de voz ativa. Colhedora cinco sete oito três oito operando normalmente na Frente 1.', { oficial: true });
       };
     }
     $('cfg-gerenciar-vozes').onclick = () => {
@@ -4687,7 +4680,13 @@
     return classeSla(a.inicio || a.ts, a.severidade || 1, ts).cls === 'sla-crit';
   }
 
+  function setorDoAlerta(a) {
+    return (a && a.setor) || policy.setorControle(a, a && a.e);
+  }
+
   function passaFiltroAtivos(a, filtro, ts = agora()) {
+    if (filtro === 'coa') return setorDoAlerta(a) === 'COA';
+    if (filtro === 'flow') return setorDoAlerta(a) === 'FLOW';
     if (filtro === 'pendentes') return !alertaReconhecido(a, ts);
     if (filtro === 'sla') return slaEstourado(a, ts);
     if (filtro === 'custo') return custoAbertoAlerta(a, ts) > 0;
@@ -4697,7 +4696,7 @@
   }
 
   function definirFiltroAtivos(filtro) {
-    const validos = ['todos', 'pendentes', 'sla', 'custo', 'oficial', 'auditoria'];
+    const validos = ['todos', 'coa', 'flow', 'pendentes', 'sla', 'custo', 'oficial', 'auditoria'];
     filtroAtivos = validos.includes(filtro) ? filtro : 'todos';
     if (el.painel) {
       el.painel.querySelectorAll('[data-filtro-ativos]').forEach((b) => {
@@ -4713,7 +4712,8 @@
   function listaAtivosVisiveis(ts = agora()) {
     return [...ativos.values()]
       .filter((a) => correspondeBuscaCentral([
-        a.numero, a.e && a.e.id, a.e && a.e.nome, a.e && a.e.tipo, a.e && a.e.frente, a.e && a.e.frenteInferida,
+        a.numero, a.classe, setorDoAlerta(a), a.e && a.e.id, a.e && a.e.nome, a.e && a.e.tipo,
+        a.e && a.e.frente, a.e && a.e.frenteInferida, a.e && a.e.grupoEquipamento,
         a.operador, a.nomeAlarme, a.tipoAlarme, a.regra, a.texto, a.detalhe,
       ]))
       .filter((a) => passaFiltroAtivos(a, filtroAtivos, ts));
@@ -4776,9 +4776,10 @@
       const alvoNum = String(cmd.frota || '').trim();
       const eq = [...frota.values()].find((e) => String(e.numero) === alvoNum || String(e.id) === alvoNum || String(e.numero || '').endsWith(alvoNum));
       if (eq) {
-        const cls = classeFala(eq.nome, eq.tipo, eq.frente);
+        const cls = classeFala(eq.nome, eq.tipo, eq.frente, eq.grupoEquipamento);
+        const setor = policy.setorControle({ classe: cls, e: eq }, eq);
         const velTxt = eq.velocidade != null ? `${Math.round(eq.velocidade)} km/h` : 'velocidade n/d';
-        resposta = `${cls} ${eq.numero} na ${eq.frente || eq.grupoEquipamento || 'unidade'}, operação ${eq.operacao || 'não informada'}, a ${velTxt}${eq.operador ? ', operador ' + eq.operador : ''}.`;
+        resposta = `${setor === 'FLOW' ? 'Atenção Flow' : 'Atenção Coa'}: ${cls} ${eq.numero} na ${eq.frente || eq.grupoEquipamento || 'unidade'}, operação ${eq.operacao || 'não informada'}, a ${velTxt}${eq.operador ? ', operador ' + eq.operador : ''}.`;
         abrirNoMapa({ e: eq, numero: eq.numero, classe: cls });
       } else {
         resposta = `Frota ${alvoNum} ainda não consta na leitura atual da telemetria.`;
@@ -4806,7 +4807,7 @@
       const ts = agora();
       const pendente = [...ativos.values()]
         .filter((a) => !(acks[a.chave] && ts - acks[a.chave] < 2 * 3600_000))
-        .sort((a, b) => (b.severidade || 0) - (a.severidade || 0) || (a.inicio || a.ts) - (b.inicio || b.ts))[0];
+        .sort((a, b) => (b.severidade || 0) - (a.severidade || 0) || (a.inicio || a.ts) - (b.inicio || a.ts))[0];
       if (pendente) {
         podarAcks(acks);
         acks[pendente.chave] = ts;
@@ -4814,7 +4815,7 @@
         if (emergenciaAtiva && emergenciaAtiva.chave === pendente.chave) fecharBannerEmergencia();
         renderAtivos();
         renderCabecalho();
-        resposta = `Confirmado: ${pendente.classe} ${pendente.numero} (${pendente.nome}) marcado como ciente no COA.`;
+        resposta = `Confirmado: ${pendente.classe} ${pendente.numero} (${pendente.nome}) marcado como ciente.`;
       } else {
         resposta = 'Todos os alertas ativos já estão reconhecidos no momento.';
       }
@@ -4826,6 +4827,13 @@
     } else if (cmd.acao === 'passagem') {
       abrirPassagemTurno();
       resposta = 'Boletim de passagem de turno gerado e pronto para copiar ou enviar.';
+    } else if (cmd.acao === 'flow') {
+      abrirPainel('ativos');
+      definirFiltroAtivos('flow');
+      const alertasFlow = [...ativos.values()].filter((a) => setorDoAlerta(a) === 'FLOW');
+      resposta = alertasFlow.length
+        ? `Atenção Flow: ${alertasFlow.length} alerta(s) ativos de caminhões e veículos leves filtrados na Central.`
+        : 'Atenção Flow: nenhum alerta ativo de caminhões ou veículos leves no momento.';
     } else if (cmd.acao === 'pendentes') {
       abrirPainel('ativos');
       definirFiltroAtivos('pendentes');
@@ -4833,7 +4841,7 @@
       const pend = [...ativos.values()].filter((a) => !alertaReconhecido(a, ts));
       const sla = pend.filter((a) => slaEstourado(a, ts)).length;
       resposta = pend.length
-        ? `${pend.length} alerta(s) sem ciência no COA${sla ? `, ${sla} com SLA estourado` : ''}. Filtro “Sem ciência” aplicado na Central.`
+        ? `${pend.length} alerta(s) sem ciência${sla ? `, ${sla} com SLA estourado` : ''}. Filtro “Sem ciência” aplicado na Central.`
         : 'Pente-fino em dia: nenhum alerta sem ciência na Central.';
     } else if (cmd.acao === 'fixar') {
       const fixo = alternarPainelFixo();
@@ -4843,7 +4851,7 @@
       const dds = placarPositivo();
       resposta = dds.resumoCurto ? dds.resumoCurto.replace(/\n/g, ' · ') : 'Placar DDS aguardando consolidação das frentes no turno.';
     } else {
-      resposta = 'Exemplos Alô COA: "fila de comboio", "risco de moenda", "resumo das frentes", "onde está a 57838", "reconhecer" ou "placar dds".';
+      resposta = 'Exemplos Alô Coa: "fila de comboio", "alertas flow", "risco de moenda", "resumo das frentes", "onde está a 57838", "reconhecer" ou "placar dds".';
     }
     ultimaRespostaAloCoa = resposta;
     const boxResp = document.getElementById('alo-coa-resposta');
@@ -5563,10 +5571,12 @@
     const reincTurno = contexto === 'central' ? ocorrenciasNoTurnoEquipamento(a.numero, ts) : 0;
     const eqVivo = (a.e && a.e.id && frota.get(String(a.e.id))) || a.e || null;
     const telemetriaHtml = contexto === 'central' ? montarFaixaTelemetria(eqVivo) : '';
+    const setor = setorDoAlerta(a);
     d.innerHTML = `
       <div class="a-top">
         <span class="a-icone">${a.icone}</span>
         <strong class="a-eq">${esc(a.classe)} ${esc(a.numero)}</strong>
+        <span class="a-chip ${setor === 'FLOW' ? 'setor-flow' : 'setor-coa'}">${setor === 'FLOW' ? '🚛 FLOW' : '🚜 COA'}</span>
         <span class="a-chip">${esc(a.nome)}</span>
         ${a.fonte === 'portal' ? '<span class="a-chip oficial">SGPA</span>' : ''}
         ${a.fonte === 'teste' ? '<span class="a-chip cinza">AMOSTRA MANUAL</span>' : ''}
@@ -5601,7 +5611,10 @@
         ${comAccoes && !reconhecido ? '<button data-q="ack">✓ reconhecer</button>' : comAccoes ? '<span class="a-chip verde">🛠️ Em acompanhamento</span>' : ''}
         <button data-q="fechar" class="fim">✕</button>
       </div>`;
-    d.querySelector('[data-q="ouvir"]').onclick = () => falar(a.fala);
+    d.querySelector('[data-q="ouvir"]').onclick = () => {
+      mostrarToast(a, false);
+      falar(a.fala, { toastExibido: true });
+    };
     d.querySelector('[data-q="mapa"]').onclick = () => abrirNoMapa(a);
     d.querySelector('[data-q="whats"]').onclick = () => cobrarNoWhatsApp(a);
     const snz = d.querySelector('[data-q="snz"]');
@@ -5707,6 +5720,8 @@
     if (!el.painel) return;
     const contagens = {
       todos: baseBusca.length,
+      coa: 0,
+      flow: 0,
       pendentes: 0,
       sla: 0,
       custo: 0,
@@ -5714,6 +5729,8 @@
       auditoria: 0,
     };
     for (const a of baseBusca) {
+      if (setorDoAlerta(a) === 'FLOW') contagens.flow++;
+      else contagens.coa++;
       if (!alertaReconhecido(a, ts)) contagens.pendentes++;
       if (slaEstourado(a, ts)) contagens.sla++;
       if (custoAbertoAlerta(a, ts) > 0) contagens.custo++;
@@ -5736,7 +5753,8 @@
     if (!el.ativos) return;
     const ts = agora();
     const baseBusca = [...ativos.values()].filter((a) => correspondeBuscaCentral([
-      a.numero, a.e && a.e.id, a.e && a.e.nome, a.e && a.e.tipo, a.e && a.e.frente, a.e && a.e.frenteInferida,
+      a.numero, a.classe, setorDoAlerta(a), a.e && a.e.id, a.e && a.e.nome, a.e && a.e.tipo,
+      a.e && a.e.frente, a.e && a.e.frenteInferida, a.e && a.e.grupoEquipamento,
       a.operador, a.nomeAlarme, a.tipoAlarme, a.regra, a.texto, a.detalhe,
     ]));
     atualizarContadoresTriagem(baseBusca, ts);
@@ -5770,7 +5788,7 @@
     if (el.historico && !el.historico.classList.contains('hide')) {
       el.historico.innerHTML = '';
       const resultados = hist.filter((h) => correspondeBuscaCentral([
-        h.equipamento, h.descricao, h.nomeAlarme, h.tipoAlarme, h.regra,
+        h.equipamento, h.setor, h.descricao, h.nomeAlarme, h.tipoAlarme, h.regra,
         h.texto, h.detalhe, h.operador, h.frente, h.frenteInferida, h.tratativa,
       ]));
       if (!resultados.length) {
@@ -5780,11 +5798,13 @@
       }
       for (const h of resultados.slice(0, 150)) {
         const r = REGRAS[h.regra] || REGRAS.generico;
+        const setorH = h.setor || policy.setorControle({ descricao: h.descricao, regra: h.regra }, null);
         const d = document.createElement('div');
         d.className = 'alerta menor';
         d.style.setProperty('--cor', r.cor);
         d.innerHTML =
           `<div class="a-top"><span class="a-icone">${r.icone}</span><strong class="a-eq">${esc(h.equipamento)}</strong>` +
+          `<span class="a-chip ${setorH === 'FLOW' ? 'setor-flow' : 'setor-coa'}">${setorH === 'FLOW' ? '🚛 FLOW' : '🚜 COA'}</span>` +
           `<span class="a-chip">${esc(h.nomeAlarme || r.nome)}</span>${h.frenteInferida ? `<span class="a-chip">Frente inferida: ${esc(h.frenteInferida)}</span>` : ''}${h.tratativa ? `<span class="a-chip verde">📝 ${esc(h.tratativa)}</span>` : ''}${h.notificacaoSelecionada === false ? '<span class="a-chip cinza">sem aviso</span>' : ''}<span class="a-hora">${hora(h.ts)}</span></div>` +
           `<p class="a-txt">${esc(h.texto)}</p>` +
           `<p class="a-meta">${esc(h.descricao || '')}${h.operador ? ' · ' + esc(h.operador) : ''} · fonte ${esc(h.fonte)}</p>`;
@@ -5797,6 +5817,11 @@
   function mostrarToast(a, silenciado) {
     if (!el.toasts) return;
     prepararBotaoLimparToasts();
+    if (a && a.chave) {
+      el.toasts.querySelectorAll('.toast').forEach((n) => {
+        if (n.dataset.chave === a.chave) n.remove();
+      });
+    }
     const d = card(a, !silenciado, 'toast');
     d.classList.add('toast');
     if (silenciado) d.classList.add('mudo');
@@ -5900,7 +5925,6 @@
     velocidade: 'Somente alarme oficial de velocidade emitido pelo SGPA.',
     rpm: 'Tipos oficiais de RPM e cálculo complementar, se ativado.',
     ocioso: 'Motor ocioso oficial e cálculo complementar; identifica também o caso sem apontamento SGPA.',
-    turno: 'Troca de turno oficial e cálculo complementar, se ativado.',
     motorCondicao: 'Condições combinadas do motor; não são velocidade pura.',
     aguardandoCaminhao: 'Trator/transbordo com a operação Aguardando Caminhão. Informa a frente/grupo.',
     aguardandoBasculamento: 'Correlação local: se trator/transbordo estiver em 905 e houver caminhão na mesma frente em “Aguardando Carregamento”, classifica a situação como basculamento provável após a tolerância configurada de 15 min. O apontamento SGPA não é alterado.',
@@ -6005,7 +6029,7 @@
     if (!box) return;
     const busca = norm(($('cfg-busca-tipo') || {}).value);
     const todos = $('cfg-todos-tipos') && $('cfg-todos-tipos').checked;
-    const lista = catalogo.tipos.filter((t) => (todos || busca || t.observado || t.conhecido || t.correspondenciaNomeRegra) && (!busca || norm(t.nome + ' ' + t.codigo).includes(busca)))
+    const lista = catalogo.tipos.filter((t) => !policy.alarmeTrocaDeTurno(t.codigo, t.nome) && (todos || busca || t.observado || t.conhecido || t.correspondenciaNomeRegra) && (!busca || norm(t.nome + ' ' + t.codigo).includes(busca)))
       .sort((a, b) => Number(!!b.observado) - Number(!!a.observado) || a.nome.localeCompare(b.nome, 'pt-BR') || String(a.codigo).localeCompare(String(b.codigo)));
     box.innerHTML = '';
     for (const t of lista.slice(0, limiteTipos)) {
@@ -6302,7 +6326,6 @@
       'cfg-abast-motor-min': cfg.minutosAbastMotorLigado != null ? cfg.minutosAbastMotorLigado : 2,
       'cfg-picadinho-qtd': cfg.microParadasQtd != null ? cfg.microParadasQtd : 4,
       'cfg-picadinho-soma': cfg.microParadasSomaMin != null ? cfg.microParadasSomaMin : 16,
-      'cfg-turno': cfg.minutosTurno,
       'cfg-cooldown': cfg.cooldownMin,
       'cfg-maxvoz': cfg.maxPorCiclo,
       'cfg-int': cfg.intervaloSeg,
@@ -6448,7 +6471,6 @@
       minutosAbastMotorLigado: Math.max(0, n('cfg-abast-motor-min', 2)),
       microParadasQtd: Math.max(2, n('cfg-picadinho-qtd', 4)),
       microParadasSomaMin: Math.max(5, n('cfg-picadinho-soma', 16)),
-      minutosTurno: n('cfg-turno', 4),
       cooldownMin: n('cfg-cooldown', 10),
       maxPorCiclo: n('cfg-maxvoz', 4),
       intervaloSeg: n('cfg-int', 45),
@@ -6473,9 +6495,10 @@
   }
 
   function exportarCsv() {
-    const cab = ['quando', 'tipo', 'equipamento', 'descricao', 'operador', 'valor', 'mensagem', 'fonte', 'detalhe', 'fala', 'codigo_sgpa', 'nome_sgpa', 'frente_grupo', 'notificacao_selecionada', 'tratativa_coa'];
+    const cab = ['quando', 'setor', 'tipo', 'equipamento', 'descricao', 'operador', 'valor', 'mensagem', 'fonte', 'detalhe', 'fala', 'codigo_sgpa', 'nome_sgpa', 'frente_grupo', 'notificacao_selecionada', 'tratativa_coa'];
     const linhas = hist.map((h) => [
       new Date(h.ts).toLocaleString('pt-BR'),
+      h.setor || policy.setorControle({ descricao: h.descricao, regra: h.regra }, null),
       (REGRAS[h.regra] || {}).nome || h.regra,
       h.equipamento,
       h.descricao,
@@ -6504,10 +6527,10 @@
     const e = {
       id: 'TESTE',
       numero: '8833',
-      nome: 'Caminhão Transbordo (exemplo)',
+      nome: 'Caminhão Canavieiro (exemplo)',
       tipo: 'CAMINHAO CANAVIEIRO',
       frente: 'Frente de teste',
-      operacao: '925 - Troca de Turno - HR',
+      operacao: '305 - Transporte de Cana',
       estadoTxt: 'TRABALHANDO',
       operador: 'Rafael Silva',
       operadorBruto: 'Rafael Silva',

@@ -34,7 +34,7 @@ test('normaliza apenas alarmes SGPA ativos, pronuncia a classe real do equipamen
   assert.equal(alarm.typeId, '2203');
   assert.equal(alarm.category, 'velocidade');
   assert.equal(alarm.value, 85);
-  assert.match(alarm.payload.body, /Caminhão oito oito três três/);
+  assert.match(alarm.payload.body, /^Atenção Flow: Caminhão oito oito três três/);
   assert.match(alarm.payload.body, /85 quilômetros por hora/);
   assert.equal(alarm.payload.official, true);
   assert.deepEqual(toDatabaseAlarm(alarm).alarmKey, '8833|2203|4674575');
@@ -45,7 +45,23 @@ test('normaliza apenas alarmes SGPA ativos, pronuncia a classe real do equipamen
     descEquipamento: '0083 - Trator John Deere',
     descTpEquipamento: 'TRATOR',
   }]);
-  assert.match(tractorAlarms[0].payload.body, /Trator zero zero oito três/);
+  assert.match(tractorAlarms[0].payload.body, /^Atenção Coa: Trator zero zero oito três/);
+
+  const bombeiroAlarms = normalizeAlertResponse([{
+    ...speedFixture,
+    cdEquipamento: '9911',
+    descEquipamento: '9911 - Trator de Pneu Leve',
+    descTpEquipamento: 'TRATOR DE PNEU LEVE',
+    descGrupoEquipamento: 'CAMINHÕES BOMBEIROS',
+  }]);
+  assert.match(bombeiroAlarms[0].payload.body, /^Atenção Flow: Caminhão nove nove um um/);
+  assert.doesNotMatch(bombeiroAlarms[0].payload.body, /trator|bombeir/i);
+
+  const turnoIgnored = normalizeAlertResponse([
+    { ...speedFixture, cdId: 771, cdTpAlarme: 2849, descTpAlarme: 'TROCA DE TURNO' },
+    { ...speedFixture, cdId: 772, cdTpAlarme: 2851, descTpAlarme: 'TROCA DE TURNO EXCEDIDA' },
+  ]);
+  assert.equal(turnoIgnored.length, 0);
 });
 
 test('ignora alarme fechado e deduplica repetição idêntica da resposta SGPA', () => {

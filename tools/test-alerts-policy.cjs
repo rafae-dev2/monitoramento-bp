@@ -13,7 +13,12 @@ assert.equal(policy.categoria(5, ''), 'velocidade');
 for (const code of [2203, 2685, 1641, 10820, 12600, 11400, 11480, 12724]) assert.equal(policy.categoria(code, ''), 'velocidade');
 for (const code of [4, 6, 8]) assert.equal(policy.categoria(code, ''), 'rpm');
 for (const code of [11, 2343, 2207]) assert.equal(policy.categoria(code, ''), 'ocioso');
-for (const code of [2849, 2851]) assert.equal(policy.categoria(code, ''), 'turno');
+for (const code of [2849, 2851]) {
+  assert.equal(policy.alarmeTrocaDeTurno(code, ''), true);
+  assert.equal(policy.notificar({}, { codigo: code }), false);
+}
+assert.equal(policy.alarmeTrocaDeTurno('9999', 'TROCA DE TURNO EXCEDIDA'), true);
+assert.equal(policy.notificar({ tiposNotificacao: { 2849: true } }, { codigo: 2849, descricao: 'Troca de Turno' }), false);
 assert.equal(policy.categoria(2697, 'alarme_vel'), 'motorCondicao');
 assert.equal(policy.categoria(2699, 'Velocidade'), 'motorCondicao');
 assert.equal(policy.categoria('2697/5', 'Velocidade'), 'motorCondicao');
@@ -86,14 +91,14 @@ assert.equal(policy.notificar({ tiposNotificacao: { 41: false } }, { e: { codigo
 assert.equal(policy.limiteRefeicao({ refeicaoGrupos: { APOIO: 30, 'Frente 1': 60 } }, { frente: 'Frente 1', grupoEquipamento: 'APOIO' }), 30);
 assert.equal(policy.limiteRefeicao({ refeicaoGrupos: { 'Frente 1': 60 } }, { frente: 'Frente 1', grupoEquipamento: 'Caminhões Canavieiro Terc' }), 60);
 
-// Fala: identificador soletrado; valor da velocidade numérico arredondado; ausência não vira zero.
-assert.equal(policy.montarFala({ codigo: 2203, numero: '8833', valor: 85 }), 'Veículo oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.');
-assert.equal(policy.montarFala({ codigo: 2203, numero: '0083', valor: '85.6', operador: 'Ana' }), 'Veículo zero zero oito três excedeu a velocidade a 86 quilômetros por hora. Verificar.');
-assert.equal(policy.montarFala({ codigo: 2203, numero: '8833', valor: null }), 'Veículo oito oito três três com alarme oficial de velocidade excedida. Verificar.');
-assert.equal(policy.montarFala({ codigo: 5, classe: 'Trator', numero: '32308', valor: null }), 'Trator três dois três zero oito com alarme oficial de velocidade excedida. Verificar.');
-assert.equal(policy.montarFala({ codigo: 5, classe: 'Trator', numero: '32277', valor: 36 }), 'Trator três dois dois sete sete excedeu a velocidade a 36 quilômetros por hora. Verificar.');
-assert.equal(policy.montarFala({ codigo: 5, numero: '32308', valor: 36, e: { tipo: 'TRATOR DE PNEU LEVE' } }), 'Trator três dois três zero oito excedeu a velocidade a 36 quilômetros por hora. Verificar.');
-assert.equal(policy.montarFala({ codigo: 5, classe: 'Veículo', numero: '6614', valor: 60 }), 'Veículo seis seis um quatro excedeu a velocidade a 60 quilômetros por hora. Verificar.');
+// Fala: identificador soletrado; prefixo Atenção Flow vs Atenção Coa com pronúncia natural sem soletrar.
+assert.equal(policy.montarFala({ codigo: 2203, numero: '8833', valor: 85 }), 'Atenção Flow: Veículo oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.');
+assert.equal(policy.montarFala({ codigo: 2203, numero: '0083', valor: '85.6', operador: 'Ana' }), 'Atenção Flow: Veículo zero zero oito três excedeu a velocidade a 86 quilômetros por hora. Verificar.');
+assert.equal(policy.montarFala({ codigo: 2203, numero: '8833', valor: null }), 'Atenção Flow: Veículo oito oito três três com alarme oficial de velocidade excedida. Verificar.');
+assert.equal(policy.montarFala({ codigo: 5, classe: 'Trator', numero: '32308', valor: null }), 'Atenção Coa: Trator três dois três zero oito com alarme oficial de velocidade excedida. Verificar.');
+assert.equal(policy.montarFala({ codigo: 5, classe: 'Trator', numero: '32277', valor: 36 }), 'Atenção Coa: Trator três dois dois sete sete excedeu a velocidade a 36 quilômetros por hora. Verificar.');
+assert.equal(policy.montarFala({ codigo: 5, numero: '32308', valor: 36, e: { tipo: 'TRATOR DE PNEU LEVE' } }), 'Atenção Coa: Trator três dois três zero oito excedeu a velocidade a 36 quilômetros por hora. Verificar.');
+assert.equal(policy.montarFala({ codigo: 5, classe: 'Veículo', numero: '6614', valor: 60 }), 'Atenção Flow: Veículo seis seis um quatro excedeu a velocidade a 60 quilômetros por hora. Verificar.');
 for (const value of [undefined, '', '   ', 'N/A', 'null', 'NaN', Infinity, -1]) {
   assert.match(policy.montarFala({ codigo: 5, numero: '12', valor: value }), /com alarme oficial de velocidade excedida/);
 }
@@ -101,47 +106,47 @@ assert.match(policy.montarFala({ codigo: 5, numero: '12', valor: 0 }), /a 0 quil
 
 // Expansões aprovadas pelo usuário no DOCX; códigos sem explicação não recebem tradução presumida.
 const falasAprovadas = {
-  12744: 'Veículo oito oito três três: sem apontamento. Verificar.',
-  10700: 'Veículo oito oito três três: abastecimento de insumo com motor ligado. Verificar.',
-  10820: 'Veículo oito oito três três: controle de velocidade do equipamento, velocidade medida de 85 quilômetros por hora. Verificar.',
-  10840: 'Veículo oito oito três três: abastecimento de insumo com tempo excedido. Verificar.',
-  10860: 'Veículo oito oito três três: aguardando colheitadeira indevidamente. Verificar.',
-  11304: 'Veículo oito oito três três: frente de pátio indevida no transbordo. Verificar.',
-  11340: 'Veículo oito oito três três: sem operador trabalhando. Verificar.',
-  12122: 'Veículo oito oito três três: apontar o centro de custo correto. Verificar.',
-  12440: 'Veículo oito oito três três: mudar para a operação mecanizada do caminhão terceiro canavieiro. Verificar.',
-  12180: 'Veículo oito oito três três: desligar a chave geral. Verificar.',
-  12080: 'Veículo oito oito três três: forçar a balança de entrada. Verificar.',
-  12100: 'Veículo oito oito três três: não apontar aguardando carregamento. Verificar.',
-  12200: 'Veículo oito oito três três: apontar o centro de custo correto da pipa. Verificar.',
-  3483: 'Veículo oito oito três três: aguardando manobra do transbordo. Verificar.',
-  11500: 'Veículo oito oito três três: abastecimento de insumo: desligar o motor. Verificar.',
-  12500: 'Veículo oito oito três três: sair do apontamento de abastecimento de insumo. Verificar.'
+  12744: 'Atenção Flow: Veículo oito oito três três: sem apontamento. Verificar.',
+  10700: 'Atenção Flow: Veículo oito oito três três: abastecimento de insumo com motor ligado. Verificar.',
+  10820: 'Atenção Flow: Veículo oito oito três três: controle de velocidade do equipamento, velocidade medida de 85 quilômetros por hora. Verificar.',
+  10840: 'Atenção Flow: Veículo oito oito três três: abastecimento de insumo com tempo excedido. Verificar.',
+  10860: 'Atenção Flow: Veículo oito oito três três: aguardando colheitadeira indevidamente. Verificar.',
+  11304: 'Atenção Flow: Veículo oito oito três três: frente de pátio indevida no transbordo. Verificar.',
+  11340: 'Atenção Flow: Veículo oito oito três três: sem operador trabalhando. Verificar.',
+  12122: 'Atenção Flow: Veículo oito oito três três: apontar o centro de custo correto. Verificar.',
+  12440: 'Atenção Flow: Veículo oito oito três três: mudar para a operação mecanizada do caminhão terceiro canavieiro. Verificar.',
+  12180: 'Atenção Flow: Veículo oito oito três três: desligar a chave geral. Verificar.',
+  12080: 'Atenção Flow: Veículo oito oito três três: forçar a balança de entrada. Verificar.',
+  12100: 'Atenção Flow: Veículo oito oito três três: não apontar aguardando carregamento. Verificar.',
+  12200: 'Atenção Flow: Veículo oito oito três três: apontar o centro de custo correto da pipa. Verificar.',
+  3483: 'Atenção Flow: Veículo oito oito três três: aguardando manobra do transbordo. Verificar.',
+  11500: 'Atenção Flow: Veículo oito oito três três: abastecimento de insumo: desligar o motor. Verificar.',
+  12500: 'Atenção Flow: Veículo oito oito três três: sair do apontamento de abastecimento de insumo. Verificar.'
 };
 for (const [codigo, fala] of Object.entries(falasAprovadas)) {
   assert.equal(policy.montarFala({ tipoAlarme: codigo, numero: '8833', valor: codigo === '10820' ? 85 : null }), fala);
 }
 assert.equal(
   policy.montarFala({ tipoAlarme: '12600', numero: '8833', valor: 85 }),
-  'Veículo oito oito três três: velocidade excedida na usina, referência de 23 quilômetros por hora, velocidade medida de 85 quilômetros por hora. Verificar.'
+  'Atenção Flow: Veículo oito oito três três: velocidade excedida na usina, referência de 23 quilômetros por hora, velocidade medida de 85 quilômetros por hora. Verificar.'
 );
 assert.equal(
   policy.montarFala({ tipoAlarme: '11400', numero: '8833', valor: null }),
-  'Veículo oito oito três três: velocidade excedida na oficina, referência de 50 quilômetros por hora. Verificar.'
+  'Atenção Flow: Veículo oito oito três três: velocidade excedida na oficina, referência de 50 quilômetros por hora. Verificar.'
 );
 assert.equal(
   policy.montarFala({ tipoAlarme: '11480', numero: '8833', valor: 85 }),
-  'Veículo oito oito três três: velocidade excedida na usina, referência de 23 quilômetros por hora, velocidade medida de 85 quilômetros por hora. Verificar.'
+  'Atenção Flow: Veículo oito oito três três: velocidade excedida na usina, referência de 23 quilômetros por hora, velocidade medida de 85 quilômetros por hora. Verificar.'
 );
 assert.equal(
   policy.montarFala({ tipoAlarme: '12724', numero: '8833', valor: 62 }),
-  'Veículo oito oito três três: alerta de velocidade, referência de 60 quilômetros por hora, velocidade medida de 62 quilômetros por hora. Verificar.'
+  'Atenção Flow: Veículo oito oito três três: alerta de velocidade, referência de 60 quilômetros por hora, velocidade medida de 62 quilômetros por hora. Verificar.'
 );
 assert.equal(
   policy.montarFala({ tipoAlarme: '10820', classe: 'Trator', numero: '32308', valor: 85 }),
-  'Trator três dois três zero oito: controle de velocidade do equipamento, velocidade medida de 85 quilômetros por hora. Verificar.'
+  'Atenção Coa: Trator três dois três zero oito: controle de velocidade do equipamento, velocidade medida de 85 quilômetros por hora. Verificar.'
 );
-assert.equal(policy.montarFala({ tipoAlarme: '3484', numero: '8833', texto: 'SEM APONTAMENTO' }), 'Veículo oito oito três três: SEM APONTAMENTO. Verificar.');
+assert.equal(policy.montarFala({ tipoAlarme: '3484', numero: '8833', texto: 'SEM APONTAMENTO' }), 'Atenção Flow: Veículo oito oito três três: SEM APONTAMENTO. Verificar.');
 
 // Caminhão aguardado não inclui operador e usa frente ou fallback.
 assert.equal(policy.caminhaoCanavieiroTerceiro({ tipo: 'CAMINHÕES CANAVIEIRO TERC' }), true);
@@ -155,11 +160,11 @@ for (const tipo of ['CAMINHÕES CAÇAMBAS', 'CAMINHÕES MUNCK', 'CAMINHÕES BOMB
 }
 assert.equal(
   policy.montarFala({ numero: '0083', e: { tipoCompleto: 'Trator', operacao: '123 - Aguardando Caminhão - HD', frente: 'Norte' }, operador: 'Ana' }),
-  'Trator zero zero oito três aguardando caminhão. Frente/grupo Norte. Verificar.'
+  'Atenção Coa: Trator zero zero oito três aguardando caminhão. Frente/grupo Norte. Verificar.'
 );
 assert.equal(
   policy.montarFala({ numero: '12', e: { tipo: 'Transbordo', operacao: 'Aguardando Caminhao' } }),
-  'Trator um dois aguardando caminhão. Frente/grupo frente não informada. Verificar.'
+  'Atenção Coa: Trator um dois aguardando caminhão. Frente/grupo frente não informada. Verificar.'
 );
 assert.equal(
   policy.montarFala({
@@ -167,14 +172,14 @@ assert.equal(
     numero: '4426', classe: 'Caminhão', valor: 31,
     e: { tipo: 'CAMINHÕES CANAVIEIRO TERC', frente: 'Frente 1', grupoEquipamento: 'Caminhões Canavieiro Terc' }
   }),
-  'Caminhão quatro quatro dois seis aguardando carregamento há 31 minutos, se encontra na Frente 1. Verificar.'
+  'Atenção Flow: Caminhão quatro quatro dois seis aguardando carregamento há 31 minutos, se encontra na Frente 1. Verificar.'
 );
 const falaFazendaFundo25 = policy.montarFala({
   regra: 'paradaImprodutiva', paradaId: 'aguardandoCarregamento', paradaNome: 'Aguardando carregamento (caminhão)',
   numero: '4426', classe: 'Caminhão', valor: 31,
   e: { tipo: 'CAMINHÕES CANAVIEIRO TERC', frente: 'Fazenda Fundo 25' }
 });
-assert.equal(falaFazendaFundo25, 'Caminhão quatro quatro dois seis aguardando carregamento há 31 minutos, se encontra na Fazenda Fundo 25. Verificar.');
+assert.equal(falaFazendaFundo25, 'Atenção Flow: Caminhão quatro quatro dois seis aguardando carregamento há 31 minutos, se encontra na Fazenda Fundo 25. Verificar.');
 assert.doesNotMatch(falaFazendaFundo25, /dentro da usina/i);
 const semFrenteColheita = policy.montarFala({
   regra: 'paradaImprodutiva', paradaId: 'aguardandoCarregamento', paradaNome: 'Aguardando carregamento (caminhão)',
@@ -189,16 +194,16 @@ for (const tipo of ['CAMINHÕES CAÇAMBAS', 'CAMINHÕES MUNCK', 'CAMINHÕES BOMB
     numero: '4426', classe: 'Caminhão', valor: 31,
     e: { tipo, frente: 'Frente 1', grupoEquipamento: tipo }
   });
-  assert.equal(fala, 'Caminhão quatro quatro dois seis em Aguardando carregamento há 31 minutos. Verificar.');
+  assert.equal(fala, 'Atenção Flow: Caminhão quatro quatro dois seis em Aguardando carregamento há 31 minutos. Verificar.');
   assert.doesNotMatch(fala, /Frente 1|frente de colheita|Frente\/grupo/);
 }
 
 // Demais mensagens limpam o prefixo de alarme e expandem unidades sem reformular valores.
 assert.equal(
   policy.montarFala({ categoria: 'rpm', classe: 'Trator', numero: 'A07', texto: 'Alarme oficial: RPM 1500 e velocidade 42 km/h.' }),
-  'Trator A zero sete: rotações por minuto 1500 e velocidade 42 quilômetros por hora. Verificar.'
+  'Atenção Coa: Trator A zero sete: rotações por minuto 1500 e velocidade 42 quilômetros por hora. Verificar.'
 );
-assert.equal(policy.montarFala({ codigo: 777, texto: 'Pressão 12' }), 'Veículo não informado: Pressão 12. Verificar.');
+assert.equal(policy.montarFala({ codigo: 777, texto: 'Pressão 12' }), 'Atenção Flow: Veículo não informado: Pressão 12. Verificar.');
 
 console.log('test-alerts-policy: todos os testes passaram.');
 
@@ -208,7 +213,7 @@ assert.equal(policy.notificar({ notificarCategorias: { rpm: false } }, { regra: 
 assert.equal(policy.notificar({ notificarCategorias: { aguardandoCaminhao: false } }, { regra: 'aguardandoCaminhao' }), false);
 const speedWhileWaiting = { regra: 'velocidade', tipoAlarme: '5', numero: '8833', valor: 85, e: { tipo: 'Trator', operacao: 'Aguardando Caminhão', frente: 'Frente teste' } };
 assert.equal(policy.notificar({ notificarCategorias: { aguardandoCaminhao: false } }, speedWhileWaiting), true);
-assert.equal(policy.montarFala(speedWhileWaiting), 'Trator oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.');
+assert.equal(policy.montarFala(speedWhileWaiting), 'Atenção Coa: Trator oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.');
 assert.equal(policy.aplicarGlossario('Veículo Caminhões Canavieiro Terc'), 'Veículo Caminhões Canavieiro Terceiro');
 assert.equal(policy.aplicarGlossario('Terc', { glossarioFala: 'Terc=Terceiro' }), 'Terceiro');
 assert.equal(policy.notificar({}, { regra: 'aguardandoBasculamento' }), true);
@@ -218,14 +223,14 @@ assert.equal(
     regra: 'aguardandoBasculamento', numero: '8833', caminhoes: ['4451'],
     e: { frente: 'Caminhões Canavieiro Terc' }
   }),
-  'Trator oito oito três três: aguardando basculamento, inferido pelo aplicativo porque o caminhão quatro quatro cinco um está aguardando carregamento na mesma frente. Frente/grupo Caminhões Canavieiro Terceiro. No SGPA, o apontamento permanece Aguardando Caminhão. Verificar.'
+  'Atenção Coa: Trator oito oito três três: aguardando basculamento, inferido pelo aplicativo porque o caminhão quatro quatro cinco um está aguardando carregamento na mesma frente. Frente/grupo Caminhões Canavieiro Terceiro. No SGPA, o apontamento permanece Aguardando Caminhão. Verificar.'
 );
 assert.equal(
   policy.montarFala({
     regra: 'frenteDividida', classe: 'Transbordo', numero: '8833',
     e: { tipo: 'Transbordo', operacao: '123 - Frente dividida', frente: 'Frente Norte' }
   }),
-  'Atenção COA: Transbordo oito oito três três apontou Frente dividida. Frente/grupo Frente Norte. Verificar a sequência de chamada da colhedora no sistema FUT.'
+  'Atenção Coa: Transbordo oito oito três três apontou Frente dividida. Frente/grupo Frente Norte. Verificar a sequência de chamada da colhedora no sistema FUT.'
 );
 
 // Inteligência COA v3.0.0: emergência, qualidade de colheita, Raio-X CTT + balanceamento, WhatsApp e Passagem de Turno.
@@ -335,8 +340,9 @@ assert.equal(policy.interpretarComandoCoa('modo chuva frente 2').frente, 'Frente
 assert.equal(policy.interpretarComandoCoa('alertas pendentes').acao, 'pendentes');
 assert.equal(policy.interpretarComandoCoa('fixar painel').acao, 'fixar');
 
-// Pacote Pente-Fino COA v5.0 ("Zero Agulha"): 24 categorias, 26 paradas auditadas, sem operador, chave geral, abastecimento motor ligado e micro-paradas crônicas.
-assert.equal(policy.CATEGORIAS.length, 24);
+// Pacote Pente-Fino COA v5.0 + Refinamentos Operacionais v5.1 (23 categorias sem Troca de Turno, Bombeiro -> Caminhão, Atenção Flow vs Atenção Coa).
+assert.equal(policy.CATEGORIAS.length, 23);
+assert.equal(policy.CATEGORIAS.includes('turno'), false);
 assert.equal(policy.PARADAS.length, 26);
 assert.equal(policy.ehAlertaSeguranca('abastecimentoMotorLigado'), true);
 assert.equal(policy.ehAlertaSeguranca('chaveGeralLigada'), false);
@@ -366,7 +372,48 @@ const serrote = policy.avaliarMicroParadas([
 ], agoraRef, 60, 4, 16);
 assert.ok(serrote && serrote.episodios === 4 && serrote.minutosPerdidos === 17);
 
-assert.match(policy.montarFala({ regra: 'abastecimentoMotorLigado', classe: 'Colhedora', numero: '57838', valor: 1300 }, {}), /alerta de segurança.*com motor ligado/i);
-assert.match(policy.montarFala({ regra: 'microParadasCronicas', classe: 'Colhedora', numero: '57838', valor: 18 }, {}), /micro-paradas/i);
+assert.match(policy.montarFala({ regra: 'abastecimentoMotorLigado', classe: 'Colhedora', numero: '57838', valor: 1300 }, {}), /^Atenção Coa: alerta de segurança, Colhedora .*com motor ligado/i);
+assert.match(policy.montarFala({ regra: 'microParadasCronicas', classe: 'Colhedora', numero: '57838', valor: 18 }, {}), /^Atenção Coa.*Colhedora .*micro-paradas/i);
 
-console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 passaram.');
+// v5.1.0: Bombeiro cadastrado como TRATOR DE PNEU LEVE no SGPA -> sempre fala Caminhão e setor FLOW (nunca Trator nem Bombeiro).
+const bombeiroErradoPortal = {
+  id: 'BOMB-01',
+  numero: '9911',
+  nome: '9911 - Trator de Pneu Leve',
+  tipo: 'TRATOR DE PNEU LEVE',
+  grupoEquipamento: 'CAMINHÕES BOMBEIROS',
+  frente: 'Apoio Incêndio',
+  operacao: 'Aguardando Caminhão',
+  operacaoConfirmada: true,
+  velocidade: 52,
+};
+assert.equal(policy.ehGrupoBombeiro(null, bombeiroErradoPortal), true);
+assert.equal(policy.classeEquipamentoFalado(null, bombeiroErradoPortal), 'Caminhão');
+assert.equal(policy.setorControle(null, bombeiroErradoPortal), 'FLOW');
+assert.equal(policy.aguardandoCaminhao(bombeiroErradoPortal), false, 'Bombeiro com tipo errado TRATOR DE PNEU LEVE não entra em regra de Trator');
+const falaVelBombeiro = policy.montarFala({ codigo: 5, numero: '9911', valor: 74, e: bombeiroErradoPortal });
+assert.equal(falaVelBombeiro, 'Atenção Flow: Caminhão nove nove um um excedeu a velocidade a 74 quilômetros por hora. Verificar.');
+assert.doesNotMatch(falaVelBombeiro, /trator|bombeir/i);
+assert.doesNotMatch(falaVelBombeiro, /C O A|F L O W|\bCOA\b|\bFLOW\b/);
+const emgBombeiro = policy.emergenciaOperacional(bombeiroErradoPortal);
+assert.ok(emgBombeiro && /^Caminhão em deslocamento/.test(emgBombeiro.motivo));
+assert.doesNotMatch(emgBombeiro.motivo, /bombeir|trator/i);
+const falaEmgBombeiro = policy.montarFala({ regra: 'emergencia', numero: '9911', texto: emgBombeiro.motivo, e: bombeiroErradoPortal });
+assert.match(falaEmgBombeiro, /^Atenção Flow, emergência! Caminhão nove nove um um/);
+assert.doesNotMatch(falaEmgBombeiro, /trator|bombeir|C O A|F L O W|\bCOA\b|\bFLOW\b/);
+
+// v5.1.0: Diferenciação Controle FLOW (caminhões + veículos leves) vs COA (tratores, transbordos, colhedoras e linha amarela).
+const vlPortal = { numero: '1102', nome: '1102 - Utilitário', tipo: 'TRATOR DE PNEU LEVE', grupoEquipamento: 'VEÍCULOS LEVES' };
+assert.equal(policy.classeEquipamentoFalado(null, vlPortal), 'Veículo');
+assert.equal(policy.setorControle(null, vlPortal), 'FLOW');
+assert.match(policy.montarFala({ codigo: 12724, numero: '1102', valor: 68, e: vlPortal }), /^Atenção Flow: Veículo um um zero dois/);
+
+const linhaAmarela = { numero: '3510', nome: '3510 - Motoniveladora', tipo: 'MOTONIVELADORA', grupoEquipamento: 'LINHA AMARELA' };
+assert.equal(policy.classeEquipamentoFalado(null, linhaAmarela), 'Máquina');
+assert.equal(policy.setorControle(null, linhaAmarela), 'COA');
+assert.match(policy.montarFala({ codigo: 11, numero: '3510', texto: 'motor ocioso', e: linhaAmarela }), /^Atenção Coa: Máquina três cinco um zero/);
+
+assert.equal(policy.aplicarGlossario('Atenção C O A e F L O W'), 'Atenção Coa e Flow');
+assert.equal(policy.interpretarComandoCoa('alertas flow').acao, 'flow');
+
+console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 + v5.1 passaram.');

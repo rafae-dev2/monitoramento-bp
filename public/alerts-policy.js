@@ -7,12 +7,11 @@
 }(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis), function () {
   'use strict';
 
-  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'aguardandoBasculamento', 'frenteDividida', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente', 'emergencia', 'telemetriaMuda', 'qualidadeColheita', 'inconsistenciaApontamento', 'riscoMoenda', 'bateVolta', 'manutencaoPreditiva', 'semOperadorTrabalhando', 'chaveGeralLigada', 'abastecimentoMotorLigado', 'microParadasCronicas'];
+  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'aguardandoBasculamento', 'frenteDividida', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente', 'emergencia', 'telemetriaMuda', 'qualidadeColheita', 'inconsistenciaApontamento', 'riscoMoenda', 'bateVolta', 'manutencaoPreditiva', 'semOperadorTrabalhando', 'chaveGeralLigada', 'abastecimentoMotorLigado', 'microParadasCronicas'];
   var DEFAULTS = {
     velocidade: true,
     rpm: true,
     ocioso: true,
-    turno: true,
     motorCondicao: true,
     generico: true,
     aguardandoCaminhao: true,
@@ -63,9 +62,9 @@
     motorCondicao: ['2697', '2699'],
     velocidade: ['5', '2203', '2685', '1641', '10820', '12600', '11400', '11480', '12724', 'velocidade5'],
     rpm: ['4', '6', '8'],
-    ocioso: ['11', '2343', '2207'],
-    turno: ['2849', '2851']
+    ocioso: ['11', '2343', '2207']
   };
+  var CODIGOS_TROCA_TURNO = ['2849', '2851'];
 
   function norm(txt) {
     var value = txt == null ? '' : String(txt);
@@ -85,6 +84,15 @@
     return String(codigo).trim().split(/[;,/|]+/).map(function (part) {
       return part.trim();
     }).filter(Boolean);
+  }
+
+  function alarmeTrocaDeTurno(codigo, descricao) {
+    var tokens = codigoTokens(codigo).map(function (token) { return token.toLowerCase(); });
+    for (var i = 0; i < tokens.length; i += 1) {
+      if (CODIGOS_TROCA_TURNO.indexOf(tokens[i]) !== -1) return true;
+    }
+    var desc = norm(descricao).replace(/[._\-\/]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return /\btroca\s+de\s+turno\b/.test(desc);
   }
 
   function categoria(codigo, descricao) {
@@ -149,7 +157,12 @@
 
   function tratorOuTransbordo(e) {
     if (!e || typeof e !== 'object') return false;
+    var nomeGrupo = norm([e.nome, e.descEquipamento, e.grupoEquipamento, e.descGrupoEquipamento, e.frente, e.descFrente].filter(Boolean).join(' '));
+    if (/\b(?:bombeir\w*|veiculos?\s+leves?|utilitari\w*|camionet\w*|caminhonet\w*|carro|automove\w*|viatura|ambulancia|pipa|comboio|munck|cacamb\w*)\b/.test(nomeGrupo)) {
+      return false;
+    }
     var tipo = norm([e.tipo, e.tipoCompleto].filter(function (v) { return v != null; }).join(' '));
+    if (/\bbombeir/.test(tipo)) return false;
     return /(?:^|[^a-z0-9])(?:trator|transbordo)(?:$|[^a-z0-9])/.test(tipo);
   }
 
@@ -320,7 +333,7 @@
       if (CATEGORIAS.indexOf(directText) !== -1) return directText;
       var compact = norm(directText).replace(/[\s_-]+/g, '');
       var aliases = {
-        velocidade: 'velocidade', rpm: 'rpm', ocioso: 'ocioso', turno: 'turno',
+        velocidade: 'velocidade', rpm: 'rpm', ocioso: 'ocioso',
         motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', aguardandobasculamento: 'aguardandoBasculamento', frentedividida: 'frenteDividida', semapontamento: 'semApontamento', refeicao: 'refeicao', paradaimprodutiva: 'paradaImprodutiva', gestaofrente: 'gestaoFrente',
         ociososemapontamento: 'ocioso', emergencia: 'emergencia', telemetriamuda: 'telemetriaMuda', qualidadecolheita: 'qualidadeColheita',
         inconsistenciaapontamento: 'inconsistenciaApontamento', riscomoenda: 'riscoMoenda', batevolta: 'bateVolta', manutencaopreditiva: 'manutencaoPreditiva',
@@ -349,9 +362,11 @@
   function notificar(cfg, alert) {
     var normalized = normalizeCfg(cfg);
     var item = isObject(alert) ? alert : {};
-    var selectedCategory = !item.regra && !item.categoria && !codeFromAlert(item) && aguardandoCaminhao(eventFor(item)) ? 'aguardandoCaminhao' : categoryFromAlert(item);
-    var enabledByCategory = normalized.notificarCategorias[selectedCategory] !== false;
     var code = codeFromAlert(item);
+    var descTurno = item.nomeAlarme || item.descricao || item.texto || '';
+    if (norm(item.regra || item.categoria) === 'turno' || alarmeTrocaDeTurno(code, descTurno)) return false;
+    var selectedCategory = !item.regra && !item.categoria && !code && aguardandoCaminhao(eventFor(item)) ? 'aguardandoCaminhao' : categoryFromAlert(item);
+    var enabledByCategory = normalized.notificarCategorias[selectedCategory] !== false;
     var enabledByType = !code || normalized.tiposNotificacao[code] !== false;
     var selectedIndividually = !!code &&
       Object.prototype.hasOwnProperty.call(normalized.tiposNotificacao, code) &&
@@ -407,7 +422,8 @@
   var GLOSSARIO_PADRAO = [
     ['ag', 'Aguardando'], ['aguard', 'Aguardando'], ['colh', 'colhedora'],
     ['sequenc', 'sequência'], ['transp', 'transporte'], ['bascul', 'basculamento'],
-    ['transbo', 'transbordo'], ['manut', 'manutenção'], ['terc', 'Terceiro']
+    ['transbo', 'transbordo'], ['manut', 'manutenção'], ['terc', 'Terceiro'],
+    ['c o a', 'Coa'], ['f l o w', 'Flow']
   ];
   function fold(texto) {
     var out = '';
@@ -466,19 +482,99 @@
   function montarFala(alert, cfg) {
     return aplicarGlossario(montarFalaBase(alert), cfg);
   }
+
+  function textoIdentificacaoEquipamento(alert, event) {
+    var ev = isObject(event) ? event : {};
+    var al = isObject(alert) ? alert : {};
+    var temEventoProprio = isObject(al.e);
+    return norm([
+      ev.grupoEquipamento, ev.descGrupoEquipamento, ev.frente, ev.descFrente,
+      ev.nome, ev.descEquipamento, ev.tipo, ev.tipoCompleto,
+      al.grupoEquipamento, al.frente, al.tipo, al.tipoCompleto, al.classe,
+      temEventoProprio ? '' : al.descricao
+    ].filter(Boolean).join(' ')).replace(/[._\-\/]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  /* No portal Solinftec da usina, caminhões bombeiros podem vir com descTpEquipamento
+     cadastrado erroneamente como "TRATOR DE PNEU LEVE". Sempre que pertencer ao grupo
+     ou cadastro de bombeiro, deve ser anunciado como "Caminhão" (nunca Trator nem Bombeiro). */
+  function ehGrupoBombeiro(alert, event) {
+    return /\bbombeir\w*/.test(textoIdentificacaoEquipamento(alert, event));
+  }
+
   function classeEquipamentoFalado(alert, event) {
-    var classe = alert && alert.classe != null ? String(alert.classe).trim() : '';
-    if (classe) return classe;
-    var tipo = norm([
-      event && event.tipoCompleto, event && event.tipo, event && event.nome,
-      alert && alert.tipoCompleto, alert && alert.tipo, alert && alert.descricao
-    ].filter(Boolean).join(' '));
-    if (/\btrator\b/.test(tipo)) return 'Trator';
-    if (/\bcolhedora\b/.test(tipo)) return 'Colhedora';
+    if (ehGrupoBombeiro(alert, event)) return 'Caminhão';
+    var ev = isObject(event) ? event : {};
+    var al = isObject(alert) ? alert : {};
+    var nomeGrupo = norm([
+      ev.nome, ev.descEquipamento, ev.grupoEquipamento, ev.descGrupoEquipamento,
+      ev.frente, ev.descFrente, al.grupoEquipamento
+    ].filter(Boolean).join(' ')).replace(/[._\-\/]+/g, ' ').replace(/\s+/g, ' ').trim();
+    var classeInformada = al.classe != null ? String(al.classe).trim() : '';
+
+    // Corrige cadastros onde descTpEquipamento veio como TRATOR DE PNEU LEVE para carro, pipa ou linha amarela
+    if (/\b(?:linha\s+amarela|pa\s+carregadeira|carregadeira|retroescavadeira|motoniveladora|patrola|escavadeira|trator\s*(?:de\s*)?esteira|rolo\s+compactador)\b/.test(nomeGrupo)) {
+      return 'Máquina';
+    }
+    if (/\b(?:veiculos?\s+leves?|camionet\w*|caminhonet\w*|carro|automove\w*|viatura|ambulancia|oroche|oroich|strada|hilux|saveiro|montana|toro|fiorino)\b/.test(nomeGrupo)) {
+      return classeInformada === 'Utilitário' ? 'Utilitário' : 'Veículo';
+    }
+    if (/\b(?:caminh(?:ao|oes)|truck|canavieir\w*|canavareir\w*|comboio|munck|cacamb\w*|prancha|oficina\s+volante|pipa)\b/.test(nomeGrupo)) {
+      return 'Caminhão';
+    }
+    if (classeInformada) {
+      return /^bombeir/i.test(norm(classeInformada)) ? 'Caminhão' : classeInformada;
+    }
+
+    var tipo = textoIdentificacaoEquipamento(al, ev);
+    if (/\b(?:linha\s+amarela|pa\s+carregadeira|carregadeira|retroescavadeira|motoniveladora|patrola|escavadeira|trator\s*(?:de\s*)?esteira|rolo\s+compactador)\b/.test(tipo)) return 'Máquina';
+    if (/\b(?:veiculos?\s+leves?|camionet\w*|caminhonet\w*|carro|automove\w*|viatura|ambulancia|oroche|oroich)\b/.test(tipo)) return 'Veículo';
+    if (/\b(?:quadriciclo|motocicleta|moto)\b/.test(tipo)) return 'Quadriciclo';
+    if (/\b(?:onibus|microonibus)\b/.test(tipo)) return 'Ônibus';
+    if (/\b(?:colhedora|colheitadeira)\b/.test(tipo)) return 'Colhedora';
     if (/\btransbordo\b/.test(tipo)) return 'Transbordo';
-    if (/\bcaminh(?:ao|oes)\b|\btruck\b/.test(tipo)) return 'Caminhão';
+    if (/\b(?:plantadeira|plantadora|semeadora)\b/.test(tipo)) return 'Plantadeira';
+    if (/\b(?:pulverizador|uniport|autopropelido)\b/.test(tipo)) return 'Pulverizador';
+    if (/\bempilhadeira\b/.test(tipo)) return 'Empilhadeira';
+    if (/\b(?:vagao|carreta\s*agri)\b/.test(tipo)) return 'Vagão';
+    if (/\btrator\b/.test(tipo)) return 'Trator';
+    if (/\b(?:caminh(?:ao|oes)|truck|canavieir\w*|canavareir\w*|comboio|munck|cacamb\w*|pipa)\b/.test(tipo)) return 'Caminhão';
+    if (/\b(?:carreta|bitrem|rodotrem)\b/.test(tipo)) return 'Carreta';
+    if (/\b(?:utilitari\w*|van)\b/.test(tipo)) return 'Utilitário';
     return 'Veículo';
   }
+
+  /* Divisão operacional da usina:
+     - FLOW: todos os grupos de Caminhões e Veículos Leves / utilitários / ônibus.
+     - COA: Tratores, Transbordos, Colhedoras, Plantio, Tratos e Linha Amarela. */
+  function setorControle(alert, event) {
+    var item = isObject(alert) ? alert : {};
+    var ev = isObject(event) ? event : eventFor(item);
+    var cat = categoryFromAlert(item);
+    if (cat === 'gestaoFrente' || cat === 'riscoMoenda' || cat === 'frenteDividida' ||
+        cat === 'aguardandoCaminhao' || cat === 'aguardandoBasculamento' ||
+        cat === 'qualidadeColheita' || cat === 'microParadasCronicas') {
+      return 'COA';
+    }
+    if (cat === 'bateVolta' || ehGrupoBombeiro(item, ev)) {
+      return 'FLOW';
+    }
+    var cls = classeEquipamentoFalado(item, ev);
+    if (cls === 'Colhedora' || cls === 'Trator' || cls === 'Transbordo' || cls === 'Máquina' ||
+        cls === 'Plantadeira' || cls === 'Pulverizador' || cls === 'Empilhadeira' || cls === 'Vagão' || cls === 'Torre') {
+      return 'COA';
+    }
+    return 'FLOW';
+  }
+
+  function prefixoSetorFalado(alert, event, emergencia) {
+    var setor = setorControle(alert, event);
+    if (emergencia) {
+      return setor === 'FLOW' ? 'Atenção Flow, emergência! ' : 'Atenção Coa, emergência! ';
+    }
+    return setor === 'FLOW' ? 'Atenção Flow: ' : 'Atenção Coa: ';
+  }
+
   function frenteOuGrupo(event) {
     var frente = event && event.frente;
     if (frente != null && String(frente).trim() !== '') return String(frente).trim();
@@ -491,10 +587,11 @@
     var event = eventFor(item);
     var selectedCategory = categoryFromAlert(item);
     var vehicleClass = classeEquipamentoFalado(item, event);
+    var atencao = prefixoSetorFalado(item, event, false);
 
     if (selectedCategory === 'aguardandoCaminhao' || (!item.regra && !item.categoria && !codeFromAlert(item) && aguardandoCaminhao(event))) {
       var front = frenteOuGrupo(event);
-      return 'Trator ' + vehicleNumber(item, event) + ' aguardando caminhão. Frente/grupo ' + String(front).trim() + '. Verificar.';
+      return 'Atenção Coa: Trator ' + vehicleNumber(item, event) + ' aguardando caminhão. Frente/grupo ' + String(front).trim() + '. Verificar.';
     }
 
     if (selectedCategory === 'aguardandoBasculamento') {
@@ -505,31 +602,29 @@
         : truckIds.length === 1
           ? 'o caminhão ' + truckIds[0] + ' está aguardando carregamento na mesma frente'
           : 'há caminhão aguardando carregamento na mesma frente';
-      return 'Trator ' + vehicleNumber(item, event) + ': aguardando basculamento, inferido pelo aplicativo porque ' + truckText +
+      return 'Atenção Coa: Trator ' + vehicleNumber(item, event) + ': aguardando basculamento, inferido pelo aplicativo porque ' + truckText +
         '. Frente/grupo ' + basculamentoFrente + '. No SGPA, o apontamento permanece Aguardando Caminhão. Verificar.';
     }
 
     if (selectedCategory === 'frenteDividida') {
       var frenteDividida = frenteOuGrupo(event);
       var tipoFrenteDividida = norm([event.tipo, event.tipoCompleto, event.nome].filter(Boolean).join(' '));
-      var classeFrenteDividida = item.classe || (/transbordo/.test(tipoFrenteDividida) ? 'Transbordo' : 'Trator');
-      return 'Atenção COA: ' + classeFrenteDividida + ' ' + vehicleNumber(item, event) +
+      var classeFrenteDividida = vehicleClass === 'Transbordo' || /transbordo/.test(tipoFrenteDividida) ? 'Transbordo' : 'Trator';
+      return 'Atenção Coa: ' + classeFrenteDividida + ' ' + vehicleNumber(item, event) +
         ' apontou Frente dividida. Frente/grupo ' + frenteDividida + '. Verificar a sequência de chamada da colhedora no sistema FUT.';
     }
 
     if (selectedCategory === 'refeicao') {
       var fr = frenteOuGrupo(event);
-      var vc = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
       var dur = numericAlertValue(item.valor);
       var lim = numericAlertValue(item.limite);
-      return vc + ' ' + vehicleNumber(item, event) + ' excedeu o tempo de refeição' +
+      return atencao + vehicleClass + ' ' + vehicleNumber(item, event) + ' excedeu o tempo de refeição' +
         (dur ? ': ' + String(dur) + ' minutos' : '') +
         (lim ? ', limite de ' + String(lim) + ' minutos' : '') +
         '. Frente/grupo ' + String(fr).trim() + '. Verificar.';
     }
     if (selectedCategory === 'paradaImprodutiva') {
       var fp = frenteOuGrupo(event);
-      var cp = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
       var mp = numericAlertValue(item.valor);
       var prefixo = item.nivel >= 3 ? 'Escalonamento. ' : item.nivel === 2 ? 'Urgente, parada continua. ' : '';
       var sufixo = item.nivel >= 3 ? ' Acionar ' + (item.lider ? 'líder ' + item.lider : 'líder da frente') + '.' : '';
@@ -540,7 +635,7 @@
         var localColheita = frenteColheita
           ? (/^(?:frente|fazenda|s[ií]tio|propriedade)\b/i.test(frenteColheita) ? 'na ' + frenteColheita : 'na frente de colheita ' + frenteColheita)
           : 'na frente de colheita não informada';
-        return prefixo + 'Caminhão ' + vehicleNumber(item, event) + ' aguardando carregamento' +
+        return 'Atenção Flow: ' + prefixo + 'Caminhão ' + vehicleNumber(item, event) + ' aguardando carregamento' +
           (mp ? ' há ' + String(mp) + (mp === 1 ? ' minuto' : ' minutos') : '') +
           ', se encontra ' + localColheita + '.' + (sufixo || ' Verificar.');
       }
@@ -548,30 +643,28 @@
         var carregamentoSemFrente = String(item.paradaNome || 'Aguardando carregamento')
           .replace(/\s*\(\s*caminh(?:ão|ões|ao|oes)\s*\)/i, '')
           .replace(/\s*\(\d+\)/, '');
-        return prefixo + cp + ' ' + vehicleNumber(item, event) + ' em ' + carregamentoSemFrente +
+        return atencao + prefixo + vehicleClass + ' ' + vehicleNumber(item, event) + ' em ' + carregamentoSemFrente +
           (mp ? ' há ' + String(mp) + (mp === 1 ? ' minuto' : ' minutos') : '') +
           '.' + (sufixo || ' Verificar.');
       }
-      return prefixo + cp + ' ' + vehicleNumber(item, event) + ' em ' + String(item.paradaNome || 'parada improdutiva').replace(/\s*\(\d+\)/, '') +
+      return atencao + prefixo + vehicleClass + ' ' + vehicleNumber(item, event) + ' em ' + String(item.paradaNome || 'parada improdutiva').replace(/\s*\(\d+\)/, '') +
         (mp ? ' há ' + String(mp) + (mp === 1 ? ' minuto' : ' minutos') : '') +
         '. Frente/grupo ' + String(fp).trim() + '.' + (sufixo || ' Verificar.');
     }
     if (selectedCategory === 'gestaoFrente') {
       var ff = event.frente == null || String(event.frente).trim() === '' ? 'não informada' : String(event.frente).trim();
-      return 'Atenção gestão, ' + (/^frente\b/i.test(ff) ? ff : 'frente ' + ff) + ': ' + String(item.texto || '') .replace(/\s*·.*$/, '') + '.' +
+      return 'Atenção Coa, gestão ' + (/^frente\b/i.test(ff) ? ff : 'frente ' + ff) + ': ' + String(item.texto || '').replace(/\s*·.*$/, '') + '.' +
         (item.lider ? ' Líder ' + item.lider + '.' : '') + ' Verificar.';
     }
     if (selectedCategory === 'emergencia') {
       var fem = frenteOuGrupo(event);
-      var cem = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
       var txtEm = cleanMessage(item.texto) || 'ocorrência de incêndio ou emergência';
-      return 'Emergência C O A! ' + cem + ' ' + vehicleNumber(item, event) + ': ' + txtEm + '. Frente/grupo ' + String(fem).trim() + '. Atenção imediata.';
+      return prefixoSetorFalado(item, event, true) + vehicleClass + ' ' + vehicleNumber(item, event) + ': ' + txtEm + '. Frente/grupo ' + String(fem).trim() + '. Atenção imediata.';
     }
     if (selectedCategory === 'telemetriaMuda') {
       var ftm = frenteOuGrupo(event);
-      var ctm = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
       var mtm = numericAlertValue(item.valor);
-      return 'Atenção C O A: ' + ctm + ' ' + vehicleNumber(item, event) + ' sem comunicação de telemetria' +
+      return atencao + vehicleClass + ' ' + vehicleNumber(item, event) + ' sem comunicação de telemetria' +
         (mtm ? ' há ' + String(mtm) + (mtm === 1 ? ' minuto' : ' minutos') : '') +
         '. Frente/grupo ' + String(ftm).trim() + '. Verificar computador de bordo.';
     }
@@ -584,70 +677,63 @@
       };
       var vqc = numDec(item.valor);
       var lqc = numDec(item.limite);
-      return 'Qualidade de colheita: Colhedora ' + vehicleNumber(item, event) +
+      return 'Atenção Coa, qualidade de colheita: Colhedora ' + vehicleNumber(item, event) +
         (vqc !== null ? ' colhendo a ' + vqc + ' quilômetros por hora' : ' acima da velocidade técnica') +
         (lqc !== null ? ', limite técnico de ' + lqc : '') +
         '. Frente/grupo ' + String(fqc).trim() + '. Verificar.';
     }
     if (selectedCategory === 'inconsistenciaApontamento') {
       var finc = frenteOuGrupo(event);
-      var cinc = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
       var tinc = cleanMessage(item.texto) || 'inconsistência de apontamento';
-      return 'Auditoria S G P A: ' + cinc + ' ' + vehicleNumber(item, event) + ' ' + tinc + '. Frente/grupo ' + String(finc).trim() + '. Cobrar apontamento correto.';
+      return atencao + 'auditoria de apontamento, ' + vehicleClass + ' ' + vehicleNumber(item, event) + ' ' + tinc + '. Frente/grupo ' + String(finc).trim() + '. Cobrar apontamento correto.';
     }
     if (selectedCategory === 'riscoMoenda') {
       var tmoe = cleanMessage(item.texto) || 'ritmo de colheita abaixo da meta da usina';
-      return 'Atenção C O A, risco de moenda: ' + tmoe + '. Priorizar liberação de colhedoras e caminhões.';
+      return 'Atenção Coa, risco de moenda: ' + tmoe + '. Priorizar liberação de colhedoras e caminhões.';
     }
     if (selectedCategory === 'bateVolta') {
       var fbv = frenteOuGrupo(event);
       var mbv = numericAlertValue(item.valor);
-      return 'Atenção logística: Caminhão ' + vehicleNumber(item, event) + ' em bate-volta acima do tempo esperado' +
+      return 'Atenção Flow: Caminhão ' + vehicleNumber(item, event) + ' em bate-volta acima do tempo esperado' +
         (mbv ? ', há ' + String(mbv) + ' minutos em viagem' : '') +
         '. Frente/grupo ' + String(fbv).trim() + '. Verificar trajeto.';
     }
     if (selectedCategory === 'manutencaoPreditiva') {
       var fmp = frenteOuGrupo(event);
-      var cmp = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
       var nmp = numericAlertValue(item.valor);
-      return 'Manutenção preditiva C O A: ' + cmp + ' ' + vehicleNumber(item, event) + ' acumulou ' +
+      return atencao + 'manutenção preditiva, ' + vehicleClass + ' ' + vehicleNumber(item, event) + ' acumulou ' +
         (nmp || 3) + ' ocorrências mecânicas ou de motor no turno. Frente/grupo ' + String(fmp).trim() + '. Acionar oficina preventiva.';
     }
     if (selectedCategory === 'semOperadorTrabalhando') {
       var fsop = frenteOuGrupo(event);
-      var csop = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
       var msop = numericAlertValue(item.valor);
-      return 'Pente-fino C O A: ' + csop + ' ' + vehicleNumber(item, event) + ' em operação sem operador identificado' +
+      return atencao + vehicleClass + ' ' + vehicleNumber(item, event) + ' em operação sem operador identificado' +
         (msop ? ' há ' + String(msop) + (msop === 1 ? ' minuto' : ' minutos') : '') +
         '. Frente/grupo ' + String(fsop).trim() + '. Cobrar login imediato no bordo.';
     }
     if (selectedCategory === 'chaveGeralLigada') {
       var fchg = frenteOuGrupo(event);
-      var cchg = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
       var mchg = numericAlertValue(item.valor);
-      return 'Atenção C O A: ' + cchg + ' ' + vehicleNumber(item, event) + ' parado com chave geral ligada e motor desligado' +
+      return atencao + vehicleClass + ' ' + vehicleNumber(item, event) + ' parado com chave geral ligada e motor desligado' +
         (mchg ? ' há ' + String(mchg) + (mchg === 1 ? ' minuto' : ' minutos') : '') +
         '. Frente/grupo ' + String(fchg).trim() + '. Desligar chave geral para proteger bateria e horímetro.';
     }
     if (selectedCategory === 'abastecimentoMotorLigado') {
       var fabm = frenteOuGrupo(event);
-      var cabm = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
-      return 'Alerta de segurança C O A: ' + cabm + ' ' + vehicleNumber(item, event) +
+      return atencao + 'alerta de segurança, ' + vehicleClass + ' ' + vehicleNumber(item, event) +
         ' em abastecimento ou lubrificação com motor ligado. Frente/grupo ' + String(fabm).trim() + '. Desligar motor imediatamente.';
     }
     if (selectedCategory === 'microParadasCronicas') {
       var fmpc = frenteOuGrupo(event);
-      var cmpc = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
       var vmpc = numericAlertValue(item.valor);
-      return 'Eficiência C O A: ' + cmpc + ' ' + vehicleNumber(item, event) +
+      return 'Atenção Coa: ' + vehicleClass + ' ' + vehicleNumber(item, event) +
         ' com micro-paradas repetidas na última hora' + (vmpc ? ', somando ' + String(vmpc) + ' minutos perdidos' : '') +
         '. Frente/grupo ' + String(fmpc).trim() + '. Verificar gargalo operacional.';
     }
     if (selectedCategory === 'semApontamento') {
       var frente = frenteOuGrupo(event);
-      var vClass = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
       var minutos = numericAlertValue(item.valor);
-      return vClass + ' ' + vehicleNumber(item, event) + ' sem apontamento' +
+      return atencao + vehicleClass + ' ' + vehicleNumber(item, event) + ' sem apontamento' +
         (minutos ? ' há ' + String(minutos) + (minutos === 1 ? ' minuto' : ' minutos') : '') +
         '. Frente/grupo ' + String(frente).trim() + '. Verificar.';
     }
@@ -662,19 +748,19 @@
       if (velocidadeMedida !== null) {
         complemento += ', velocidade medida de ' + String(velocidadeMedida) + ' quilômetros por hora';
       }
-      return vehicleClass + ' ' + identification + ': ' + aprovada.texto + complemento + '. Verificar.';
+      return atencao + vehicleClass + ' ' + identification + ': ' + aprovada.texto + complemento + '. Verificar.';
     }
 
     if (selectedCategory === 'velocidade') {
       var speed = numericAlertValue(item.valor);
       if (speed === null) {
-        return vehicleClass + ' ' + identification + ' com alarme oficial de velocidade excedida. Verificar.';
+        return atencao + vehicleClass + ' ' + identification + ' com alarme oficial de velocidade excedida. Verificar.';
       }
-      return vehicleClass + ' ' + identification + ' excedeu a velocidade a ' + String(speed) + ' quilômetros por hora. Verificar.';
+      return atencao + vehicleClass + ' ' + identification + ' excedeu a velocidade a ' + String(speed) + ' quilômetros por hora. Verificar.';
     }
 
     var message = cleanMessage(item.texto);
-    return vehicleClass + ' ' + identification + (message ? ': ' + message : '') + '. Verificar.';
+    return atencao + vehicleClass + ' ' + identification + (message ? ': ' + message : '') + '. Verificar.';
   }
 
   /* ------------------ Inteligência COA (Solinftec / CTT) ------------------ */
@@ -691,10 +777,10 @@
     if (e.operacaoConfirmada === true && /\b(?:incendio|fogo|queimada|combate a? ?incendio|emergencia fogo|sinistro)\b/.test(op)) {
       return { tipo: 'incendio', motivo: opBruta || 'Combate a incêndio' };
     }
-    var tipo = norm([e.tipo, e.tipoCompleto, e.nome, e.grupoEquipamento].filter(Boolean).join(' '));
+    var tipo = norm([e.tipo, e.tipoCompleto, e.nome, e.grupoEquipamento, e.frente].filter(Boolean).join(' '));
     var vel = numericAlertValue(e.velocidade);
     if (/bombeir/.test(tipo) && vel !== null && vel >= 40) {
-      return { tipo: 'bombeiro', motivo: 'Caminhão bombeiro em deslocamento rápido (' + Math.round(vel) + ' km/h)' };
+      return { tipo: 'bombeiro', motivo: 'Caminhão em deslocamento rápido de emergência (' + Math.round(vel) + ' km/h)' };
     }
     return null;
   }
@@ -1530,6 +1616,9 @@
     if (/\b(?:fixar|split|dividir|acoplar)\b/.test(t)) {
       return { acao: 'fixar' };
     }
+    if (/\b(?:flow|controle\s+flow|caminhoes|veiculos\s+leves)\b/.test(t)) {
+      return { acao: 'flow' };
+    }
     if (/\b(?:resumo|frentes|situacao|panorama|ctt)\b/.test(t)) {
       return { acao: 'frentes' };
     }
@@ -1547,7 +1636,8 @@
     var opBruto = norm(e.operadorBruto || e.descFuncionario || '');
     var semOp = !opNome || /\b(?:9999|sem operador|indefinido|nao definido|desconhecido|generic)\b/.test(opBruto);
     if (!semOp) return null;
-    if (emTrocaDeTurnoLocal(e.operacao || e.descOperacao, e.cdOperacao)) return null;
+    var opTxt = norm(e.operacao || e.descOperacao || '');
+    if (String(e.cdOperacao || '') === '925' || /\btroca\s+de\s+turno\b/.test(opTxt)) return null;
     var vel = numericAlertValue(e.velocidade);
     var rpm = numericAlertValue(e.rpm);
     if (e.motor === true && rpm !== null && rpm >= 900 && vel !== null && vel >= 5) {
@@ -1558,10 +1648,6 @@
       };
     }
     return null;
-  }
-
-  function emTrocaDeTurnoLocal(desc, cd) {
-    return /troca.?de.?turno/.test(norm(desc)) || String(cd || '').trim() === '925';
   }
 
   function meiaChaveParada(e) {
@@ -1619,6 +1705,7 @@
 
   return Object.freeze({
     norm: norm,
+    alarmeTrocaDeTurno: alarmeTrocaDeTurno,
     categoria: categoria,
     idFalado: idFalado,
     aguardandoCaminhao: aguardandoCaminhao,
@@ -1626,6 +1713,9 @@
     frenteDividida: frenteDividida,
     semApontamento: semApontamento,
     emRefeicao: emRefeicao,
+    ehGrupoBombeiro: ehGrupoBombeiro,
+    classeEquipamentoFalado: classeEquipamentoFalado,
+    setorControle: setorControle,
     CATEGORIAS: CATEGORIAS,
     PARADAS: PARADAS,
     paradaImprodutiva: paradaImprodutiva,
