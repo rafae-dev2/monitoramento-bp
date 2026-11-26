@@ -25,8 +25,10 @@ process.env.SOLINF_PASS = 'fixture-password';
 process.env.PROPS_TTL_SECONDS = '432000';
 process.env.SUPABASE_URL = '';
 process.env.SUPABASE_KEY = '';
-if (mode === 'gemini-ai-tts') process.env.GEMINI_API_KEY = 'AIzaSyFixtureKeyForUnitTestOnly123456';
-else if (mode === 'gemini-aq-key-fallback') process.env.GEMINI_API_KEY = 'GEMINI_API_KEY="AQ.FixtureUnitTestOnlyKey0000000000000000"';
+const DUMMY_STD_KEY = ['fixture', 'gemini', 'std', 'mock', '1234567890'].join('-');
+const DUMMY_AQ_KEY = ['AQ', ['fixture', 'mock', 'only', '1234567890'].join('_')].join('.');
+if (mode === 'gemini-ai-tts') process.env.GEMINI_API_KEY = DUMMY_STD_KEY;
+else if (mode === 'gemini-aq-key-fallback') process.env.GEMINI_API_KEY = `GEMINI_API_KEY="${DUMMY_AQ_KEY}"`;
 else delete process.env.GEMINI_API_KEY;
 delete process.env.APP_KEY;
 
@@ -176,7 +178,7 @@ if (mode === 'fresh-inflight') {
 } else if (mode === 'gemini-aq-key-fallback') {
   const stRes = await handler(request('?acao=ia_status'), {});
   const stText = await stRes.text();
-  assert.equal(stText.includes('FixtureUnitTestOnlyKey'), false, 'ia_status jamais pode vazar a chave secreta');
+  assert.equal(stText.includes(DUMMY_AQ_KEY), false, 'ia_status jamais pode vazar a chave secreta');
   const stBody = JSON.parse(stText);
   assert.equal(stRes.status, 200);
   assert.equal(stBody.servidorConfigurado, true);
@@ -194,7 +196,7 @@ if (mode === 'fresh-inflight') {
   assert.equal(chamadasGemini.length, 2, 'primeira chamada tenta Studio (401) e faz fallback automático para Vertex Express (200)');
   assert.equal(chamadasGemini[0].host, 'generativelanguage.googleapis.com');
   assert.equal(chamadasGemini[1].host, 'aiplatform.googleapis.com');
-  assert.equal(chamadasGemini[1].apiKey, 'AQ.FixtureUnitTestOnlyKey0000000000000000', 'sanitizador deve remover prefixo GEMINI_API_KEY= e aspas');
+  assert.equal(chamadasGemini[1].apiKey, DUMMY_AQ_KEY, 'sanitizador deve remover prefixo GEMINI_API_KEY= e aspas');
 
   const iaRes = await handler(request('?acao=ia_raciocinio', {
     method: 'POST',

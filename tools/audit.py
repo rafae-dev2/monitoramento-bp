@@ -31,20 +31,22 @@ if not index_candidates:
 base = index_candidates[0][: -len("index.html")]
 root_prefix = base[: -len("public/")]
 
-# 1) senha literal em qualquer texto
+# 1) senha literal ou chave formato Google API (AIza... / AQ....) em qualquer texto
 hits = []
-if SENHA:
-    for n in nomes:
-        if not n.endswith((".js", ".mjs", ".html", ".css", ".md", ".json", ".webmanifest", ".toml", ".txt", ".py")):
-            continue
-        try:
-            txt = z.read(n).decode("utf-8", "replace")
-        except Exception as e:
-            hits.append((n, f"erro {e}"))
-            continue
-        if SENHA in txt:
-            hits.append((n, "SENHA LITERAL"))
-print("senha literal:", ("ausente (ok)" if not hits else hits) if SENHA else "não verificada (defina AUDIT_SENHA)")
+RX_CHAVE_GOOGLE = re.compile(r"(?:AIza[0-9A-Za-z_-]{15,}|AQ\.[0-9A-Za-z._-]{15,})")
+for n in nomes:
+    if not n.endswith((".js", ".mjs", ".cjs", ".html", ".css", ".md", ".json", ".webmanifest", ".toml", ".txt", ".py", ".sh")):
+        continue
+    try:
+        txt = z.read(n).decode("utf-8", "replace")
+    except Exception as e:
+        hits.append((n, f"erro {e}"))
+        continue
+    if SENHA and SENHA in txt:
+        hits.append((n, "SENHA LITERAL"))
+    if RX_CHAVE_GOOGLE.search(txt):
+        hits.append((n, "PADRAO CHAVE GOOGLE (AIza/AQ.)"))
+print("segredos/chaves literais:", "ausentes (ok)" if not hits else hits)
 
 
 def read(p: str) -> str:
