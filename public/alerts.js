@@ -31,7 +31,8 @@
 (() => {
   'use strict';
 
-  const VERSAO = '4.0.0';
+  const VERSAO = '5.0.0';
+  const KEY_PAINEL_FIXO = 'bperes.visual.painel-fixo.v1';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
   const KEY_HIST = 'bperes.alertas.hist.v2';
@@ -148,6 +149,10 @@
     riscoMoenda: { id: 'riscoMoenda', nome: 'Risco de moenda (entrega abaixo da meta)', icone: '🏭', cor: '#ef4444', severidade: 3 },
     bateVolta: { id: 'bateVolta', nome: 'Bate-volta excedido (caminhão)', icone: '🛣️', cor: '#f59e0b', severidade: 2 },
     manutencaoPreditiva: { id: 'manutencaoPreditiva', nome: 'Manutenção preditiva (falha recorrente)', icone: '🔧', cor: '#ef4444', severidade: 3 },
+    semOperadorTrabalhando: { id: 'semOperadorTrabalhando', nome: 'Operando sem operador identificado', icone: '👤', cor: '#f97316', severidade: 2 },
+    chaveGeralLigada: { id: 'chaveGeralLigada', nome: 'Chave geral ligada c/ motor parado', icone: '🔋', cor: '#eab308', severidade: 2 },
+    abastecimentoMotorLigado: { id: 'abastecimentoMotorLigado', nome: 'Abastecimento c/ motor ligado', icone: '⛽', cor: '#ef4444', severidade: 3 },
+    microParadasCronicas: { id: 'microParadasCronicas', nome: 'Micro-paradas crônicas (picadinho)', icone: '🪚', cor: '#f59e0b', severidade: 2 },
     generico: { id: 'generico', nome: 'Alarme do portal', icone: '⚠️', cor: '#94a3b8', severidade: 1 },
   };
 
@@ -186,6 +191,14 @@
     custoHoraCaminhao: 220, // R$/h parada improdutiva caminhão canavieiro
     custoHoraApoio: 180, // R$/h veículo de apoio
     custoLitroDiesel: 6.2, // R$/L diesel agrícola
+    penteFinoAtivo: true, // chave geral das regras “Zero Agulha” v5.0
+    minutosSemOperador: 4, // máquina trabalhando/deslocando sem operador identificado (0 = desliga)
+    minutosChaveGeral: 12, // chave geral/meia-chave ligada com motor parado (5 min fixo em Modo Chuva; 0 = desliga)
+    minutosAbastMotorLigado: 2, // abastecimento/lubrificação com motor ligado — segurança (0 = desliga)
+    microParadasAtiva: true, // efeito serrote / picadinho
+    microParadasJanelaMin: 60, // janela móvel em minutos
+    microParadasQtd: 4, // nº mínimo de micro-paradas na janela
+    microParadasSomaMin: 16, // minutos perdidos somados na janela
     paradasLimites: {}, // id da parada → minutos de tolerância (0 = não alertar)
     minutosSemApontamento: 5, // tolerância antes de alertar operação “Sem Apontamento”
     minutosTurno: 4, // pedido do usuário (o portal usa 3)
@@ -239,6 +252,13 @@
   let ultimoAcumuloCustoTs = 0;
   let ultimaRespostaAloCoa = '';
   let reconhecedorVozAtivo = null;
+  let painelFixo = (() => {
+    try { return localStorage.getItem(KEY_PAINEL_FIXO) === '1'; } catch { return false; }
+  })();
+  let filtroAtivos = 'todos';
+  const microParadasMapa = new Map(); // id → { paradoDesde, episodios: [{ duracaoMin, fimMs }] }
+  let timerResumoRajada = null;
+  let excedentesRajada = 0;
   let ultimoResumoCtt = { frentes: [], sugestoesBalanceamento: [], frotasMudas: [], totais: {} };
   const TAGS_TRATATIVA_COA = ['Cobrado no rádio', 'Mecânica acionada', 'Comboio acionado', 'Líder ciente', 'Chuva/Clima', 'Falso alarme'];
   let ctx = { selecao: new Set(Array.isArray(cfg.selecaoMapa) ? cfg.selecaoMapa.map(String) : []), props: null };
@@ -1640,11 +1660,21 @@
     return true;
   }
 
+  const MAX_ATRASO_MANTER_ABERTO_SEG = 6 * 3600;
+  function atrasoExtremo(e) {
+    const atraso = e ? Number(e.atraso) : NaN;
+    return Number.isFinite(atraso) && atraso > MAX_ATRASO_MANTER_ABERTO_SEG;
+  }
+
+  /* Zero-Perda: um equipamento que entrou em sombra de sinal (atraso acima de
+     maxAtrasoMin) mantém a ocorrência aberta — só sai por mudança real de escopo
+     (frente, lista de equipamentos, seleção do mapa) ou após 6 h sem sinal. */
   function reconciliarEscopo() {
     for (const [chave, alerta] of ativos) {
-      if (dentroDoEscopo(alerta.e, { alarmesOficiais: alerta.fonte === 'portal' })) continue;
+      const oficial = alerta.fonte === 'portal';
+      if (dentroDoEscopo(alerta.e, { alarmesOficiais: oficial, ignorarAtraso: true }) && (oficial || !atrasoExtremo(alerta.e))) continue;
       ativos.delete(chave);
-      if (alerta.fonte === 'portal') {
+      if (oficial) {
         const st = estados.get(chave);
         if (st) st.foraDoEscopo = true;
       }
@@ -1652,7 +1682,7 @@
     for (const [chave, st] of estados) {
       if (String(st.regra).startsWith('sgpa:')) continue;
       const e = frota.get(String(st.id));
-      if (e && dentroDoEscopo(e)) continue;
+      if (e && dentroDoEscopo(e, { ignorarAtraso: true }) && !atrasoExtremo(e)) continue;
       Object.assign(st, { firing: false, consec: 0, negados: 0, emitido: false, since: 0, ultimo: 0 });
       ativos.delete(chave);
     }
@@ -2280,6 +2310,160 @@
     });
   }
 
+  /* ------------- Pente-Fino COA v5.0 (“Zero Agulha”) ------------- */
+
+  function penteFinoLigado() {
+    return cfg.penteFinoAtivo !== false;
+  }
+
+  function frenteDoEquipamento(e) {
+    return (e && (e.frente || e.frenteInferida || e.grupoEquipamento)) || '';
+  }
+
+  function regraSemOperador(e, ts) {
+    const min = penteFinoLigado() ? Math.max(0, num(cfg.minutosSemOperador) || 0) : 0;
+    const det = min ? policy.operandoSemOperador(e) : null;
+    const liga = !!det;
+    const st = marcar(e.id, 'semOperadorTrabalhando', liga, ts, det ? det.velocidade : null);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!liga || !st.firing || !min) return;
+    const durou = (ts - st.since) / 60_000;
+    if (durou < min) return;
+    if (!podeDisparar(st, ts)) return;
+    emitir({
+      chave: st.chave,
+      regra: 'semOperadorTrabalhando',
+      e,
+      valor: Math.round(durou),
+      limite: min,
+      texto: `trabalhando sem operador identificado há ${minutosTxt(durou)} (${det.velocidade} km/h · ${milhar(det.rpm)} RPM) · frente/grupo: ${frenteDoEquipamento(e) || 'não informada'}`,
+      detalhe: `Pente-Fino COA · operação ${det.operacao} · exigir login do operador no computador de bordo (rastreabilidade e responsabilidade)`,
+      inicio: st.since,
+    });
+  }
+
+  function limiteChaveGeral(e) {
+    const base = Math.max(0, num(cfg.minutosChaveGeral) || 0);
+    if (!base) return 0;
+    return frenteEmChuva(frenteDoEquipamento(e)) ? Math.min(base, 5) : base;
+  }
+
+  function regraChaveGeral(e, ts) {
+    const lim = penteFinoLigado() ? limiteChaveGeral(e) : 0;
+    const det = lim ? policy.meiaChaveParada(e) : null;
+    const liga = !!det;
+    const st = marcar(e.id, 'chaveGeralLigada', liga, ts, null);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!liga || !st.firing || !lim) return;
+    const durou = (ts - st.since) / 60_000;
+    if (durou < lim) return;
+    if (!podeDisparar(st, ts)) return;
+    const chuva = frenteEmChuva(frenteDoEquipamento(e));
+    emitir({
+      chave: st.chave,
+      regra: 'chaveGeralLigada',
+      e,
+      valor: Math.round(durou),
+      limite: lim,
+      texto: `chave geral/meia-chave ligada com motor parado há ${minutosTxt(durou)}${chuva ? ' durante pausa de chuva' : ''} · frente/grupo: ${frenteDoEquipamento(e) || 'não informada'}`,
+      detalhe: `Pente-Fino COA · regra ${chuva ? 'CHUVA_DESLIGAR_CHAVE_GERAL' : 'DESLIGAR_CHAVE_GERAL'} · risco de descarregar bateria e consumo do módulo · operação ${det.operacao}`,
+      inicio: st.since,
+    });
+  }
+
+  function regraAbastecimentoMotorLigado(e, ts) {
+    const min = penteFinoLigado() ? Math.max(0, num(cfg.minutosAbastMotorLigado) || 0) : 0;
+    const det = min ? policy.abastecendoComMotorLigado(e) : null;
+    const liga = !!det;
+    const st = marcar(e.id, 'abastecimentoMotorLigado', liga, ts, det ? det.rpm : null);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!liga || !st.firing || !min) return;
+    const durou = (ts - inicioReal(st, e)) / 60_000;
+    if (durou < min) return;
+    if (!podeDisparar(st, ts)) return;
+    emitir({
+      chave: st.chave,
+      regra: 'abastecimentoMotorLigado',
+      e,
+      valor: det.rpm,
+      limite: min,
+      texto: `abastecendo com o motor ligado (${milhar(det.rpm)} RPM) há ${minutosTxt(durou)} · frente/grupo: ${frenteDoEquipamento(e) || 'não informada'}`,
+      detalhe: `SEGURANÇA · regra ABAST_INS_ML · risco de incêndio — exigir desligamento do motor durante abastecimento/lubrificação · operação ${det.operacao}`,
+      inicio: inicioReal(st, e),
+    });
+  }
+
+  function elegivelMicroParada(e) {
+    const tipo = policy.norm([e.tipo, e.tipoCompleto, e.nome].filter(Boolean).join(' '));
+    return /colhed|transbordo|trator/.test(tipo) && !/caminh|munck|cacamb|bombeir|comboio|oficina/.test(tipo);
+  }
+
+  /* Registra episódios de parada curta (velocidade ≤ 1 km/h) que terminaram. */
+  function registrarEpisodioMicroParada(id, duracaoMin, fimMs) {
+    const chave = String(id);
+    let reg = microParadasMapa.get(chave);
+    if (!reg) {
+      reg = { paradoDesde: 0, episodios: [] };
+      microParadasMapa.set(chave, reg);
+    }
+    const dur = Number(duracaoMin);
+    if (!Number.isFinite(dur) || dur < 1) return reg;
+    const fim = Number(fimMs) || agora();
+    reg.episodios.push({ duracaoMin: Math.round(dur * 10) / 10, fimMs: fim });
+    const corte = fim - Math.max(15, num(cfg.microParadasJanelaMin) || 60) * 60_000 * 2;
+    reg.episodios = reg.episodios.filter((ep) => ep.fimMs >= corte).slice(-40);
+    return reg;
+  }
+
+  function rastrearMicroParadas(e, ts) {
+    if (!elegivelMicroParada(e)) return;
+    const vel = e.velocidade === null || e.velocidade === undefined ? null : Number(e.velocidade);
+    if (vel === null || !Number.isFinite(vel)) return;
+    const id = String(e.id);
+    let reg = microParadasMapa.get(id);
+    if (!reg) {
+      reg = { paradoDesde: 0, episodios: [] };
+      microParadasMapa.set(id, reg);
+    }
+    if (vel <= 1) {
+      if (!reg.paradoDesde) reg.paradoDesde = ts;
+      return;
+    }
+    if (vel >= 3 && reg.paradoDesde) {
+      const dur = (ts - reg.paradoDesde) / 60_000;
+      reg.paradoDesde = 0;
+      // paradas longas já têm regra própria (paradaImprodutiva); só soma as curtas
+      if (dur >= 1 && dur < 15) registrarEpisodioMicroParada(id, dur, ts);
+    }
+  }
+
+  function regraMicroParadas(e, ts) {
+    if (!penteFinoLigado() || cfg.microParadasAtiva === false) return;
+    if (!elegivelMicroParada(e) && !microParadasMapa.has(String(e.id))) return;
+    if (frenteEmChuva(frenteDoEquipamento(e))) return;
+    const reg = microParadasMapa.get(String(e.id));
+    const janela = Math.max(15, num(cfg.microParadasJanelaMin) || 60);
+    const det = reg ? policy.avaliarMicroParadas(reg.episodios, ts, janela, num(cfg.microParadasQtd) || 4, num(cfg.microParadasSomaMin) || 16) : null;
+    const liga = !!det;
+    const st = marcar(e.id, 'microParadasCronicas', liga, ts, det ? det.minutosPerdidos : null);
+    if (!liga && !st.firing) ativos.delete(st.chave);
+    if (!liga || !st.firing) return;
+    st.consec = Math.max(st.consec, Math.max(1, cfg.amostras)); // padrão já confirmado na janela
+    if (!podeDisparar(st, ts)) return;
+    const info = policy.custoHoraEquipamento(e, cfg);
+    const custo = Math.round(det.minutosPerdidos * info.valorMinuto);
+    emitir({
+      chave: st.chave,
+      regra: 'microParadasCronicas',
+      e,
+      valor: det.minutosPerdidos,
+      limite: num(cfg.microParadasSomaMin) || 16,
+      texto: `${det.episodios} micro-paradas em ${janela} min somando ${minutosTxt(det.minutosPerdidos)} perdidos (efeito serrote)${custo > 0 ? ` · ~R$ ${custo.toLocaleString('pt-BR')}` : ''} · frente/grupo: ${frenteDoEquipamento(e) || 'não informada'}`,
+      detalhe: `Pente-Fino COA · nenhuma parada isolada estourou a tolerância, mas a soma corrói o rendimento · verificar embuchamento, sincronismo com transbordo ou operador · operação ${e.operacao || '—'}`,
+      inicio: ts - det.minutosPerdidos * 60_000,
+    });
+  }
+
   function avaliarFrota(ts, modo) {
     const lotes = modo !== 'tempo';
     const modoAnterior = avaliacaoSoTempo;
@@ -2309,7 +2493,12 @@
           regraEmergencia(e, ts);
           regraQualidadeColheita(e, ts);
           regraManutencaoPreditiva(e, ts);
+          rastrearMicroParadas(e, ts);
         }
+        regraSemOperador(e, ts);
+        regraChaveGeral(e, ts);
+        regraAbastecimentoMotorLigado(e, ts);
+        regraMicroParadas(e, ts);
         regraInconsistenciaApontamento(e, ts);
         regraBateVolta(e, ts);
         regraFrenteDividida(e, ts);
@@ -2985,7 +3174,7 @@
 
     const emergencia = alerta.regra === 'emergencia';
     const seguranca = policy.ehAlertaSeguranca(alerta.regra);
-    const chuvaAtiva = !seguranca && !a.simulado
+    const chuvaAtiva = !seguranca && !a.simulado && alerta.regra !== 'chaveGeralLigada'
       ? frenteEmChuva(alerta.e && (alerta.e.frente || alerta.e.frenteInferida || alerta.e.grupoEquipamento))
       : null;
     if (chuvaAtiva) {
@@ -3005,7 +3194,8 @@
       demais = ++rajada.voz > Math.max(1, Number(cfg.maxPorCiclo) || 4);
     }
     if (emergencia) mostrarBannerEmergencia(alerta);
-    if (cfg.popup && (oficial || localAberto || a.simulado)) mostrarToast(alerta, silenciado || demais);
+    // Pente-Fino: o cartão visual nunca some na rajada; só a voz é limitada.
+    if (cfg.popup && (oficial || localAberto || a.simulado)) mostrarToast(alerta, silenciado);
     if (!silenciado && !demais) {
       if ((oficial || localAberto || a.simulado) && cfg.som) tocar(emergencia ? 4 : regra.severidade, emergencia);
       if (cfg.voz && (oficial || localAberto || a.simulado || vozLocalSemPontoConfirmado) && (emergencia || !alerta.repeticao || cfg.repetirVoz)) {
@@ -3015,14 +3205,30 @@
       if ((oficial || localAberto || a.simulado) && cfg.vibrar) vibrar(emergencia ? 4 : regra.severidade);
       if (oficial || localAberto) notificar(alerta);
     }
+    if (demais && !silenciado) agendarResumoRajada();
     if (demais && rajada.aviso !== true && ts - rajada.ts < 5000) {
       rajada.aviso = true;
       setTimeout(() => {
-        mostrarAviso('Vários alertas ao mesmo tempo: a voz avisa os ' + (Number(cfg.maxPorCiclo) || 4) + ' primeiros — veja a central (🔔).', 'info');
+        mostrarAviso('Vários alertas ao mesmo tempo: a voz avisa os ' + (Number(cfg.maxPorCiclo) || 4) + ' primeiros e resume o restante — todos os cartões ficam visíveis.', 'info');
       }, 250);
     }
     renderAtivos();
     renderCabecalho();
+  }
+
+  /* Resumo falado dos alertas que excederam o limite de voz da rajada. */
+  function agendarResumoRajada() {
+    excedentesRajada++;
+    clearTimeout(timerResumoRajada);
+    timerResumoRajada = setTimeout(() => {
+      timerResumoRajada = null;
+      const qtd = excedentesRajada;
+      excedentesRajada = 0;
+      if (!qtd || !cfg.ativo || !cfg.voz || agora() < (Number(cfg.silencioAte) || 0)) return;
+      falar(qtd === 1
+        ? 'E mais um alerta simultâneo na central. Confira a lista de ativos.'
+        : `E mais ${qtd} alertas simultâneos na central. Confira a lista de ativos.`);
+    }, 1500);
   }
 
   /* "Veículo 8833, operador Rafael, excedeu a velocidade. Verificar." */
@@ -3710,7 +3916,9 @@
       a.regra === 'gestaoFrente' || a.regra === 'aguardandoBasculamento' || a.regra === 'frenteDividida' ||
       a.regra === 'emergencia' || a.regra === 'telemetriaMuda' || a.regra === 'qualidadeColheita' ||
       a.regra === 'inconsistenciaApontamento' || a.regra === 'riscoMoenda' ||
-      a.regra === 'bateVolta' || a.regra === 'manutencaoPreditiva'
+      a.regra === 'bateVolta' || a.regra === 'manutencaoPreditiva' ||
+      a.regra === 'semOperadorTrabalhando' || a.regra === 'chaveGeralLigada' ||
+      a.regra === 'abastecimentoMotorLigado' || a.regra === 'microParadasCronicas'
     );
   }
   function canalSistema(a) {
@@ -3914,7 +4122,10 @@
         <img src="/icons/logo.png" alt="" width="28" height="28" />
         <div><strong>Central de alertas · COA</strong><span id="alertas-status" class="fine"></span></div>
       </div>
-      <button id="alertas-fechar" class="icone" title="Fechar" aria-label="Fechar">✕</button>
+      <div class="painel-head-acoes">
+        <button id="alertas-fixar" class="icone" type="button" title="Fixar painel na lateral esquerda ao lado do mapa (Split-Screen)" aria-label="Fixar painel lateral" aria-pressed="false">📌</button>
+        <button id="alertas-fechar" class="icone" title="Fechar" aria-label="Fechar">✕</button>
+      </div>
     </header>
     <div class="ferramentas">
       <div class="abas">
@@ -3934,6 +4145,15 @@
     <div class="busca-central" role="search">
       <input id="alertas-busca" type="search" aria-label="Buscar por frota, alerta ou operador" aria-controls="lista-ativos lista-frentes lista-comboio lista-historico" placeholder="Frota, frente, alerta ou operador" autocomplete="off">
       <button id="alertas-busca-limpar" class="icone hide" type="button" title="Limpar busca" aria-label="Limpar busca">✕</button>
+    </div>
+    <div id="ativos-triagem" class="ativos-triagem" role="toolbar" aria-label="Filtros rápidos de alertas">
+      <button type="button" class="triagem-chip on" data-filtro-ativos="todos" aria-pressed="true">Todos <b data-cont-filtro="todos">0</b></button>
+      <button type="button" class="triagem-chip" data-filtro-ativos="pendentes" aria-pressed="false">🔴 Sem ciência <b data-cont-filtro="pendentes">0</b></button>
+      <button type="button" class="triagem-chip" data-filtro-ativos="sla" aria-pressed="false">⏱️ SLA <b data-cont-filtro="sla">0</b></button>
+      <button type="button" class="triagem-chip" data-filtro-ativos="custo" aria-pressed="false">💸 Maior R$ <b data-cont-filtro="custo">0</b></button>
+      <button type="button" class="triagem-chip" data-filtro-ativos="oficial" aria-pressed="false">🏛️ SGPA <b data-cont-filtro="oficial">0</b></button>
+      <button type="button" class="triagem-chip" data-filtro-ativos="auditoria" aria-pressed="false">🕵️ Pente-Fino <b data-cont-filtro="auditoria">0</b></button>
+      <button id="btn-ack-lote" type="button" class="triagem-lote hide" title="Marcar como ciente todos os alertas sem ciência visíveis neste filtro">✓ Ciente lote</button>
     </div>
     <div class="linha-status">
       <span class="dot" id="dot-ciclo" title="estado da conexão"></span>
@@ -4113,6 +4333,19 @@
       <label class="campo"><span>Custo parada Caminhão (R$/h)</span><input id="cfg-custo-cam" type="number" min="0" step="10" inputmode="numeric"></label>
       <label class="campo"><span>Preço do Diesel (R$/L)</span><input id="cfg-custo-diesel" type="number" min="1" step="0.1" inputmode="decimal"></label>
     </div>
+    <h3 class="secao-alertas">Pente-Fino COA v5.0 (“Zero Agulha”)</h3>
+    <p class="fine">Regras de precisão baseadas no catálogo auditado da Branco Peres (DESLIGAR_CHAVE_GERAL, CHUVA_DESLIGAR_CHAVE_GERAL, ABAST_INS_ML) e no efeito serrote das micro-paradas. Use 0 para desligar cada regra. Abastecimento com motor ligado é segurança: nunca é silenciado pelo Modo Chuva.</p>
+    <div class="switches">
+      <label class="chk"><input id="cfg-pentefino-ativo" type="checkbox"><span>Ativar regras Pente-Fino (sem operador, chave geral, abastecimento c/ motor ligado)</span></label>
+      <label class="chk"><input id="cfg-microparadas-ativo" type="checkbox"><span>Detectar micro-paradas crônicas (efeito serrote / picadinho)</span></label>
+    </div>
+    <div class="grade">
+      <label class="campo"><span>Operando sem operador há (min)</span><input id="cfg-sem-operador-min" type="number" min="0" step="1" inputmode="numeric"></label>
+      <label class="campo"><span>Chave geral ligada c/ motor parado (min)</span><input id="cfg-chave-geral-min" type="number" min="0" step="1" inputmode="numeric"></label>
+      <label class="campo"><span>Abastecimento c/ motor ligado (min)</span><input id="cfg-abast-motor-min" type="number" min="0" step="1" inputmode="numeric"></label>
+      <label class="campo"><span>Picadinho: nº de micro-paradas em 60 min</span><input id="cfg-picadinho-qtd" type="number" min="2" step="1" inputmode="numeric"></label>
+      <label class="campo"><span>Picadinho: minutos perdidos somados</span><input id="cfg-picadinho-soma" type="number" min="5" step="1" inputmode="numeric"></label>
+    </div>
     <h3 class="secao-alertas">Pronúncia dos termos (glossário)</h3>
     <p class="fine">Ensine a voz a falar abreviações do SGPA. Uma regra por linha, no formato <b>termo=como falar</b>. O glossário já transforma <b>AG colhedora parada rápida</b> em <b>Aguardando colhedora parada rápida</b>. Exemplos: <code>AG=Aguardando</code>, <code>COLH=colhedora</code>. Deixar vazio depois do = faz a voz omitir o termo (ex.: <code>HR=</code>). Vale para todos os alertas falados; maiúsculas e acentos não importam. Depois, toque em Salvar preferências.</p>
     <textarea id="cfg-glossario" aria-label="Glossário de pronúncia" rows="6" spellcheck="false" autocomplete="off" placeholder="AG=Aguardando&#10;COLH=colhedora&#10;HR="></textarea>
@@ -4229,6 +4462,12 @@
       el.busca.focus();
     };
     $('alertas-fechar').onclick = fecharPainel;
+    if ($('alertas-fixar')) $('alertas-fixar').onclick = () => alternarPainelFixo();
+    p.querySelectorAll('[data-filtro-ativos]').forEach((b) => {
+      b.onclick = () => definirFiltroAtivos(b.dataset.filtroAtivos);
+    });
+    if ($('btn-ack-lote')) $('btn-ack-lote').onclick = () => reconhecerEmLote();
+    sincronizarPainelFixo();
     p.querySelector('.veu').onclick = fecharPainel;
     for (const b of p.querySelectorAll('.aba')) {
       b.onclick = () => selecionarAbaCentral(b.dataset.aba);
@@ -4383,9 +4622,120 @@
     if (el.frentes) el.frentes.classList.toggle('hide', alvo !== 'frentes');
     if (el.comboio) el.comboio.classList.toggle('hide', alvo !== 'comboio');
     if (el.historico) el.historico.classList.toggle('hide', alvo !== 'historico');
+    const triagem = $('ativos-triagem');
+    if (triagem) triagem.classList.toggle('hide', alvo !== 'ativos');
     if (alvo === 'frentes') renderFrentes();
     else if (alvo === 'comboio') renderComboio();
     else renderAtivos();
+  }
+
+  function sincronizarPainelFixo() {
+    document.documentElement.dataset.painelFixo = painelFixo ? '1' : '0';
+    const aberto = !!(el.painel && !el.painel.classList.contains('hide'));
+    const palco = document.getElementById('stage');
+    if (palco) palco.classList.toggle('painel-fixo-aberto', painelFixo && aberto);
+    const btn = $('alertas-fixar');
+    if (btn) {
+      btn.classList.toggle('fixo-on', painelFixo);
+      btn.setAttribute('aria-pressed', painelFixo ? 'true' : 'false');
+      btn.title = painelFixo
+        ? 'Painel fixado ao lado do mapa — clique para voltar ao modo flutuante'
+        : 'Fixar painel na lateral esquerda ao lado do mapa (Split-Screen)';
+    }
+    const txtMenu = $('menu-fixar-txt');
+    if (txtMenu) txtMenu.textContent = painelFixo ? 'Soltar painel lateral (voltar ao flutuante)' : 'Painel Lateral Split-Screen (Mapa + COA)';
+  }
+
+  function alternarPainelFixo(forcar, persistir = true) {
+    painelFixo = typeof forcar === 'boolean' ? forcar : !painelFixo;
+    if (persistir) {
+      try { localStorage.setItem(KEY_PAINEL_FIXO, painelFixo ? '1' : '0'); } catch { /* sem storage */ }
+    }
+    if (painelFixo && el.painel && el.painel.classList.contains('hide')) abrirPainel();
+    sincronizarPainelFixo();
+    if (persistir) {
+      const largo = typeof window !== 'undefined' && window.innerWidth > 768;
+      mostrarAviso(painelFixo
+        ? (largo ? '📌 Painel fixado ao lado do mapa: “ver no mapa” mantém a Central aberta.' : '📌 Painel fixado. No celular ele continua em tela cheia; o Split-Screen aparece em telas a partir de 769 px.')
+        : 'Painel lateral solto: volta ao modo flutuante.', 'info');
+    }
+    return painelFixo;
+  }
+
+  function splitScreenAtivo() {
+    return painelFixo && typeof window !== 'undefined' && window.innerWidth > 768;
+  }
+
+  function alertaReconhecido(a, ts = agora()) {
+    return !!(a && acks[a.chave] && ts - acks[a.chave] < 2 * 3600_000);
+  }
+
+  const REGRAS_PENTE_FINO = new Set([
+    'inconsistenciaApontamento', 'semOperadorTrabalhando', 'chaveGeralLigada', 'abastecimentoMotorLigado',
+    'microParadasCronicas', 'manutencaoPreditiva', 'ociosoSemApontamento', 'semApontamento', 'telemetriaMuda',
+  ]);
+
+  function custoAbertoAlerta(a, ts = agora()) {
+    const regrasCusto = ['paradaImprodutiva', 'aguardandoCaminhao', 'aguardandoBasculamento', 'semApontamento', 'inconsistenciaApontamento', 'microParadasCronicas', 'chaveGeralLigada', 'semOperadorTrabalhando'];
+    if (!a || !regrasCusto.includes(a.regra)) return 0;
+    if (a.regra === 'microParadasCronicas') return Math.round((Number(a.valor) || 0) * policy.custoHoraEquipamento(a.e || {}, cfg).valorMinuto);
+    const min = Math.max(0, Math.round((ts - (a.inicio || a.ts || ts)) / 60_000));
+    return min >= 2 ? Math.round(min * policy.custoHoraEquipamento(a.e || {}, cfg).valorMinuto) : 0;
+  }
+
+  function slaEstourado(a, ts = agora()) {
+    return classeSla(a.inicio || a.ts, a.severidade || 1, ts).cls === 'sla-crit';
+  }
+
+  function passaFiltroAtivos(a, filtro, ts = agora()) {
+    if (filtro === 'pendentes') return !alertaReconhecido(a, ts);
+    if (filtro === 'sla') return slaEstourado(a, ts);
+    if (filtro === 'custo') return custoAbertoAlerta(a, ts) > 0;
+    if (filtro === 'oficial') return a.fonte === 'portal';
+    if (filtro === 'auditoria') return REGRAS_PENTE_FINO.has(a.regra);
+    return true;
+  }
+
+  function definirFiltroAtivos(filtro) {
+    const validos = ['todos', 'pendentes', 'sla', 'custo', 'oficial', 'auditoria'];
+    filtroAtivos = validos.includes(filtro) ? filtro : 'todos';
+    if (el.painel) {
+      el.painel.querySelectorAll('[data-filtro-ativos]').forEach((b) => {
+        const on = b.dataset.filtroAtivos === filtroAtivos;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+    renderAtivos();
+    return filtroAtivos;
+  }
+
+  function listaAtivosVisiveis(ts = agora()) {
+    return [...ativos.values()]
+      .filter((a) => correspondeBuscaCentral([
+        a.numero, a.e && a.e.id, a.e && a.e.nome, a.e && a.e.tipo, a.e && a.e.frente, a.e && a.e.frenteInferida,
+        a.operador, a.nomeAlarme, a.tipoAlarme, a.regra, a.texto, a.detalhe,
+      ]))
+      .filter((a) => passaFiltroAtivos(a, filtroAtivos, ts));
+  }
+
+  function reconhecerEmLote() {
+    const ts = agora();
+    const pendentes = listaAtivosVisiveis(ts).filter((a) => !alertaReconhecido(a, ts));
+    if (!pendentes.length) {
+      mostrarAviso('Nenhum alerta sem ciência neste filtro.', 'info');
+      return 0;
+    }
+    podarAcks(acks);
+    for (const a of pendentes) {
+      acks[a.chave] = ts;
+      if (emergenciaAtiva && emergenciaAtiva.chave === a.chave) fecharBannerEmergencia();
+    }
+    salvar(KEY_ACK, acks);
+    renderAtivos();
+    renderCabecalho();
+    mostrarAviso(`✓ ${pendentes.length} alerta(s) marcados como ciente — ficam “Em acompanhamento” na Central.`, 'info');
+    return pendentes.length;
   }
 
   function abrirPainel(aba) {
@@ -4397,10 +4747,12 @@
       if (el.frentes && !el.frentes.classList.contains('hide')) renderFrentes();
       if (el.comboio && !el.comboio.classList.contains('hide')) renderComboio();
     }
+    sincronizarPainelFixo();
     renderCabecalho();
   }
   function fecharPainel() {
     el.painel.classList.add('hide');
+    sincronizarPainelFixo();
   }
 
   function despacharApoioWhatsApp(item) {
@@ -4474,6 +4826,18 @@
     } else if (cmd.acao === 'passagem') {
       abrirPassagemTurno();
       resposta = 'Boletim de passagem de turno gerado e pronto para copiar ou enviar.';
+    } else if (cmd.acao === 'pendentes') {
+      abrirPainel('ativos');
+      definirFiltroAtivos('pendentes');
+      const ts = agora();
+      const pend = [...ativos.values()].filter((a) => !alertaReconhecido(a, ts));
+      const sla = pend.filter((a) => slaEstourado(a, ts)).length;
+      resposta = pend.length
+        ? `${pend.length} alerta(s) sem ciência no COA${sla ? `, ${sla} com SLA estourado` : ''}. Filtro “Sem ciência” aplicado na Central.`
+        : 'Pente-fino em dia: nenhum alerta sem ciência na Central.';
+    } else if (cmd.acao === 'fixar') {
+      const fixo = alternarPainelFixo();
+      resposta = fixo ? 'Painel da Central fixado ao lado do mapa.' : 'Painel da Central voltou ao modo flutuante.';
     } else if (cmd.acao === 'dds') {
       abrirPainel('comboio');
       const dds = placarPositivo();
@@ -4894,11 +5258,16 @@
   }
 
   function classeSla(inicioMs, severidade, ts = agora()) {
-    const min = Math.max(0, Math.floor((ts - (inicioMs || ts)) / 60_000));
+    const seg = Math.max(0, Math.floor((ts - (inicioMs || ts)) / 1000));
+    const min = Math.floor(seg / 60);
     const meta = Math.max(1, num(cfg.slaAlertaMin) || 10);
     const estourado = (severidade >= 3 && min >= meta) || min >= meta * 2;
     const atencao = !estourado && min >= Math.max(3, Math.floor(meta * 0.6));
-    const rotulo = min < 1 ? 'agora' : min < 60 ? `há ${min}m` : `há ${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`;
+    const rotulo = seg < 5
+      ? 'agora'
+      : min < 60
+        ? `⏱ ${String(min).padStart(2, '0')}:${String(seg % 60).padStart(2, '0')}`
+        : `há ${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`;
     return {
       cls: estourado ? 'sla-crit' : atencao ? 'sla-warn' : 'sla-ok',
       txt: estourado ? `${rotulo} · SLA` : rotulo,
@@ -5139,19 +5508,61 @@
     if (bVoz) bVoz.classList.toggle('mudo', !cfg.voz);
   }
 
+  function ocorrenciasNoTurnoEquipamento(numero, ts = agora()) {
+    const alvo = String(numero || '').trim();
+    if (!alvo) return 0;
+    const inicioTurno = policy.turnoAtualCoa(ts).inicioMs || (ts - 8 * 3600_000);
+    let total = 0;
+    for (const h of hist) {
+      if (!h || h.ts < inicioTurno) continue;
+      if (String(h.equipamento || '').trim() === alvo) total++;
+    }
+    return total;
+  }
+
+  function montarFaixaTelemetria(e) {
+    if (!e || typeof e !== 'object' || String(e.id || '').startsWith('frente:') || String(e.id || '').startsWith('usina:')) return '';
+    const itens = [];
+    const rpm = e.rpm !== null && e.rpm !== undefined && Number.isFinite(Number(e.rpm)) ? Math.round(Number(e.rpm)) : null;
+    const vel = e.velocidade !== null && e.velocidade !== undefined && Number.isFinite(Number(e.velocidade)) ? Math.round(Number(e.velocidade) * 10) / 10 : null;
+    if (e.motor === true && (rpm === null || rpm === 0) && (vel === null || vel <= 0.5)) {
+      itens.push('<span class="tel-pill tel-meia">🟡 Meia-chave</span>');
+    } else if (e.motor === true || (rpm !== null && rpm > 0)) {
+      itens.push('<span class="tel-pill tel-on">🟢 Motor ON</span>');
+    } else if (e.motor === false) {
+      itens.push('<span class="tel-pill tel-off">⚪ Motor OFF</span>');
+    }
+    if (rpm !== null) itens.push(`<span class="tel-pill">⚙️ <b>${milhar(rpm)}</b> RPM</span>`);
+    if (vel !== null) itens.push(`<span class="tel-pill">💨 <b>${vel}</b> km/h</span>`);
+    if (e.local) itens.push(`<span class="tel-pill">📍 Talhão <b>${esc(e.local)}</b></span>`);
+    else if (e.frente || e.frenteInferida) itens.push(`<span class="tel-pill">🚩 <b>${esc(e.frente || e.frenteInferida)}</b></span>`);
+    const atraso = e.atraso !== null && e.atraso !== undefined && Number.isFinite(Number(e.atraso)) ? Number(e.atraso) : 0;
+    if (atraso >= 180) {
+      const m = Math.max(3, Math.round(atraso / 60));
+      itens.push(`<span class="tel-pill tel-sinal">📡 congelado há <b>${m}m</b></span>`);
+    }
+    if (!itens.length) return '';
+    return `<div class="a-telemetria" aria-label="Telemetria ao vivo">${itens.join('')}</div>`;
+  }
+
   function card(a, comAccoes, contexto) {
+    const ts = agora();
+    const reconhecido = alertaReconhecido(a, ts);
     const d = document.createElement('div');
-    d.className = 'alerta sev' + a.severidade + (a.fonte === 'portal' ? ' oficial' : '') + (a.regra === 'emergencia' ? ' emergencia' : '');
+    d.className = 'alerta sev' + a.severidade +
+      (a.fonte === 'portal' ? ' oficial' : '') +
+      (a.regra === 'emergencia' ? ' emergencia' : '') +
+      (contexto === 'central' ? (reconhecido ? ' reconhecido' : ' nao-reconhecido') : '');
     d.dataset.chave = a.chave;
     d.style.setProperty('--cor', a.cor);
-    const reconhecido = acks[a.chave] && agora() - acks[a.chave] < 2 * 3600_000;
     const trat = tratativas[a.chave] || null;
     const inicioSla = a.inicio || a.ts;
-    const sla = classeSla(inicioSla, a.severidade || 1);
+    const sla = classeSla(inicioSla, a.severidade || 1, ts);
     const mostrarPainelTratativa = contexto === 'central' && comAccoes && reconhecido;
-    const ehParadaCusto = a.regra === 'paradaImprodutiva' || a.regra === 'aguardandoCaminhao' || a.regra === 'aguardandoBasculamento' || a.regra === 'semApontamento' || a.regra === 'inconsistenciaApontamento';
-    const minAberto = Math.max(0, Math.round((agora() - inicioSla) / 60_000));
-    const custoAlertaRs = ehParadaCusto && minAberto >= 2 ? Math.round(minAberto * policy.custoHoraEquipamento(a.e || {}, cfg).valorMinuto) : 0;
+    const custoAlertaRs = custoAbertoAlerta(a, ts);
+    const reincTurno = contexto === 'central' ? ocorrenciasNoTurnoEquipamento(a.numero, ts) : 0;
+    const eqVivo = (a.e && a.e.id && frota.get(String(a.e.id))) || a.e || null;
+    const telemetriaHtml = contexto === 'central' ? montarFaixaTelemetria(eqVivo) : '';
     d.innerHTML = `
       <div class="a-top">
         <span class="a-icone">${a.icone}</span>
@@ -5159,6 +5570,8 @@
         <span class="a-chip">${esc(a.nome)}</span>
         ${a.fonte === 'portal' ? '<span class="a-chip oficial">SGPA</span>' : ''}
         ${a.fonte === 'teste' ? '<span class="a-chip cinza">AMOSTRA MANUAL</span>' : ''}
+        ${REGRAS_PENTE_FINO.has(a.regra) && a.fonte === 'app' ? '<span class="a-chip pentefino">🕵️ Pente-Fino</span>' : ''}
+        ${reincTurno >= 2 ? `<span class="a-chip reincidencia" title="Reincidência desta frota no turno atual">🔁 ${reincTurno}ª no turno</span>` : ''}
         ${a.emChuva ? `<span class="a-chip cinza">🌧️ Chuva</span>` : ''}
         ${a.paradaId === 'aguardandoCarregamento' && a.e && a.e.frenteInferida ? `<span class="a-chip">Frente inferida: ${esc(a.e.frenteInferida)}</span>` : ''}
         ${custoAlertaRs > 0 ? `<span class="a-chip custo">💸 ~R$ ${custoAlertaRs.toLocaleString('pt-BR')}</span>` : ''}
@@ -5169,6 +5582,7 @@
         <span class="a-hora" title="há ${desde(a.ts)}">${hora(a.ts)}</span>
       </div>
       <p class="a-txt">${esc(a.texto)}</p>
+      ${telemetriaHtml}
       <p class="a-meta">${esc(a.descricao)}${a.operador ? ' · operador <b>' + esc(a.operador) + '</b>' : ' · <b>sem operador definido</b>'}${a.detalhe ? '<br>' + esc(a.detalhe) : ''}</p>
       <p class="a-fala">🗣️ ${esc(a.fala)}</p>
       ${mostrarPainelTratativa ? `
@@ -5184,7 +5598,7 @@
         <button data-q="mapa">📍 ver no mapa</button>
         <button data-q="whats" title="Copiar cobrança padronizada COA e abrir WhatsApp">💬 cobrar</button>
         ${comAccoes ? '<button data-q="snz">🤫 15 min</button>' : ''}
-        ${comAccoes && !reconhecido ? '<button data-q="ack">✓ reconhecer</button>' : comAccoes ? '<span class="a-chip verde">reconhecido</span>' : ''}
+        ${comAccoes && !reconhecido ? '<button data-q="ack">✓ reconhecer</button>' : comAccoes ? '<span class="a-chip verde">🛠️ Em acompanhamento</span>' : ''}
         <button data-q="fechar" class="fim">✕</button>
       </div>`;
     d.querySelector('[data-q="ouvir"]').onclick = () => falar(a.fala);
@@ -5289,20 +5703,65 @@
     return norm(texto).includes(query);
   }
 
+  function atualizarContadoresTriagem(baseBusca, ts) {
+    if (!el.painel) return;
+    const contagens = {
+      todos: baseBusca.length,
+      pendentes: 0,
+      sla: 0,
+      custo: 0,
+      oficial: 0,
+      auditoria: 0,
+    };
+    for (const a of baseBusca) {
+      if (!alertaReconhecido(a, ts)) contagens.pendentes++;
+      if (slaEstourado(a, ts)) contagens.sla++;
+      if (custoAbertoAlerta(a, ts) > 0) contagens.custo++;
+      if (a.fonte === 'portal') contagens.oficial++;
+      if (REGRAS_PENTE_FINO.has(a.regra)) contagens.auditoria++;
+    }
+    for (const [k, qtd] of Object.entries(contagens)) {
+      const b = el.painel.querySelector(`[data-cont-filtro="${k}"]`);
+      if (b) b.textContent = String(qtd);
+    }
+    const visiveisSemCiencia = baseBusca.filter((a) => passaFiltroAtivos(a, filtroAtivos, ts) && !alertaReconhecido(a, ts)).length;
+    const btnLote = $('btn-ack-lote');
+    if (btnLote) {
+      btnLote.classList.toggle('hide', visiveisSemCiencia < 2);
+      if (visiveisSemCiencia >= 2) btnLote.textContent = `✓ Ciente lote (${visiveisSemCiencia})`;
+    }
+  }
+
   function renderAtivos() {
     if (!el.ativos) return;
-    const lista = [...ativos.values()]
-      .sort((x, y) => y.severidade - x.severidade || y.ts - x.ts)
-      .filter((a) => correspondeBuscaCentral([
-        a.numero, a.e && a.e.id, a.e && a.e.nome, a.e && a.e.tipo, a.e && a.e.frente, a.e && a.e.frenteInferida,
-        a.operador, a.nomeAlarme, a.tipoAlarme, a.regra, a.texto, a.detalhe,
-      ]));
+    const ts = agora();
+    const baseBusca = [...ativos.values()].filter((a) => correspondeBuscaCentral([
+      a.numero, a.e && a.e.id, a.e && a.e.nome, a.e && a.e.tipo, a.e && a.e.frente, a.e && a.e.frenteInferida,
+      a.operador, a.nomeAlarme, a.tipoAlarme, a.regra, a.texto, a.detalhe,
+    ]));
+    atualizarContadoresTriagem(baseBusca, ts);
+    const lista = baseBusca
+      .filter((a) => passaFiltroAtivos(a, filtroAtivos, ts))
+      .sort((x, y) => {
+        if (filtroAtivos === 'custo') {
+          const diffCusto = custoAbertoAlerta(y, ts) - custoAbertoAlerta(x, ts);
+          if (diffCusto !== 0) return diffCusto;
+        }
+        // Sem ciência sempre sobe antes dos que já estão em acompanhamento
+        const ackDiff = Number(alertaReconhecido(x, ts)) - Number(alertaReconhecido(y, ts));
+        if (ackDiff !== 0) return ackDiff;
+        return (y.severidade || 0) - (x.severidade || 0) || (y.ts || 0) - (x.ts || 0);
+      });
     el.ativos.innerHTML = '';
     if (!lista.length) {
-      el.ativos.innerHTML = norm(buscaCentral)
-        ? '<div class="vazio">Nenhum alerta ativo corresponde à busca.</div>'
-        : '<div class="vazio">Nenhum alerta ativo agora.<br><span class="fine">A central continua lendo o portal a cada ' +
+      if (norm(buscaCentral)) {
+        el.ativos.innerHTML = '<div class="vazio">Nenhum alerta ativo corresponde à busca.</div>';
+      } else if (filtroAtivos !== 'todos' && ativos.size > 0) {
+        el.ativos.innerHTML = '<div class="vazio">Nenhum alerta neste filtro rápido agora.<br><span class="fine">Toque em <b>Todos</b> acima para ver os demais alertas ativos.</span></div>';
+      } else {
+        el.ativos.innerHTML = '<div class="vazio">Nenhum alerta ativo agora.<br><span class="fine">A central continua lendo o portal a cada ' +
           cfg.intervaloSeg + 's e os eventos do mapa em tempo real.</span></div>';
+      }
     }
     for (const a of lista) el.ativos.appendChild(card(a, true, 'central'));
     el.contAtivos.textContent = String(ativos.size);
@@ -5412,7 +5871,7 @@
         delete rastroBI.end;
         props.rastroBI = rastroBI;
         iframe.contentWindow.postMessage({ type: 'props', data: props }, origin);
-        fecharPainel();
+        if (!splitScreenAtivo()) fecharPainel();
         mostrarAviso(`Centralizando ${a.classe || ''} ${a.numero} no mapa.`, 'info');
         return;
       } catch (erro) {
@@ -5448,7 +5907,7 @@
     frenteDividida: 'Apontamento “Frente dividida” observado no stream/telemetria em trator/transbordo. Alerta sem tolerância para o COA validar a chamada da colhedora no FUT. Fala/notificação locais dependem do PWA aberto e conectado.',
     refeicao: 'Refeição acima do tempo configurado por grupo ou equipamento (seção Controle de refeições). Fala e notifica só com o app aberto.',
     semApontamento: 'Equipamento na operação SGPA “Sem Apontamento” por 5 min ou mais (sem alarme do portal). Fala e notifica só com o app aberto.',
-    paradaImprodutiva: 'Paradas improdutivas de maior impacto (fila, aguardando carregamento, 983, falta de transbordo, mecânica, comboio etc.) acima da tolerância da seção Paradas improdutivas. Fala e notifica com o app aberto.',
+    paradaImprodutiva: 'Paradas improdutivas de maior impacto (fila, aguardando carregamento, 983, falta de transbordo, mecânica, comboio, troca de facas, lavagem, julieta, balança etc.) acima da tolerância da seção Paradas improdutivas.',
     gestaoFrente: 'Alertas da frente: fila acumulada de caminhões, frente com todas as colhedoras paradas e transbordos demais aguardando colhedora (seção Gestão por frente).',
     emergencia: 'Prioridade máxima: apontamento ou alarme de incêndio/fogo ou caminhão bombeiro em deslocamento rápido. Fura a fila de voz, dispara sirene e abre banner vermelho no topo.',
     telemetriaMuda: 'Frota monitorada sem comunicação de telemetria acima do limiar configurado (ponto cego de bordo/GPS). Fala e exibe último ponto conhecido.',
@@ -5457,6 +5916,10 @@
     riscoMoenda: 'Alerta estratégico quando o ritmo estimado de entrega das colhedoras fica abaixo de 70% da meta de moagem da usina por mais de 15 min.',
     bateVolta: 'Caminhão canavieiro em viagem/transporte acima do tempo máximo de bate-volta configurado (possível retenção ou quebra na estrada).',
     manutencaoPreditiva: 'Equipamento com 3 ou mais alertas mecânicos/RPM/motor em janela de 4 horas — sugere inspeção preventiva antes de quebra grave.',
+    semOperadorTrabalhando: 'Pente-Fino v5.0: equipamento trabalhando ou deslocando (motor ligado, RPM ≥ 900 e vel. ≥ 5 km/h) sem operador identificado no computador de bordo.',
+    chaveGeralLigada: 'Pente-Fino v5.0 (DESLIGAR_CHAVE_GERAL / CHUVA_DESLIGAR_CHAVE_GERAL): meia-chave/ignição ligada com motor parado (0 RPM) descarregando bateria; tolerância cai para 5 min durante Modo Chuva.',
+    abastecimentoMotorLigado: 'Segurança v5.0 (ABAST_INS_ML): abastecimento ou lubrificação em andamento com o motor ligado (RPM ≥ 650). Nunca é silenciado pelo Modo Chuva.',
+    microParadasCronicas: 'Pente-Fino v5.0 (efeito serrote / picadinho): 4+ micro-paradas curtas em 60 min somando tempo improdutivo relevante sem estourar um único alerta longo.',
     generico: 'Demais tipos oficiais, com o nome original do SGPA.',
   };
   let limiteTipos = 80;
@@ -5834,6 +6297,11 @@
       'cfg-custo-tb': cfg.custoHoraTransbordo != null ? cfg.custoHoraTransbordo : 260,
       'cfg-custo-cam': cfg.custoHoraCaminhao != null ? cfg.custoHoraCaminhao : 220,
       'cfg-custo-diesel': cfg.custoLitroDiesel != null ? cfg.custoLitroDiesel : 6.2,
+      'cfg-sem-operador-min': cfg.minutosSemOperador != null ? cfg.minutosSemOperador : 4,
+      'cfg-chave-geral-min': cfg.minutosChaveGeral != null ? cfg.minutosChaveGeral : 12,
+      'cfg-abast-motor-min': cfg.minutosAbastMotorLigado != null ? cfg.minutosAbastMotorLigado : 2,
+      'cfg-picadinho-qtd': cfg.microParadasQtd != null ? cfg.microParadasQtd : 4,
+      'cfg-picadinho-soma': cfg.microParadasSomaMin != null ? cfg.microParadasSomaMin : 16,
       'cfg-turno': cfg.minutosTurno,
       'cfg-cooldown': cfg.cooldownMin,
       'cfg-maxvoz': cfg.maxPorCiclo,
@@ -5858,6 +6326,8 @@
       'cfg-gestao-frente': cfg.gestaoFrenteAtiva !== false,
       'cfg-auditar-apontamento': cfg.auditarApontamento !== false,
       'cfg-manut-preditiva': cfg.manutencaoPreditivaAtiva !== false,
+      'cfg-pentefino-ativo': cfg.penteFinoAtivo !== false,
+      'cfg-microparadas-ativo': cfg.microParadasAtiva !== false,
       'cfg-local': cfg.calcularLocal,
       'cfg-serv': cfg.espelharServidor,
       'cfg-stream': cfg.usarStream,
@@ -5944,6 +6414,8 @@
       gestaoFrenteAtiva: $('cfg-gestao-frente').checked,
       auditarApontamento: $('cfg-auditar-apontamento') ? $('cfg-auditar-apontamento').checked : cfg.auditarApontamento !== false,
       manutencaoPreditivaAtiva: $('cfg-manut-preditiva') ? $('cfg-manut-preditiva').checked : cfg.manutencaoPreditivaAtiva !== false,
+      penteFinoAtivo: $('cfg-pentefino-ativo') ? $('cfg-pentefino-ativo').checked : cfg.penteFinoAtivo !== false,
+      microParadasAtiva: $('cfg-microparadas-ativo') ? $('cfg-microparadas-ativo').checked : cfg.microParadasAtiva !== false,
       sentinelaSegundoPlano: $('cfg-sentinela') ? $('cfg-sentinela').checked : cfg.sentinelaSegundoPlano !== false,
       manterTelaAtiva: $('cfg-wakelock') ? $('cfg-wakelock').checked : cfg.manterTelaAtiva !== false,
       alertaQuedaSgpa: $('cfg-queda-sgpa') ? $('cfg-queda-sgpa').checked : cfg.alertaQuedaSgpa !== false,
@@ -5971,6 +6443,11 @@
       custoHoraTransbordo: Math.max(0, n('cfg-custo-tb', 260)),
       custoHoraCaminhao: Math.max(0, n('cfg-custo-cam', 220)),
       custoLitroDiesel: Math.max(1, n('cfg-custo-diesel', 6.2)),
+      minutosSemOperador: Math.max(0, n('cfg-sem-operador-min', 4)),
+      minutosChaveGeral: Math.max(0, n('cfg-chave-geral-min', 12)),
+      minutosAbastMotorLigado: Math.max(0, n('cfg-abast-motor-min', 2)),
+      microParadasQtd: Math.max(2, n('cfg-picadinho-qtd', 4)),
+      microParadasSomaMin: Math.max(5, n('cfg-picadinho-soma', 16)),
       minutosTurno: n('cfg-turno', 4),
       cooldownMin: n('cfg-cooldown', 10),
       maxPorCiclo: n('cfg-maxvoz', 4),
@@ -6305,6 +6782,11 @@
     aplicarTema: aplicarAcabamento,
     obterTema: () => normalizarTema(document.documentElement.dataset.acabamento),
     alternarTelao,
+    alternarPainelFixo,
+    painelFixoAtivo: () => !!painelFixo,
+    definirFiltroAtivos,
+    reconhecerEmLote,
+    registrarEpisodioMicroParada,
     alternarChuvaFrente,
     resumoFrentes,
     filaComboio,

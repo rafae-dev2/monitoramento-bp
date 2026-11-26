@@ -7,7 +7,7 @@
 }(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis), function () {
   'use strict';
 
-  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'aguardandoBasculamento', 'frenteDividida', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente', 'emergencia', 'telemetriaMuda', 'qualidadeColheita', 'inconsistenciaApontamento', 'riscoMoenda', 'bateVolta', 'manutencaoPreditiva'];
+  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'turno', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'aguardandoBasculamento', 'frenteDividida', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente', 'emergencia', 'telemetriaMuda', 'qualidadeColheita', 'inconsistenciaApontamento', 'riscoMoenda', 'bateVolta', 'manutencaoPreditiva', 'semOperadorTrabalhando', 'chaveGeralLigada', 'abastecimentoMotorLigado', 'microParadasCronicas'];
   var DEFAULTS = {
     velocidade: true,
     rpm: true,
@@ -28,7 +28,11 @@
     inconsistenciaApontamento: true,
     riscoMoenda: true,
     bateVolta: true,
-    manutencaoPreditiva: true
+    manutencaoPreditiva: true,
+    semOperadorTrabalhando: true,
+    chaveGeralLigada: true,
+    abastecimentoMotorLigado: true,
+    microParadasCronicas: true
   };
   var NUMEROS_FALADOS = ['zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'];
   // Expansões confirmadas pelo usuário no DOCX de 23/11/2026. Os códigos sem
@@ -214,7 +218,12 @@
     { id: 'aguardOrdemServico', nome: 'Aguardando ordem de serviço / liberação de área', min: 20, re: /^(?:ag(?:uardando|uard)? (?:ordem|os\b|liberacao|area|instru|orientacao|topograf))|^sem (?:ordem|os\b)/ },
     { id: 'aguardPrancha', nome: 'Aguardando prancha/transporte', min: 30, re: /^ag(?:uardando|uard)? (?:transp\w* )?\(?prancha/ },
     { id: 'aguardMecanico', nome: 'Aguardando mecânico/socorro', min: 30, re: /^ag(?:uardando|uard)? (?:mecanico|socorro|manutencao|borracheiro|eletricista)/ },
-    { id: 'emManutencao', nome: 'Em manutenção (mecânica/borracharia)', min: 45, re: /^(?:em )?manutencao\b|^borracharia\b|^mecanica\b|^eletrica\b|^oficina\b/ }
+    { id: 'emManutencao', nome: 'Em manutenção (mecânica/borracharia)', min: 45, re: /^(?:em )?manutencao\b|^borracharia\b|^mecanica\b|^eletrica\b|^oficina\b/ },
+    { id: 'trocaFacas', nome: 'Troca de facas excedida (colhedora)', min: 20, codigo: '3520', re: /^troca (?:de )?facas/ },
+    { id: 'lavagemEquipamento', nome: 'Lavagem / limpeza de equipamento', min: 45, codigo: '3500', re: /^(?:lavagem|limpeza)(?: de equipamento)?/ },
+    { id: 'trocaJulietaEngate', nome: 'Troca de julieta / engate de implemento', min: 15, re: /^(?:trocando julieta|troca de julieta|engate\s*desengate|desengate de implemento)/ },
+    { id: 'filaBalancaPatio', nome: 'Fila de balança / descarga indústria', min: 25, re: /^(?:fila balanca|balanca entrada|balanca saida|aguard\w* desc\w* (?:na )?industria|apos descarregar cana na mesa)/ },
+    { id: 'abastLubrifExcedido', nome: 'Abastecimento / lubrificação excedido', min: 20, re: /^(?:abastecimento(?: de)? (?:insumo|combustivel|diesel|lubrificacao)|lubrificacao\b)/ }
   ];
   function paradaImprodutiva(e) {
     if (!e || typeof e !== 'object') return null;
@@ -314,7 +323,8 @@
         velocidade: 'velocidade', rpm: 'rpm', ocioso: 'ocioso', turno: 'turno',
         motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', aguardandobasculamento: 'aguardandoBasculamento', frentedividida: 'frenteDividida', semapontamento: 'semApontamento', refeicao: 'refeicao', paradaimprodutiva: 'paradaImprodutiva', gestaofrente: 'gestaoFrente',
         ociososemapontamento: 'ocioso', emergencia: 'emergencia', telemetriamuda: 'telemetriaMuda', qualidadecolheita: 'qualidadeColheita',
-        inconsistenciaapontamento: 'inconsistenciaApontamento', riscomoenda: 'riscoMoenda', batevolta: 'bateVolta', manutencaopreditiva: 'manutencaoPreditiva'
+        inconsistenciaapontamento: 'inconsistenciaApontamento', riscomoenda: 'riscoMoenda', batevolta: 'bateVolta', manutencaopreditiva: 'manutencaoPreditiva',
+        semoperadortrabalhando: 'semOperadorTrabalhando', chavegeralligada: 'chaveGeralLigada', abastecimentomotorligado: 'abastecimentoMotorLigado', microparadascronicas: 'microParadasCronicas'
       };
       if (aliases[compact]) return aliases[compact];
     }
@@ -603,6 +613,36 @@
       return 'Manutenção preditiva C O A: ' + cmp + ' ' + vehicleNumber(item, event) + ' acumulou ' +
         (nmp || 3) + ' ocorrências mecânicas ou de motor no turno. Frente/grupo ' + String(fmp).trim() + '. Acionar oficina preventiva.';
     }
+    if (selectedCategory === 'semOperadorTrabalhando') {
+      var fsop = frenteOuGrupo(event);
+      var csop = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
+      var msop = numericAlertValue(item.valor);
+      return 'Pente-fino C O A: ' + csop + ' ' + vehicleNumber(item, event) + ' em operação sem operador identificado' +
+        (msop ? ' há ' + String(msop) + (msop === 1 ? ' minuto' : ' minutos') : '') +
+        '. Frente/grupo ' + String(fsop).trim() + '. Cobrar login imediato no bordo.';
+    }
+    if (selectedCategory === 'chaveGeralLigada') {
+      var fchg = frenteOuGrupo(event);
+      var cchg = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
+      var mchg = numericAlertValue(item.valor);
+      return 'Atenção C O A: ' + cchg + ' ' + vehicleNumber(item, event) + ' parado com chave geral ligada e motor desligado' +
+        (mchg ? ' há ' + String(mchg) + (mchg === 1 ? ' minuto' : ' minutos') : '') +
+        '. Frente/grupo ' + String(fchg).trim() + '. Desligar chave geral para proteger bateria e horímetro.';
+    }
+    if (selectedCategory === 'abastecimentoMotorLigado') {
+      var fabm = frenteOuGrupo(event);
+      var cabm = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
+      return 'Alerta de segurança C O A: ' + cabm + ' ' + vehicleNumber(item, event) +
+        ' em abastecimento ou lubrificação com motor ligado. Frente/grupo ' + String(fabm).trim() + '. Desligar motor imediatamente.';
+    }
+    if (selectedCategory === 'microParadasCronicas') {
+      var fmpc = frenteOuGrupo(event);
+      var cmpc = item.classe == null || String(item.classe).trim() === '' ? vehicleClass : String(item.classe).trim();
+      var vmpc = numericAlertValue(item.valor);
+      return 'Eficiência C O A: ' + cmpc + ' ' + vehicleNumber(item, event) +
+        ' com micro-paradas repetidas na última hora' + (vmpc ? ', somando ' + String(vmpc) + ' minutos perdidos' : '') +
+        '. Frente/grupo ' + String(fmpc).trim() + '. Verificar gargalo operacional.';
+    }
     if (selectedCategory === 'semApontamento') {
       var frente = frenteOuGrupo(event);
       var vClass = item.classe == null || String(item.classe).trim() === '' ? 'Veículo' : String(item.classe).trim();
@@ -641,7 +681,7 @@
 
   function ehAlertaSeguranca(regra) {
     var r = String(regra || '');
-    return r === 'emergencia' || r === 'velocidade' || r === 'rpm' || r === 'motorCondicao';
+    return r === 'emergencia' || r === 'velocidade' || r === 'rpm' || r === 'motorCondicao' || r === 'abastecimentoMotorLigado';
   }
 
   function emergenciaOperacional(e) {
@@ -1469,20 +1509,26 @@
       var frM = t.match(/frente\s*(\d+)/);
       return { acao: 'chuva', frente: frM ? 'Frente ' + frM[1] : 'Frente 1' };
     }
-    if (/\b(?:comboio|abastec|oficina|mecan|apoio|uber)\b/.test(t)) {
+    if (/\b(?:comboio|abastec\w*|oficina|mecan\w*|apoio|uber)\b/.test(t)) {
       return { acao: 'comboio' };
     }
-    if (/\b(?:moenda|moagem|custo|taximetro|financeir|tonelad)\b/.test(t)) {
+    if (/\b(?:moenda|moagem|custo\w*|taximetro|financeir\w*|tonelad\w*)\b/.test(t)) {
       return { acao: 'moenda' };
     }
-    if (/\b(?:reconhec|ciente|confirmar|cobrad)\b/.test(t)) {
+    if (/\b(?:reconhec\w*|ciente|confirmar|cobrad\w*)\b/.test(t)) {
       return { acao: 'reconhecer' };
     }
     if (/\b(?:passagem|boletim|relatorio)\b/.test(t)) {
       return { acao: 'passagem' };
     }
-    if (/\b(?:dds|placar|destaque|campe|elogio)\b/.test(t)) {
+    if (/\b(?:dds|placar|destaque\w*|campe\w*|elogio\w*)\b/.test(t)) {
       return { acao: 'dds' };
+    }
+    if (/\b(?:pente\s*fino|auditoria|sem\s+ciencia|pendent\w*)\b/.test(t)) {
+      return { acao: 'pendentes' };
+    }
+    if (/\b(?:fixar|split|dividir|acoplar)\b/.test(t)) {
+      return { acao: 'fixar' };
     }
     if (/\b(?:resumo|frentes|situacao|panorama|ctt)\b/.test(t)) {
       return { acao: 'frentes' };
@@ -1491,6 +1537,84 @@
       return { acao: 'localizar', frota: numMatch[1] };
     }
     return { acao: 'desconhecido', textoOriginal: String(frase || '') };
+  }
+
+  /* ------------------ Pente-Fino COA v5.0 ("Zero Agulha") ------------------ */
+
+  function operandoSemOperador(e) {
+    if (!e || typeof e !== 'object') return null;
+    var opNome = String(e.operador || '').trim();
+    var opBruto = norm(e.operadorBruto || e.descFuncionario || '');
+    var semOp = !opNome || /\b(?:9999|sem operador|indefinido|nao definido|desconhecido|generic)\b/.test(opBruto);
+    if (!semOp) return null;
+    if (emTrocaDeTurnoLocal(e.operacao || e.descOperacao, e.cdOperacao)) return null;
+    var vel = numericAlertValue(e.velocidade);
+    var rpm = numericAlertValue(e.rpm);
+    if (e.motor === true && rpm !== null && rpm >= 900 && vel !== null && vel >= 5) {
+      return {
+        velocidade: Math.round(vel),
+        rpm: Math.round(rpm),
+        operacao: String(e.operacao || e.descOperacao || 'Em movimento')
+      };
+    }
+    return null;
+  }
+
+  function emTrocaDeTurnoLocal(desc, cd) {
+    return /troca.?de.?turno/.test(norm(desc)) || String(cd || '').trim() === '925';
+  }
+
+  function meiaChaveParada(e) {
+    if (!e || typeof e !== 'object') return null;
+    if (e.motor !== true) return null;
+    var rpm = numericAlertValue(e.rpm);
+    var vel = numericAlertValue(e.velocidade);
+    if ((rpm === null || rpm === 0) && (vel === null || vel <= 0.5)) {
+      return {
+        operacao: String(e.operacao || e.descOperacao || 'Parado com ignição ligada')
+      };
+    }
+    return null;
+  }
+
+  function abastecendoComMotorLigado(e) {
+    if (!e || typeof e !== 'object' || e.operacaoConfirmada !== true) return null;
+    if (e.motor !== true) return null;
+    var rpm = numericAlertValue(e.rpm);
+    if (rpm === null || rpm < 650) return null;
+    var opBruta = String(e.operacao || e.descOperacao || '').trim();
+    var op = norm(opBruta).replace(/^\d+\s*-\s*/, '').replace(/[._\-\/]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!op || /\baguard/.test(op)) return null;
+    if (/^(?:abastec|lubrific|insumo\s+abast|abast\s+ins)/.test(op)) {
+      return {
+        rpm: Math.round(rpm),
+        operacao: opBruta
+      };
+    }
+    return null;
+  }
+
+  function avaliarMicroParadas(episodios, agoraMs, janelaMin, minEpisodios, minSomaMinutos) {
+    if (!Array.isArray(episodios) || !episodios.length) return null;
+    var ts = Number(agoraMs) || Date.now();
+    var corte = ts - (Math.max(15, Number(janelaMin) || 60) * 60000);
+    var qtdMin = Math.max(2, Number(minEpisodios) || 4);
+    var somaAlvo = Math.max(5, Number(minSomaMinutos) || 16);
+    var validos = [];
+    var somaMin = 0;
+    for (var i = 0; i < episodios.length; i += 1) {
+      var ep = episodios[i];
+      if (!ep || Number(ep.fimMs) < corte) continue;
+      var durMin = Number(ep.duracaoMin);
+      if (!Number.isFinite(durMin) || durMin < 1) continue;
+      validos.push(ep);
+      somaMin += durMin;
+    }
+    if (validos.length < qtdMin || somaMin < somaAlvo) return null;
+    return {
+      episodios: validos.length,
+      minutosPerdidos: Math.round(somaMin)
+    };
   }
 
   return Object.freeze({
@@ -1502,6 +1626,7 @@
     frenteDividida: frenteDividida,
     semApontamento: semApontamento,
     emRefeicao: emRefeicao,
+    CATEGORIAS: CATEGORIAS,
     PARADAS: PARADAS,
     paradaImprodutiva: paradaImprodutiva,
     limiteParada: limiteParada,
@@ -1530,6 +1655,10 @@
     calcularFilaComboioApoio: calcularFilaComboioApoio,
     avaliarRiscoIncendio303030: avaliarRiscoIncendio303030,
     gerarPlacarPositivoTurno: gerarPlacarPositivoTurno,
-    interpretarComandoCoa: interpretarComandoCoa
+    interpretarComandoCoa: interpretarComandoCoa,
+    operandoSemOperador: operandoSemOperador,
+    meiaChaveParada: meiaChaveParada,
+    abastecendoComMotorLigado: abastecendoComMotorLigado,
+    avaliarMicroParadas: avaliarMicroParadas
   });
 }));

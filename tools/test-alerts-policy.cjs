@@ -332,5 +332,41 @@ assert.equal(policy.interpretarComandoCoa('fila de comboio').acao, 'comboio');
 assert.equal(policy.interpretarComandoCoa('onde está a 57838').frota, '57838');
 assert.equal(policy.interpretarComandoCoa('risco de moenda').acao, 'moenda');
 assert.equal(policy.interpretarComandoCoa('modo chuva frente 2').frente, 'Frente 2');
+assert.equal(policy.interpretarComandoCoa('alertas pendentes').acao, 'pendentes');
+assert.equal(policy.interpretarComandoCoa('fixar painel').acao, 'fixar');
 
-console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 passaram.');
+// Pacote Pente-Fino COA v5.0 ("Zero Agulha"): 24 categorias, 26 paradas auditadas, sem operador, chave geral, abastecimento motor ligado e micro-paradas crônicas.
+assert.equal(policy.CATEGORIAS.length, 24);
+assert.equal(policy.PARADAS.length, 26);
+assert.equal(policy.ehAlertaSeguranca('abastecimentoMotorLigado'), true);
+assert.equal(policy.ehAlertaSeguranca('chaveGeralLigada'), false);
+assert.equal(policy.paradaImprodutiva({ operacao: '3520 - Troca de Facas' }).id, 'trocaFacas');
+assert.equal(policy.paradaImprodutiva({ operacao: '3500 - Lavagem de Equipamento' }).id, 'lavagemEquipamento');
+assert.equal(policy.paradaImprodutiva({ operacao: 'Trocando Julieta' }).id, 'trocaJulietaEngate');
+assert.equal(policy.paradaImprodutiva({ operacao: 'Fila Balança Entrada' }).id, 'filaBalancaPatio');
+assert.equal(policy.paradaImprodutiva({ operacao: 'Abastecimento de Combustível' }).id, 'abastLubrifExcedido');
+
+assert.ok(policy.operandoSemOperador({ operador: '', operadorBruto: '9999 - Sem Operador', operacao: '101 - Colheita', motor: true, rpm: 1800, velocidade: 6.2 }));
+assert.equal(policy.operandoSemOperador({ operador: 'Carlos Eduardo', operadorBruto: 'Carlos Eduardo', operacao: '101 - Colheita', motor: true, rpm: 1800, velocidade: 6.2 }), null);
+assert.equal(policy.operandoSemOperador({ operador: '', operadorBruto: '', operacao: '925 - Troca de Turno', cdOperacao: '925', motor: true, rpm: 1400, velocidade: 6 }), null);
+
+assert.ok(policy.meiaChaveParada({ motor: true, rpm: 0, velocidade: 0, operacao: '940 - Aguardando Comboio' }));
+assert.equal(policy.meiaChaveParada({ motor: true, rpm: 820, velocidade: 0 }), null);
+assert.equal(policy.meiaChaveParada({ motor: false, rpm: 0, velocidade: 0 }), null);
+
+assert.ok(policy.abastecendoComMotorLigado({ operacaoConfirmada: true, operacao: 'Abastecimento de Insumo', motor: true, rpm: 1250 }));
+assert.equal(policy.abastecendoComMotorLigado({ operacaoConfirmada: true, operacao: '940 - Aguardando Comboio', motor: true, rpm: 1250 }), null);
+assert.equal(policy.abastecendoComMotorLigado({ operacaoConfirmada: true, operacao: 'Abastecimento de Insumo', motor: true, rpm: 0 }), null);
+
+const serrote = policy.avaliarMicroParadas([
+  { duracaoMin: 4, fimMs: agoraRef - 45 * 60000 },
+  { duracaoMin: 5, fimMs: agoraRef - 32 * 60000 },
+  { duracaoMin: 3.5, fimMs: agoraRef - 18 * 60000 },
+  { duracaoMin: 4.5, fimMs: agoraRef - 5 * 60000 },
+], agoraRef, 60, 4, 16);
+assert.ok(serrote && serrote.episodios === 4 && serrote.minutosPerdidos === 17);
+
+assert.match(policy.montarFala({ regra: 'abastecimentoMotorLigado', classe: 'Colhedora', numero: '57838', valor: 1300 }, {}), /alerta de segurança.*com motor ligado/i);
+assert.match(policy.montarFala({ regra: 'microParadasCronicas', classe: 'Colhedora', numero: '57838', valor: 18 }, {}), /micro-paradas/i);
+
+console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 passaram.');

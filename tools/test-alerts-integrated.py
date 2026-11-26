@@ -40,6 +40,12 @@ hooks = """
       frota.clear(); estados.clear(); ativos.clear(); hist = []; filaAudit.length = 0;
       gestaoUltimoDisparo.clear();
       paradaAtual.clear();
+      microParadasMapa.clear();
+      acks = {};
+      chuvas = {};
+      clearTimeout(timerResumoRajada); timerResumoRajada = null; excedentesRajada = 0;
+      alternarPainelFixo(false, false);
+      definirFiltroAtivos('todos');
       cfg = policy.normalizeCfg(JSON.parse(JSON.stringify(PADRAO)));
       cfg.popup = false; cfg.som = false; cfg.voz = false; cfg.vibrar = false; cfg.usarStream = false; cfg.notificacao = false;
       rajada = {ts: 0, voz: 0};
@@ -790,7 +796,7 @@ with sync_playwright() as pw:
     assert page.locator('#cfg-alertas').evaluate("el => el.classList.contains('hide')"), 'O X deve fechar as preferências'
     assert page.evaluate('document.activeElement.id === "btn-cfg"'), 'Ao fechar, o foco deve voltar ao controle de configurações visível'
     page.click('#btn-cfg')
-    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 20")
+    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 24")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
     assert page.locator('#cfg-categorias input[aria-label="Notificar: Frente dividida (validar FUT)"]').is_checked(), 'Frente dividida deve aparecer ligada por padrão nas preferências'
     assert page.locator('#cfg-gestao-frente').is_checked(), 'Atenção gestão deve ter opção mestre ligada por padrão'
@@ -822,7 +828,7 @@ with sync_playwright() as pw:
     print('OK: expansão de AG/COLH, prévia, substituição personalizada e persistência do glossário')
     page.fill('#cfg-busca-categoria', 'fila')
     vis = page.evaluate("[...document.querySelectorAll('#cfg-categorias > *')].filter(x => !x.classList.contains('hide')).length")
-    assert 1 <= vis < 20, f'busca de categorias deve filtrar ({vis})'
+    assert 1 <= vis < 24, f'busca de categorias deve filtrar ({vis})'
     page.fill('#cfg-busca-categoria', 'xyzinexistente')
     assert page.locator('#cfg-categorias-vazio').is_visible(), 'mensagem de nenhum alerta'
     page.fill('#cfg-busca-categoria', '')
@@ -1286,9 +1292,102 @@ with sync_playwright() as pw:
     }""")
     print('OK: Combo de Ouro COA v4.0.0 (Falso Apontamento, Taxímetro R$, Moenda t/h, Alô COA, Uber do Comboio, Radar 30-30-30, Bate-Volta + Preditiva e Placar DDS) validado')
 
+    # Pacote Pente-Fino COA v5.0: Split-Screen, Triagem 1-Clique, Telemetria ao Vivo, Reincidência e 6 Regras Zero-Agulha
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.evaluate("""() => {
+      __test.reset();
+      const mapEl = document.getElementById('map');
+      mapEl.setAttribute('src', 'about:blank');
+      __test.setCtx({ api: 'https://fixture.invalid', buId: 1, proxy: false, audit: false, mapUrl: 'about:blank', props: { token: 'fx', rastroBI: {} } });
+      __test.capturarFalas();
+      MonitoramentoAlertas.configurar({
+        ativo: true, popup: true, voz: true, som: false, vibrar: false, notificacao: false,
+        penteFinoAtivo: true, minutosSemOperador: 4, minutosChaveGeral: 12, minutosAbastMotorLigado: 2,
+        microParadasAtiva: true, microParadasJanelaMin: 60, microParadasQtd: 4, microParadasSomaMin: 16,
+      });
+      const baseMs = Date.now();
+      const iso = new Date(baseMs).toISOString();
+      __test.aplicarTelemetria([
+        { cdEquipamento: 'PF-SEMOP', descEquipamento: '57840 - Colhedora JD', descTpEquipamento: 'COLHEDORA', descFrente: 'Frente 1', descFuncionario: '9999 - Sem Operador', descOperacao: '101 - Colheita Mecanizada', vlVelocidade: 6.4, vlParametro4: 1850, vlEd1: '1', cdFazenda: '12', cdTalhao: '04', vlTempoSemComunicacao: '0 DIA(S) 00:00:05', fgMonitoramentoAtivo: 'T', dtHrLocal: iso },
+        { cdEquipamento: 'PF-CHAVE', descEquipamento: '7022 - Transbordo BP', descTpEquipamento: 'TRANSBORDO', descFrente: 'Frente 2', descFuncionario: '201 - Pedro Rocha', descOperacao: '940 - Aguardando Comboio', vlVelocidade: 0, vlParametro4: 0, vlEd1: '1', cdFazenda: '18', cdTalhao: '09', vlTempoSemComunicacao: '0 DIA(S) 00:04:10', fgMonitoramentoAtivo: 'T', dtHrLocal: iso },
+        { cdEquipamento: 'PF-ABAST', descEquipamento: '57841 - Colhedora Case', descTpEquipamento: 'COLHEDORA', descFrente: 'Frente 2', descFuncionario: '202 - André Lima', descOperacao: 'Abastecimento de Insumo', vlVelocidade: 0, vlParametro4: 1320, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:04', fgMonitoramentoAtivo: 'T', dtHrLocal: iso },
+        { cdEquipamento: 'PF-FACAS', descEquipamento: '57842 - Colhedora Facas', descTpEquipamento: 'COLHEDORA', descFrente: 'Frente 1', descFuncionario: '203 - Renato Alves', descOperacao: '3520 - Troca de Facas', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', vlTempoSemComunicacao: '0 DIA(S) 00:00:04', fgMonitoramentoAtivo: 'T', dtHrLocal: iso },
+        { cdEquipamento: 'PF-SERROTE', descEquipamento: '57843 - Colhedora Serrote', descTpEquipamento: 'COLHEDORA', descFrente: 'Frente 1', descFuncionario: '204 - Bruno Costa', descOperacao: '101 - Colheita Mecanizada', vlVelocidade: 5.5, vlParametro4: 1800, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:04', fgMonitoramentoAtivo: 'T', dtHrLocal: iso },
+      ]);
+      // Frente 2 em Modo Chuva: chave geral cai para 5 min e abastecimento c/ motor ligado (segurança) NÃO é silenciado!
+      MonitoramentoAlertas.alternarChuvaFrente('Frente 2', 'Teste Chuva v5.0');
+      for (const d of [4, 5, 3.5, 4.5]) {
+        MonitoramentoAlertas.registrarEpisodioMicroParada('PF-SERROTE', d, baseMs - 60_000);
+      }
+      __test.avaliarFrota(baseMs, 'lotes');
+      __test.avaliarFrota(baseMs + 22 * 60_000, 'tempo');
+
+      const ativosV5 = MonitoramentoAlertas.ativos();
+      for (const [regra, num] of [
+        ['semOperadorTrabalhando', '57840'],
+        ['chaveGeralLigada', '7022'],
+        ['abastecimentoMotorLigado', '57841'],
+        ['paradaImprodutiva', '57842'],
+        ['microParadasCronicas', '57843'],
+      ]) {
+        if (!ativosV5.some(a => a.regra === regra && a.numero === num)) {
+          throw new Error(`Regra v5.0 ${regra} (${num}) deveria estar ativa`);
+        }
+      }
+      const falasV5 = __test.falasCapturadas();
+      if (!falasV5.some(f => /alerta de segurança.*cinco sete oito quatro um/i.test(f))) {
+        throw new Error('Abastecimento c/ motor ligado deve falar mesmo com Frente 2 em Modo Chuva: ' + JSON.stringify(falasV5));
+      }
+      if (!falasV5.some(f => /sete zero dois dois.*chave geral/i.test(f))) {
+        throw new Error('Chave geral ligada na chuva (CHUVA_DESLIGAR_CHAVE_GERAL) deve falar em 5 min: ' + JSON.stringify(falasV5));
+      }
+
+      // Zero-Perda de Escopo: atraso temporário acima de maxAtrasoMin não apaga alerta já aberto
+      __test.aplicarTelemetria([
+        { cdEquipamento: 'PF-SEMOP', descEquipamento: '57840 - Colhedora JD', descTpEquipamento: 'COLHEDORA', descFrente: 'Frente 1', descFuncionario: '9999 - Sem Operador', descOperacao: '101 - Colheita Mecanizada', vlVelocidade: 6.4, vlParametro4: 1850, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:35:00', fgMonitoramentoAtivo: 'T', dtHrLocal: iso },
+      ]);
+      MonitoramentoAlertas.configurar({ frentes: ['Frente 1', 'Frente 2'] });
+      if (!MonitoramentoAlertas.ativos().some(a => a.regra === 'semOperadorTrabalhando' && a.numero === '57840')) {
+        throw new Error('Zero-Perda: sombra temporária de sinal (35m) não pode apagar alerta operacional já aberto');
+      }
+
+      // Gera reincidência no turno para 57841 (2ª ocorrência no histórico)
+      __test.espelharAlarmes([{ cdEquipamento: 'PF-ABAST', cdId: 'REINC-1', cdTpAlarme: 5, descTpAlarme: 'VELOCIDADE', vlAlarme: 58, fgOnline: true }]);
+
+      // Split-Screen + Triagem 1-Clique + Faixa de Telemetria + Ciência em Lote
+      MonitoramentoAlertas.abrirPainel('ativos');
+      MonitoramentoAlertas.alternarPainelFixo(true, false);
+      if (document.documentElement.dataset.painelFixo !== '1' || !document.getElementById('stage').classList.contains('painel-fixo-aberto')) {
+        throw new Error('Split-Screen não ativou dataset/classe no palco');
+      }
+      __test.abrirNoMapa(MonitoramentoAlertas.ativos()[0]);
+      if (document.getElementById('alertas').classList.contains('hide')) {
+        throw new Error('Com Split-Screen fixado no desktop, ver no mapa deve manter o painel lateral aberto');
+      }
+      if (!document.querySelector('#lista-ativos .a-telemetria')) {
+        throw new Error('Faixa de telemetria ao vivo (.a-telemetria) não renderizou nos cartões');
+      }
+      if (!document.querySelector('#lista-ativos .a-chip.reincidencia')) {
+        throw new Error('Chip de reincidência no turno (🔁) não renderizou para frota reincidente');
+      }
+      MonitoramentoAlertas.definirFiltroAtivos('auditoria');
+      if (document.querySelectorAll('#lista-ativos .alerta').length < 4) {
+        throw new Error('Filtro Pente-Fino deveria exibir os alertas de auditoria fina');
+      }
+      const reconhecidosLote = MonitoramentoAlertas.reconhecerEmLote();
+      if (reconhecidosLote < 4) {
+        throw new Error('reconhecerEmLote deveria marcar todos os alertas sem ciência visíveis');
+      }
+      MonitoramentoAlertas.definirFiltroAtivos('pendentes');
+      // Restaura modo flutuante padrão
+      MonitoramentoAlertas.alternarPainelFixo(false, false);
+      __test.restaurarFalas();
+    }""")
+    print('OK: Pacote Pente-Fino COA v5.0 (Split-Screen, Triagem + Lote, Telemetria Viva, Reincidência e 6 Regras Zero-Agulha) validado')
+
     assert not errors, errors
     assert not any(m=='POST' for m,u in requests), 'Teste tentou POST'
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+16} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+17} grupos de verificações.')

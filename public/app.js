@@ -542,6 +542,14 @@
       if (!alertasLigados && session) ligarAlertas();
       MonitoramentoAlertas.abrirPainel('ativos');
     }
+    if (act === 'fixar-painel' && ALERTAS_ON) {
+      if (!alertasLigados && session) ligarAlertas();
+      if (typeof MonitoramentoAlertas.alternarPainelFixo === 'function') {
+        MonitoramentoAlertas.alternarPainelFixo();
+      } else {
+        MonitoramentoAlertas.abrirPainel('ativos');
+      }
+    }
     if (act === 'frentes' && ALERTAS_ON) {
       if (!alertasLigados && session) ligarAlertas();
       MonitoramentoAlertas.abrirPainel('frentes');
