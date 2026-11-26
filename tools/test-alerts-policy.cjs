@@ -239,9 +239,9 @@ assert.equal(policy.ehAlertaSeguranca('emergencia'), true);
 assert.equal(policy.ehAlertaSeguranca('velocidade'), true);
 assert.equal(policy.ehAlertaSeguranca('paradaImprodutiva'), false);
 assert.ok(policy.emergenciaOperacional({ operacaoConfirmada: true, operacao: '999 - Combate a Incêndio' }));
-assert.ok(policy.emergenciaOperacional({ tipo: 'CAMINHÃO BOMBEIRO', velocidade: 48 }));
+assert.equal(policy.emergenciaOperacional({ tipo: 'CAMINHÃO BOMBEIRO', velocidade: 48 }), null, 'Velocidade pura nunca dispara alerta local sem alarme oficial SGPA ou apontamento de incêndio');
 assert.equal(policy.emergenciaOperacional({ tipo: 'CAMINHÃO BOMBEIRO', velocidade: 0, operacaoConfirmada: true, operacao: 'Aguardando Carregamento' }), null);
-assert.equal(policy.colheitaAcimaDaFaixa({ tipo: 'COLHEDORA', operacaoConfirmada: true, operacao: '101 - Colheita Mecanizada', velocidade: 8.4 }, 7.5), true);
+assert.equal(policy.colheitaAcimaDaFaixa({ tipo: 'COLHEDORA', operacaoConfirmada: true, operacao: '101 - Colheita Mecanizada', velocidade: 8.4 }, 7.5), false, 'Velocidade é exclusivamente alarme oficial SGPA');
 assert.equal(policy.colheitaAcimaDaFaixa({ tipo: 'COLHEDORA', operacaoConfirmada: true, operacao: '101 - Colheita Mecanizada', velocidade: 6.2 }, 7.5), false);
 assert.equal(policy.colheitaAcimaDaFaixa({ tipo: 'COLHEDORA', operacaoConfirmada: true, operacao: '200 - Deslocamento', velocidade: 15 }, 7.5), false);
 assert.equal(policy.paradaImprodutiva({ operacao: '410 - Manutenção Mecânica' }).id, 'emManutencao');
@@ -340,9 +340,10 @@ assert.equal(policy.interpretarComandoCoa('modo chuva frente 2').frente, 'Frente
 assert.equal(policy.interpretarComandoCoa('alertas pendentes').acao, 'pendentes');
 assert.equal(policy.interpretarComandoCoa('fixar painel').acao, 'fixar');
 
-// Pacote Pente-Fino COA v5.0 + Refinamentos Operacionais v5.1 (23 categorias sem Troca de Turno, Bombeiro -> Caminhão, Atenção Flow vs Atenção Coa).
-assert.equal(policy.CATEGORIAS.length, 23);
+// Pacote Pente-Fino COA v5.0 + Refinamentos Operacionais v5.1 + Anti-Repetição Frota Muda & Velocidade 100% SGPA v5.2 (22 categorias).
+assert.equal(policy.CATEGORIAS.length, 22);
 assert.equal(policy.CATEGORIAS.includes('turno'), false);
+assert.equal(policy.CATEGORIAS.includes('qualidadeColheita'), false);
 assert.equal(policy.PARADAS.length, 26);
 assert.equal(policy.ehAlertaSeguranca('abastecimentoMotorLigado'), true);
 assert.equal(policy.ehAlertaSeguranca('chaveGeralLigada'), false);
@@ -375,7 +376,7 @@ assert.ok(serrote && serrote.episodios === 4 && serrote.minutosPerdidos === 17);
 assert.match(policy.montarFala({ regra: 'abastecimentoMotorLigado', classe: 'Colhedora', numero: '57838', valor: 1300 }, {}), /^Atenção Coa: alerta de segurança, Colhedora .*com motor ligado/i);
 assert.match(policy.montarFala({ regra: 'microParadasCronicas', classe: 'Colhedora', numero: '57838', valor: 18 }, {}), /^Atenção Coa.*Colhedora .*micro-paradas/i);
 
-// v5.1.0: Bombeiro cadastrado como TRATOR DE PNEU LEVE no SGPA -> sempre fala Caminhão e setor FLOW (nunca Trator nem Bombeiro).
+// v5.1.0 + v5.2.0: Bombeiro cadastrado como TRATOR DE PNEU LEVE no SGPA -> sempre fala Caminhão e setor FLOW (e só dispara emergência com apontamento/alarme de incêndio, nunca por velocidade pura).
 const bombeiroErradoPortal = {
   id: 'BOMB-01',
   numero: '9911',
@@ -391,16 +392,22 @@ assert.equal(policy.ehGrupoBombeiro(null, bombeiroErradoPortal), true);
 assert.equal(policy.classeEquipamentoFalado(null, bombeiroErradoPortal), 'Caminhão');
 assert.equal(policy.setorControle(null, bombeiroErradoPortal), 'FLOW');
 assert.equal(policy.aguardandoCaminhao(bombeiroErradoPortal), false, 'Bombeiro com tipo errado TRATOR DE PNEU LEVE não entra em regra de Trator');
+assert.equal(policy.emergenciaOperacional(bombeiroErradoPortal), null, 'Velocidade sozinha em Bombeiro não dispara emergência local');
 const falaVelBombeiro = policy.montarFala({ codigo: 5, numero: '9911', valor: 74, e: bombeiroErradoPortal });
 assert.equal(falaVelBombeiro, 'Atenção Flow: Caminhão nove nove um um excedeu a velocidade a 74 quilômetros por hora. Verificar.');
 assert.doesNotMatch(falaVelBombeiro, /trator|bombeir/i);
 assert.doesNotMatch(falaVelBombeiro, /C O A|F L O W|\bCOA\b|\bFLOW\b/);
-const emgBombeiro = policy.emergenciaOperacional(bombeiroErradoPortal);
-assert.ok(emgBombeiro && /^Caminhão em deslocamento/.test(emgBombeiro.motivo));
-assert.doesNotMatch(emgBombeiro.motivo, /bombeir|trator/i);
+const emgBombeiro = policy.emergenciaOperacional(Object.assign({}, bombeiroErradoPortal, { operacao: '999 - Combate a Incêndio' }));
+assert.ok(emgBombeiro && /Combate a Incêndio/.test(emgBombeiro.motivo));
 const falaEmgBombeiro = policy.montarFala({ regra: 'emergencia', numero: '9911', texto: emgBombeiro.motivo, e: bombeiroErradoPortal });
 assert.match(falaEmgBombeiro, /^Atenção Flow, emergência! Caminhão nove nove um um/);
 assert.doesNotMatch(falaEmgBombeiro, /trator|bombeir|C O A|F L O W|\bCOA\b|\bFLOW\b/);
+
+// v5.2.0: Frota Muda elegível (ignora máquinas encostadas > 3h como 383 min e paradas em Chuva/Clima/Oficina).
+assert.equal(policy.frotaMudaElegivel({ ativo: 'T', atraso: 35 * 60, operacao: '953 - Sem Apontamento', velocidade: 0 }, 25), true);
+assert.equal(policy.frotaMudaElegivel({ ativo: 'T', atraso: 383 * 60, operacao: '976 - Transbordo Alocado', velocidade: 0 }, 25), false, '383 min (> 3h) é máquina encostada/desligada, não deve alertar Frota Muda');
+assert.equal(policy.frotaMudaElegivel({ ativo: 'T', atraso: 40 * 60, operacao: '902 - Chuva - HR', grupoOperacao: 'CLIMA', estadoOperacional: 'PARADA', velocidade: 0 }, 25), false, 'Parada de Chuva/CLIMA não deve alertar Frota Muda');
+assert.equal(policy.frotaMudaElegivel({ ativo: 'T', atraso: 45 * 60, operacao: '410 - Manutenção Oficina', velocidade: 0 }, 25), false, 'Em manutenção/oficina parada não deve alertar Frota Muda');
 
 // v5.1.0: Diferenciação Controle FLOW (caminhões + veículos leves) vs COA (tratores, transbordos, colhedoras e linha amarela).
 const vlPortal = { numero: '1102', nome: '1102 - Utilitário', tipo: 'TRATOR DE PNEU LEVE', grupoEquipamento: 'VEÍCULOS LEVES' };
@@ -416,4 +423,4 @@ assert.match(policy.montarFala({ codigo: 11, numero: '3510', texto: 'motor ocios
 assert.equal(policy.aplicarGlossario('Atenção C O A e F L O W'), 'Atenção Coa e Flow');
 assert.equal(policy.interpretarComandoCoa('alertas flow').acao, 'flow');
 
-console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 + v5.1 passaram.');
+console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 + v5.1 + v5.2 passaram.');

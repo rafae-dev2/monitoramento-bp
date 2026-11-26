@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '5.1.0';
+  const VERSAO = '5.2.0';
   const KEY_PAINEL_FIXO = 'bperes.visual.painel-fixo.v1';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
@@ -127,7 +127,7 @@
   };
 
   const REGRAS = {
-    emergencia: { id: 'emergencia', nome: 'Emergência / Incêndio / Bombeiro', icone: '🔥', cor: '#dc2626', severidade: 4 },
+    emergencia: { id: 'emergencia', nome: 'Emergência / Incêndio', icone: '🔥', cor: '#dc2626', severidade: 4 },
     velocidade: { id: 'velocidade', nome: 'Velocidade excedida', icone: '🚨', cor: '#ef4444', severidade: 3 },
     rpm: { id: 'rpm', nome: 'RPM máxima do motor', icone: '⚙️', cor: '#f97316', severidade: 3 },
     ocioso: { id: 'ocioso', nome: 'Motor ocioso', icone: '🔌', cor: '#38bdf8', severidade: 2 },
@@ -140,8 +140,7 @@
     semApontamento: { id: 'semApontamento', nome: 'Sem apontamento', icone: '📝', cor: '#f97316', severidade: 2 },
     paradaImprodutiva: { id: 'paradaImprodutiva', nome: 'Parada improdutiva', icone: '⏸️', cor: '#d97706', severidade: 2 },
     gestaoFrente: { id: 'gestaoFrente', nome: 'Gestão da frente', icone: '🚩', cor: '#f59e0b', severidade: 3 },
-    telemetriaMuda: { id: 'telemetriaMuda', nome: 'Frota muda (sem telemetria)', icone: '📡', cor: '#f59e0b', severidade: 3 },
-    qualidadeColheita: { id: 'qualidadeColheita', nome: 'Qualidade de colheita (velocidade)', icone: '🌾', cor: '#eab308', severidade: 2 },
+    telemetriaMuda: { id: 'telemetriaMuda', nome: 'Frota muda (sem telemetria)', icone: '📡', cor: '#f59e0b', severidade: 2 },
     inconsistenciaApontamento: { id: 'inconsistenciaApontamento', nome: 'Falso apontamento (inconsistência)', icone: '🕵️', cor: '#f97316', severidade: 2 },
     riscoMoenda: { id: 'riscoMoenda', nome: 'Risco de moenda (entrega abaixo da meta)', icone: '🏭', cor: '#ef4444', severidade: 3 },
     bateVolta: { id: 'bateVolta', nome: 'Bate-volta excedido (caminhão)', icone: '🛣️', cor: '#f59e0b', severidade: 2 },
@@ -175,7 +174,6 @@
     minutosFrenteSemColhedora: 10, // todas as colhedoras da frente paradas (0 = desliga)
     transbordosAguardandoMax: 3, // transbordos aguardando colhedora na mesma frente (0 = desliga)
     minutosFrotaMuda: 25, // minutos sem comunicação de telemetria para alertar frota muda (0 = desliga)
-    velMaxColheita: 7.5, // km/h máximo técnico em colheita (0 = desliga)
     slaAlertaMin: 10, // meta de SLA do COA em minutos para destaque no cartão
     auditarApontamento: true, // auditoria automática de falso apontamento (operação vs. telemetria)
     minutosInconsistencia: 8, // minutos em inconsistência de apontamento antes de alertar (0 = desliga)
@@ -253,6 +251,7 @@
   })();
   let filtroAtivos = 'todos';
   const microParadasMapa = new Map(); // id → { paradoDesde, episodios: [{ duracaoMin, fimMs }] }
+  const frotaMudaAvisada = new Set(); // numero/id já avisado no episódio atual de perda de sinal
   let timerResumoRajada = null;
   let excedentesRajada = 0;
   let ultimoResumoCtt = { frentes: [], sugestoesBalanceamento: [], frotasMudas: [], totais: {} };
@@ -1287,7 +1286,7 @@
   }
 
   function alarmeFechado(flag) {
-    return flag === false || flag === 0 || /^(false|f|0)$/i.test(String(flag));
+    return flag === false || flag === 0 || /^(false|f|0|n|nao|closed|encerrad\w*)$/i.test(String(flag).trim());
   }
 
   function fecharOficial(id, codigo) {
@@ -1660,7 +1659,8 @@
   function reconciliarEscopo() {
     for (const [chave, alerta] of ativos) {
       const oficial = alerta.fonte === 'portal';
-      if (dentroDoEscopo(alerta.e, { alarmesOficiais: oficial, ignorarAtraso: true }) && (oficial || !atrasoExtremo(alerta.e))) continue;
+      const preservarMuda = alerta.regra === 'telemetriaMuda' && (Number(alerta.e && alerta.e.atraso) || 0) <= 3 * 3600;
+      if (dentroDoEscopo(alerta.e, { alarmesOficiais: oficial, ignorarAtraso: true }) && (oficial || preservarMuda || !atrasoExtremo(alerta.e))) continue;
       ativos.delete(chave);
       if (oficial) {
         const st = estados.get(chave);
@@ -1670,7 +1670,7 @@
     for (const [chave, st] of estados) {
       if (String(st.regra).startsWith('sgpa:')) continue;
       const e = frota.get(String(st.id));
-      if (e && dentroDoEscopo(e, { ignorarAtraso: true }) && !atrasoExtremo(e)) continue;
+      if (e && dentroDoEscopo(e, { ignorarAtraso: true }) && (st.regra === 'telemetriaMuda' || !atrasoExtremo(e))) continue;
       Object.assign(st, { firing: false, consec: 0, negados: 0, emitido: false, since: 0, ultimo: 0 });
       ativos.delete(chave);
     }
@@ -2017,23 +2017,55 @@
   }
 
   function regraFrotaMuda(e, ts) {
+    if (avaliacaoSoTempo) return;
+    if (!estados.size) frotaMudaAvisada.clear();
     const min = Math.max(0, num(cfg.minutosFrotaMuda) || 0);
     if (!min) return;
     const atrasoSeg = e.atraso != null && Number.isFinite(Number(e.atraso)) ? Number(e.atraso) : null;
-    const liga = atrasoSeg !== null && atrasoSeg >= min * 60 && atrasoSeg <= 12 * 3600;
+    const chaveNum = String(e.numero || e.id || '').trim();
+    const sinalVoltou = atrasoSeg !== null && atrasoSeg < min * 60;
+    if (sinalVoltou && chaveNum) {
+      frotaMudaAvisada.delete(chaveNum);
+    }
+    const liga = policy.frotaMudaElegivel(e, min);
     const st = marcar(e.id, 'telemetriaMuda', liga, ts, atrasoSeg ? Math.round(atrasoSeg / 60) : null);
-    if (!liga && !st.firing) ativos.delete(st.chave);
-    if (!st.firing) return;
-    if (!podeDisparar(st, ts)) return;
+    if (!liga) {
+      st.firing = false;
+      st.consec = 0;
+      st.since = 0;
+      st.negados = 0;
+      if (sinalVoltou) st.emitido = false;
+      ativos.delete(st.chave);
+      return;
+    }
+    if (!st.firing || st.consec < Math.max(1, cfg.amostras)) return;
     const mins = Math.max(min, Math.round((atrasoSeg || 0) / 60));
+    const frenteRotulo = frenteDoEquipamento(e) || 'não informada';
+    const texto = `sem comunicação de telemetria há ${minutosTxt(mins)} (frota muda) · frente/grupo: ${frenteRotulo}`;
+    const detalhe = `Última operação: ${e.operacao || '—'}${e.local ? ' · Último local: ' + e.local : ''} · limiar ${minutosTxt(min)}`;
+    // Disparo único por episódio de perda de sinal (sem repetir voz/toast a cada ciclo ou acoplado duplicado).
+    if (st.emitido || (chaveNum && frotaMudaAvisada.has(chaveNum))) {
+      st.emitido = true;
+      const existente = ativos.get(st.chave);
+      if (existente) {
+        existente.valor = mins;
+        existente.texto = texto;
+        existente.detalhe = detalhe;
+        existente.fala = montarFala(existente);
+      }
+      return;
+    }
+    st.emitido = true;
+    st.ultimo = ts;
+    if (chaveNum) frotaMudaAvisada.add(chaveNum);
     emitir({
       chave: st.chave,
       regra: 'telemetriaMuda',
       e,
       valor: mins,
       limite: min,
-      texto: `sem comunicação de telemetria há ${minutosTxt(mins)} (frota muda) · frente/grupo: ${e.frente || 'não informada'}`,
-      detalhe: `Última operação: ${e.operacao || '—'}${e.local ? ' · Último local: ' + e.local : ''} · limiar ${minutosTxt(min)}`,
+      texto,
+      detalhe,
       inicio: ts - mins * 60_000,
     });
   }
@@ -2054,29 +2086,8 @@
       regra: 'emergencia',
       e,
       valor: e.velocidade,
-      texto: `${det.motivo} · frente/grupo: ${e.frente || 'não informada'}`,
+      texto: `${det.motivo} · frente/grupo: ${frenteDoEquipamento(e) || 'não informada'}`,
       detalhe: `Canal de Emergência COA · ${e.nome}${e.local ? ' · Local: ' + e.local : ''} · prioridade máxima`,
-      inicio: st.since,
-    });
-  }
-
-  function regraQualidadeColheita(e, ts) {
-    const lim = Math.max(0, num(cfg.velMaxColheita) || 0);
-    if (!lim) return;
-    const liga = policy.colheitaAcimaDaFaixa(e, lim);
-    const st = marcar(e.id, 'qualidadeColheita', liga, ts, e.velocidade);
-    if (!liga && !st.firing) ativos.delete(st.chave);
-    if (!st.firing) return;
-    if (!podeDisparar(st, ts)) return;
-    const vel = Math.round((Number(e.velocidade) || 0) * 10) / 10;
-    emitir({
-      chave: st.chave,
-      regra: 'qualidadeColheita',
-      e,
-      valor: vel,
-      limite: lim,
-      texto: `colhendo acima da faixa técnica: ${vel} km/h (limite ${lim} km/h) · frente/grupo: ${e.frente || 'não informada'}`,
-      detalhe: `Qualidade da colheita · operação ${e.operacao || 'Colheita'} · risco de perda de cana e impureza`,
       inicio: st.since,
     });
   }
@@ -2226,7 +2237,7 @@
       e,
       valor: Math.round(durou),
       limite: min,
-      texto: `inconsistência de apontamento há ${minutosTxt(durou)}: ${det.motivo} · frente/grupo: ${e.frente || 'não informada'}`,
+      texto: `inconsistência de apontamento há ${minutosTxt(durou)}: ${det.motivo} · frente/grupo: ${frenteDoEquipamento(e) || 'não informada'}`,
       detalhe: `Auditoria automática COA · Operação SGPA: ${det.operacao} · validar apontamento no computador de bordo`,
       inicio: inicioReal(st, e),
     });
@@ -2248,7 +2259,7 @@
       e,
       valor: Math.round(durou),
       limite: min,
-      texto: `em viagem/bate-volta há ${minutosTxt(durou)} acima do ciclo de ${minutosTxt(min)} · frente/grupo: ${e.frente || 'não informada'}`,
+      texto: `em viagem/bate-volta há ${minutosTxt(durou)} acima do ciclo de ${minutosTxt(min)} · frente/grupo: ${frenteDoEquipamento(e) || 'não informada'}`,
       detalhe: `Monitor de ciclo rodoviário · operação ${e.operacao || 'Transporte'}${e.local ? ' · Local: ' + e.local : ''} · verificar retenção ou quebra na estrada`,
       inicio: inicioReal(st, e),
     });
@@ -2267,7 +2278,7 @@
       regra: 'manutencaoPreditiva',
       e,
       valor: rec.ocorrencias,
-      texto: `${rec.ocorrencias} alertas mecânicos/motor nas últimas 4h (último: ${rec.ultimoMotivo}) · frente/grupo: ${e.frente || 'não informada'}`,
+      texto: `${rec.ocorrencias} alertas mecânicos/motor nas últimas 4h (último: ${rec.ultimoMotivo}) · frente/grupo: ${frenteDoEquipamento(e) || 'não informada'}`,
       detalhe: `Manutenção preditiva COA · recomendar inspeção preventiva à oficina volante antes de quebra grave`,
       inicio: st.since,
     });
@@ -2464,11 +2475,9 @@
     try {
       atualizarFrentesInferidas(ts);
       for (const e of frota.values()) {
-        if (dentroDoEscopo(e, { ignorarAtraso: true })) {
+        if (lotes && dentroDoEscopo(e, { ignorarAtraso: true })) {
           const tsEquipMuda = Number(e.tsEquipamento);
-          observacaoEmAvaliacao = lotes
-            ? tsEquipMuda > 0 ? `sgpa:${tsEquipMuda}` : `rodada:${rodada}:${e.id}`
-            : null;
+          observacaoEmAvaliacao = tsEquipMuda > 0 ? `sgpa:${tsEquipMuda}` : `rodada:${rodada}:${e.id}`;
           regraFrotaMuda(e, ts);
         }
         if (!dentroDoEscopo(e)) continue;
@@ -2481,7 +2490,6 @@
         if (lotes) {
           regraRpm(e, ts);
           regraEmergencia(e, ts);
-          regraQualidadeColheita(e, ts);
           regraManutencaoPreditiva(e, ts);
           rastrearMicroParadas(e, ts);
         }
@@ -3059,6 +3067,8 @@
 
   function emitir(a) {
     if (!cfg.ativo && !a.simulado) return;
+    // Velocidade é exclusivamente o alarme oficial do portal SGPA (ou amostra explícita de teste).
+    if ((a.regra === 'velocidade' || a.regra === 'qualidadeColheita') && !a.servidor && !a.simulado) return;
     const ts = agora();
     const regra = REGRAS[a.regra] || REGRAS.generico;
     const chave = a.chave || `${a.e.id}|${a.regra}`;
@@ -3294,7 +3304,9 @@
     if (!cfg.voz || ts < (Number(cfg.silencioAte) || 0)) return;
     lista.sort((x, y) => (y.severidade || 0) - (x.severidade || 0) || (y.ts || 0) - (x.ts || 0));
     const max = Math.max(1, Number(cfg.maxPorCiclo) || 4);
-    const pendentes = lista.filter((a) => !(faladoEm.get(a.chave) > ts - 60000));
+    const pendentes = lista.filter((a) =>
+      !(faladoEm.get(a.chave) > ts - 60000) &&
+      !(a.regra === 'telemetriaMuda' && faladoEm.has(a.chave)));
     falar(lista.length === 1 ? 'Atenção: um alerta ativo.' : `Atenção: ${lista.length} alertas ativos.`, { oficial: true, toastExibido: pendentes.length > 0 });
     pendentes.slice(0, max).forEach((a) => {
       mostrarToast(a, false);
@@ -3906,7 +3918,7 @@
     return !!a && a.fonte === 'app' && (
       a.regra === 'semApontamento' || a.regra === 'refeicao' || a.regra === 'paradaImprodutiva' ||
       a.regra === 'gestaoFrente' || a.regra === 'aguardandoBasculamento' || a.regra === 'frenteDividida' ||
-      a.regra === 'emergencia' || a.regra === 'telemetriaMuda' || a.regra === 'qualidadeColheita' ||
+      a.regra === 'emergencia' || a.regra === 'telemetriaMuda' ||
       a.regra === 'inconsistenciaApontamento' || a.regra === 'riscoMoenda' ||
       a.regra === 'bateVolta' || a.regra === 'manutencaoPreditiva' ||
       a.regra === 'semOperadorTrabalhando' || a.regra === 'chaveGeralLigada' ||
@@ -4218,7 +4230,7 @@
     </div>
     <h2 id="cfg-titulo">Preferências de alertas</h2>
     <p class="fine">Sempre que um alerta for falado, o cartão flutuante aparece automaticamente na lateral. A locução diferencia <b>Atenção Flow</b> (caminhões e veículos leves) e <b>Atenção Coa</b> (tratores, transbordos, colheita e linha amarela) com pronúncia natural. Alertas calculados localmente ficam na central e no histórico; só “Motor ocioso sem apontamento”, confirmado no SGPA, pode ser falado como exceção (sem notificação do sistema).</p>
-    <div class="fonte-oficial"><strong>Velocidade: somente SGPA</strong><span>O app notifica quando o SGPA emitir o alarme. Os limites são os cadastrados no portal, não um cálculo genérico do aplicativo.</span></div>
+    <div class="fonte-oficial"><strong>Velocidade: somente portal oficial SGPA</strong><span>O aplicativo nunca calcula velocidade localmente: só notifica e fala quando o portal SGPA abrir o alarme oficial do equipamento.</span></div>
     <section class="push-optin" aria-labelledby="push-optin-titulo">
       <div class="push-optin-cabecalho"><span class="push-simbolo" aria-hidden="true">◉</span><div><h3 id="push-optin-titulo">Notificações Push neste aparelho</h3><span class="push-dispositivo">Ativação individual, controlada por você</span></div></div>
       <p>O Push envia apenas alarmes oficiais SGPA selecionados — não envia cálculos locais. Categorias e tipos, frentes, equipamentos e o escopo da seleção do mapa se aplicam por dispositivo. A entrega usa polling do backend, com até 1 minuto de intervalo; não é instantânea.</p>
@@ -4307,7 +4319,6 @@
       <label class="campo"><span>Todas as colhedoras paradas há (min)</span><input id="cfg-sem-colh" type="number" min="0" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Transbordos aguardando colhedora (nº)</span><input id="cfg-transb-ag" type="number" min="0" step="1" inputmode="numeric"></label>
       <label class="campo"><span>Frota muda: sem telemetria há (min)</span><input id="cfg-frota-muda" type="number" min="0" step="5" inputmode="numeric"></label>
-      <label class="campo"><span>Qualidade colheita: vel. máx. (km/h)</span><input id="cfg-vel-colheita" type="number" min="0" step="0.5" inputmode="decimal"></label>
       <label class="campo"><span>Meta SLA de atendimento COA (min)</span><input id="cfg-sla-min" type="number" min="1" step="1" inputmode="numeric"></label>
     </div>
     <h3 class="secao-alertas">Inteligência v4.0: Moenda, Custos R$, Comboio e Auditoria</h3>
@@ -5933,9 +5944,8 @@
     semApontamento: 'Equipamento na operação SGPA “Sem Apontamento” por 5 min ou mais (sem alarme do portal). Fala e notifica só com o app aberto.',
     paradaImprodutiva: 'Paradas improdutivas de maior impacto (fila, aguardando carregamento, 983, falta de transbordo, mecânica, comboio, troca de facas, lavagem, julieta, balança etc.) acima da tolerância da seção Paradas improdutivas.',
     gestaoFrente: 'Alertas da frente: fila acumulada de caminhões, frente com todas as colhedoras paradas e transbordos demais aguardando colhedora (seção Gestão por frente).',
-    emergencia: 'Prioridade máxima: apontamento ou alarme de incêndio/fogo ou caminhão bombeiro em deslocamento rápido. Fura a fila de voz, dispara sirene e abre banner vermelho no topo.',
-    telemetriaMuda: 'Frota monitorada sem comunicação de telemetria acima do limiar configurado (ponto cego de bordo/GPS). Fala e exibe último ponto conhecido.',
-    qualidadeColheita: 'Colhedora operando em colheita acima da velocidade técnica configurada (risco de perda de cana e impureza mineral/vegetal).',
+    emergencia: 'Prioridade máxima: apontamento confirmado ou alarme oficial SGPA de incêndio/fogo/sinistro. Fura a fila de voz, dispara sirene e abre banner vermelho no topo.',
+    telemetriaMuda: 'Frota em operação sem comunicação de telemetria entre o limiar configurado e 3h (aviso único por episódio, ignorando parada de chuva/manutenção).',
     inconsistenciaApontamento: 'Auditoria automática COA: máquina apontando Colheita parada (0 km/h) ou apontando Parada/Refeição/Sem Apontamento enquanto desloca em velocidade.',
     riscoMoenda: 'Alerta estratégico quando o ritmo estimado de entrega das colhedoras fica abaixo de 70% da meta de moagem da usina por mais de 15 min.',
     bateVolta: 'Caminhão canavieiro em viagem/transporte acima do tempo máximo de bate-volta configurado (possível retenção ou quebra na estrada).',
@@ -6311,7 +6321,6 @@
       'cfg-sem-colh': cfg.minutosFrenteSemColhedora,
       'cfg-transb-ag': cfg.transbordosAguardandoMax,
       'cfg-frota-muda': cfg.minutosFrotaMuda != null ? cfg.minutosFrotaMuda : 25,
-      'cfg-vel-colheita': cfg.velMaxColheita != null ? cfg.velMaxColheita : 7.5,
       'cfg-sla-min': cfg.slaAlertaMin != null ? cfg.slaAlertaMin : 10,
       'cfg-inconsistencia-min': cfg.minutosInconsistencia != null ? cfg.minutosInconsistencia : 8,
       'cfg-batevolta-min': cfg.minutosBateVoltaMax != null ? cfg.minutosBateVoltaMax : 55,
@@ -6456,7 +6465,6 @@
       minutosFrenteSemColhedora: n('cfg-sem-colh', 10),
       transbordosAguardandoMax: n('cfg-transb-ag', 3),
       minutosFrotaMuda: n('cfg-frota-muda', 25),
-      velMaxColheita: n('cfg-vel-colheita', 7.5),
       slaAlertaMin: Math.max(1, n('cfg-sla-min', 10)),
       minutosInconsistencia: Math.max(0, n('cfg-inconsistencia-min', 8)),
       minutosBateVoltaMax: Math.max(0, n('cfg-batevolta-min', 55)),

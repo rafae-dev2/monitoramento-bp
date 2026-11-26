@@ -796,7 +796,7 @@ with sync_playwright() as pw:
     assert page.locator('#cfg-alertas').evaluate("el => el.classList.contains('hide')"), 'O X deve fechar as preferências'
     assert page.evaluate('document.activeElement.id === "btn-cfg"'), 'Ao fechar, o foco deve voltar ao controle de configurações visível'
     page.click('#btn-cfg')
-    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 23")
+    page.wait_for_function("document.querySelectorAll('#cfg-categorias input[role=switch]').length === 22")
     page.wait_for_function("document.querySelector('#cfg-catalogo-status').textContent.includes('2972')")
     assert page.locator('#cfg-categorias input[aria-label="Notificar: Frente dividida (validar FUT)"]').is_checked(), 'Frente dividida deve aparecer ligada por padrão nas preferências'
     assert page.locator('#cfg-gestao-frente').is_checked(), 'Atenção gestão deve ter opção mestre ligada por padrão'
@@ -828,7 +828,7 @@ with sync_playwright() as pw:
     print('OK: expansão de AG/COLH, prévia, substituição personalizada e persistência do glossário')
     page.fill('#cfg-busca-categoria', 'fila')
     vis = page.evaluate("[...document.querySelectorAll('#cfg-categorias > *')].filter(x => !x.classList.contains('hide')).length")
-    assert 1 <= vis < 23, f'busca de categorias deve filtrar ({vis})'
+    assert 1 <= vis < 22, f'busca de categorias deve filtrar ({vis})'
     page.fill('#cfg-busca-categoria', 'xyzinexistente')
     assert page.locator('#cfg-categorias-vazio').is_visible(), 'mensagem de nenhum alerta'
     page.fill('#cfg-busca-categoria', '')
@@ -1148,7 +1148,7 @@ with sync_playwright() as pw:
     page.evaluate("""() => {
       __test.reset();
       __test.capturarFalas();
-      MonitoramentoAlertas.configurar({ ativo: true, voz: true, popup: true, som: false, vibrar: false, minutosFrotaMuda: 25, velMaxColheita: 7.5, slaAlertaMin: 10, filaMaxFrente: 4 });
+      MonitoramentoAlertas.configurar({ ativo: true, voz: true, popup: true, som: false, vibrar: false, minutosFrotaMuda: 25, slaAlertaMin: 10, filaMaxFrente: 4 });
       const agoraIso = new Date().toISOString();
       __test.aplicarTelemetria([
         { cdEquipamento: 'C-501', descEquipamento: '57838 - Colhedora John Deere', descTpEquipamento: 'COLHEDORA', descFrente: 'Frente 1', descOperacao: '101 - Colheita Mecanizada', vlVelocidade: 8.6, vlParametro4: 1800, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:05', fgMonitoramentoAtivo: 'T', dtHrLocal: agoraIso },
@@ -1162,12 +1162,12 @@ with sync_playwright() as pw:
       ]);
       __test.avaliarFrota(Date.now(), 'lotes');
 
-      // 1) Raio-X CTT + sugestão de balanceamento + Frota Muda + Qualidade de Colheita
+      // 1) Raio-X CTT + sugestão de balanceamento + Frota Muda + Zero velocidade local sem SGPA
       const res = MonitoramentoAlertas.resumoFrentes();
       if (res.frentes.length < 2) throw new Error('Raio-X deve listar Frente 1 e Frente 3');
       if (!res.sugestoesBalanceamento.length) throw new Error('Deveria sugerir balanceamento da Frente 1 para Frente 3');
       if (!MonitoramentoAlertas.ativos().some(a => a.regra === 'telemetriaMuda' && a.numero === '9010')) throw new Error('Frota muda 9010 deveria alertar');
-      if (!MonitoramentoAlertas.ativos().some(a => a.regra === 'qualidadeColheita' && a.numero === '57838')) throw new Error('Colhedora 57838 acima de 7.5 km/h deveria alertar qualidade');
+      if (MonitoramentoAlertas.ativos().some(a => a.regra === 'velocidade' || a.regra === 'qualidadeColheita')) throw new Error('Colhedora 57838 a 8.6 km/h sem alarme oficial SGPA NUNCA pode gerar alerta de velocidade');
 
       // 2) Aba Frentes renderizada
       MonitoramentoAlertas.abrirPainel('frentes');
@@ -1472,9 +1472,115 @@ with sync_playwright() as pw:
     }""")
     print('OK: Refinamentos v5.1.0 (Toast sempre ao falar, Remoção Troca de Turno, Bombeiro -> Caminhão e Atenção Flow vs Atenção Coa sem soletrar) validados')
 
+    # Regressão Operacional v5.2.0: Fim da repetição Trator 32275 (383 min / Chuva / Aviso Único) + Velocidade 100% Oficial SGPA
+    page.evaluate("""() => {
+      __test.reset();
+      __test.capturarFalas();
+      if ('qualidadeColheita' in MonitoramentoAlertas.REGRAS) throw new Error('REGRAS não deve mais conter qualidadeColheita');
+      if (document.getElementById('cfg-vel-colheita')) throw new Error('#cfg-vel-colheita não deve existir no DOM');
+      MonitoramentoAlertas.configurar({
+        ativo: true, voz: true, popup: true, som: false, vibrar: false, notificacao: false,
+        minutosFrotaMuda: 25, cooldownMin: 1, repetirVoz: true, maxPorCiclo: 6,
+      });
+      const t0 = Date.now();
+      const iso52 = new Date(t0).toISOString();
+
+      // Cenário real do print: Trator 32275 há 383 minutos (06:23:00) ou em 902 - Chuva - HR (CLIMA) -> ZERO alertas de frota muda!
+      __test.aplicarTelemetria([
+        { cdEquipamento: 'TR-32275-A', descEquipamento: '32275 - Trator', descTpEquipamento: 'TRATOR', descGrupoEquipamento: 'Frente 3', descFrente: '', descGrupoOperacao: 'CLIMA', descEstadoOperacional: 'PARADA', descOperacao: '902 - Chuva - HR', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', vlTempoSemComunicacao: '0 DIA(S) 06:23:00', fgMonitoramentoAtivo: 'T', dtHrLocal: iso52 },
+        { cdEquipamento: 'TR-32275-B', descEquipamento: '32275 - Trator', descTpEquipamento: 'TRATOR', descGrupoEquipamento: 'Frente 3', descFrente: '', descGrupoOperacao: 'PARADA', descEstadoOperacional: 'PARADA', descOperacao: '976 - Transbordo Alocado', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', vlTempoSemComunicacao: '0 DIA(S) 06:23:00', fgMonitoramentoAtivo: 'T', dtHrLocal: iso52 },
+        { cdEquipamento: 'TR-CHUVA', descEquipamento: '32280 - Trator', descTpEquipamento: 'TRATOR', descGrupoEquipamento: 'Frente 3', descFrente: '', descGrupoOperacao: 'CLIMA', descEstadoOperacional: 'PARADA', descOperacao: '902 - Chuva - HR', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', vlTempoSemComunicacao: '0 DIA(S) 00:42:00', fgMonitoramentoAtivo: 'T', dtHrLocal: iso52 },
+      ]);
+      __test.avaliarFrota(t0, 'lotes');
+      __test.avaliarFrota(t0 + 5000, 'tempo');
+      if (MonitoramentoAlertas.ativos().some(a => a.regra === 'telemetriaMuda')) {
+        throw new Error('Trator 32275 a 383 min ou em parada de Chuva/CLIMA nunca deve gerar Frota Muda: ' + JSON.stringify(MonitoramentoAlertas.ativos()));
+      }
+
+      // Agora Trator 32275 em operação normal (Transbordo em deslocamento) perde sinal há 35 min, com conjunto acoplado duplicando numero 32275 e descFrente vazio (só descGrupoEquipamento: Frente 3)
+      __test.aplicarTelemetria([
+        { cdEquipamento: 'TR-32275-OP1', descEquipamento: '32275 - Trator', descTpEquipamento: 'TRATOR', descGrupoEquipamento: 'Frente 3', descFrente: '', descOperacao: '201 - Transbordo Cana', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', vlTempoSemComunicacao: '0 DIA(S) 00:35:00', fgMonitoramentoAtivo: 'T', dtHrLocal: iso52 },
+        { cdEquipamento: 'TR-32275-OP2', descEquipamento: '32275 - Caixote Transbordo', descTpEquipamento: 'TRANSBORDO', descGrupoEquipamento: 'Frente 3', descFrente: '', descOperacao: '201 - Transbordo Cana', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', vlTempoSemComunicacao: '0 DIA(S) 00:35:00', fgMonitoramentoAtivo: 'T', dtHrLocal: iso52 },
+      ]);
+      __test.avaliarFrota(t0 + 10_000, 'lotes');
+      const muda1 = MonitoramentoAlertas.ativos().filter(a => a.regra === 'telemetriaMuda' && a.numero === '32275');
+      if (muda1.length !== 1) throw new Error('Conjunto acoplado 32275 deve gerar apenas 1 alerta de Frota Muda: ' + JSON.stringify(muda1));
+      if (!muda1[0].texto.includes('frente/grupo: Frente 3') || muda1[0].texto.includes('não informada')) {
+        throw new Error('Frota Muda 32275 deve exibir frente/grupo: Frente 3 via descGrupoEquipamento: ' + muda1[0].texto);
+      }
+      const falasMudaInicial = __test.falasCapturadas().filter(f => f.includes('três dois dois sete cinco')).length;
+      if (falasMudaInicial !== 1) throw new Error('Frota Muda 32275 deveria falar exatamente 1 vez na abertura: ' + falasMudaInicial);
+
+      // Simula vários ciclos seguidos (45 min, 70 min, tiques de 1s, reconciliarEscopo, cooldown expirado) -> ZERO repetição de voz!
+      for (const [stepIdx, atrasoStr] of [[1, '0 DIA(S) 00:45:00'], [2, '0 DIA(S) 01:10:00'], [3, '0 DIA(S) 01:40:00']]) {
+        const tsCiclo = t0 + stepIdx * 15 * 60_000;
+        __test.aplicarTelemetria([
+          { cdEquipamento: 'TR-32275-OP1', descEquipamento: '32275 - Trator', descTpEquipamento: 'TRATOR', descGrupoEquipamento: 'Frente 3', descFrente: '', descOperacao: '201 - Transbordo Cana', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', vlTempoSemComunicacao: atrasoStr, fgMonitoramentoAtivo: 'T', dtHrLocal: iso52 },
+          { cdEquipamento: 'TR-32275-OP2', descEquipamento: '32275 - Caixote Transbordo', descTpEquipamento: 'TRANSBORDO', descGrupoEquipamento: 'Frente 3', descFrente: '', descOperacao: '201 - Transbordo Cana', vlVelocidade: 0, vlParametro4: 0, vlEd1: '0', vlTempoSemComunicacao: atrasoStr, fgMonitoramentoAtivo: 'T', dtHrLocal: iso52 },
+        ]);
+        MonitoramentoAlertas.configurar({ frentes: ['Frente 3'] });
+        __test.avaliarFrota(tsCiclo, 'lotes');
+        __test.avaliarFrota(tsCiclo + 1000, 'tempo');
+        __test.avaliarFrota(tsCiclo + 2000, 'tempo');
+      }
+      MonitoramentoAlertas.configurar({ frentes: [] });
+      const falasMudaDepois = __test.falasCapturadas().filter(f => f.includes('três dois dois sete cinco')).length;
+      if (falasMudaDepois !== 1) {
+        throw new Error('Frota Muda 32275 repetiu na voz (' + falasMudaDepois + 'x) e atrapalhou os demais alertas!');
+      }
+
+      // Quando a telemetria volta (00:00:04), fecha o alerta; se perder sinal de novo no futuro, avisa 1 vez normalmente.
+      __test.aplicarTelemetria([
+        { cdEquipamento: 'TR-32275-OP1', descEquipamento: '32275 - Trator', descTpEquipamento: 'TRATOR', descGrupoEquipamento: 'Frente 3', descFrente: '', descOperacao: '201 - Transbordo Cana', vlVelocidade: 8, vlParametro4: 1500, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:04', fgMonitoramentoAtivo: 'T', dtHrLocal: iso52 },
+        { cdEquipamento: 'TR-32275-OP2', descEquipamento: '32275 - Caixote Transbordo', descTpEquipamento: 'TRANSBORDO', descGrupoEquipamento: 'Frente 3', descFrente: '', descOperacao: '201 - Transbordo Cana', vlVelocidade: 8, vlParametro4: 1500, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:04', fgMonitoramentoAtivo: 'T', dtHrLocal: iso52 },
+      ]);
+      __test.avaliarFrota(t0 + 60 * 60_000, 'lotes');
+      if (MonitoramentoAlertas.ativos().some(a => a.regra === 'telemetriaMuda' && a.numero === '32275')) {
+        throw new Error('Frota Muda 32275 deveria encerrar assim que o sinal voltou');
+      }
+
+      // Velocidade 100% Oficial SGPA: velocidades altas só na telemetria (colhedora 12 km/h, caminhão 96 km/h, bombeiro 68 km/h) -> ZERO alertas!
+      __test.reset();
+      __test.capturarFalas();
+      MonitoramentoAlertas.configurar({ ativo: true, voz: true, popup: true, som: false, vibrar: false, notificacao: false, metaMoagemTonHora: 0 });
+      const tVel = Date.now();
+      const isoVel = new Date(tVel).toISOString();
+      const falasAntesVel = __test.falasCapturadas().length;
+      __test.aplicarTelemetria([
+        { cdEquipamento: 'VEL-COLH', descEquipamento: '57899 - Colhedora JD', descTpEquipamento: 'COLHEDORA', descFrente: 'Frente 1', descFuncionario: '301 - João Silva', descOperacao: '101 - Colheita Mecanizada', vlVelocidade: 12.4, vlParametro4: 1900, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:02', fgMonitoramentoAtivo: 'T', dtHrLocal: isoVel },
+        { cdEquipamento: 'VEL-CAM', descEquipamento: '4488 - Caminhão Canavieiro', descTpEquipamento: 'CAMINHÃO CANAVIEIRO', descFrente: 'Frente 1', descFuncionario: '302 - José Santos', descOperacao: '305 - Transporte de Cana', vlVelocidade: 96, vlParametro4: 1950, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:02', fgMonitoramentoAtivo: 'T', dtHrLocal: isoVel },
+        { cdEquipamento: 'VEL-BOMB', descEquipamento: '9918 - Caminhão Bombeiro', descTpEquipamento: 'TRATOR DE PNEU LEVE', descGrupoEquipamento: 'CAMINHÕES BOMBEIROS', descFrente: 'Frente 1', descFuncionario: '303 - Mario Paz', descOperacao: '200 - Deslocamento', vlVelocidade: 68, vlParametro4: 1850, vlEd1: '1', vlTempoSemComunicacao: '0 DIA(S) 00:00:02', fgMonitoramentoAtivo: 'T', dtHrLocal: isoVel },
+      ]);
+      __test.avaliarFrota(tVel, 'lotes');
+      __test.avaliarFrota(tVel + 4 * 60_000, 'tempo');
+      if (MonitoramentoAlertas.ativos().length !== 0) {
+        throw new Error('Telemetria com velocidade alta sem alarme oficial SGPA jamais pode alertar velocidade: ' + JSON.stringify(MonitoramentoAlertas.ativos()));
+      }
+      if (__test.falasCapturadas().length !== falasAntesVel) {
+        throw new Error('Nenhuma fala deveria ocorrer para velocidades locais sem alarme SGPA: ' + JSON.stringify(__test.falasCapturadas()));
+      }
+
+      // Assim que o portal Oficial SGPA emitir o alarme do equipamento, aí sim notifica, fala e mostra toast lateral!
+      __test.espelharAlarmes([
+        { cdEquipamento: 'VEL-CAM', cdId: 'SGPA-OFICIAL-VEL-1', cdTpAlarme: 10820, descTpAlarme: 'Controle_Vel_Canavieiro', descEquipamento: '4488 - Caminhão Canavieiro', descFrente: 'Frente 1', vlAlarme: 96, fgOnline: true },
+      ]);
+      const velOficial = MonitoramentoAlertas.ativos().find(a => a.numero === '4488' && a.regra === 'velocidade');
+      if (!velOficial || velOficial.fonte !== 'portal') {
+        throw new Error('Alarme oficial de velocidade do portal SGPA deveria abrir alerta ativo: ' + JSON.stringify(velOficial));
+      }
+      if (!__test.falasCapturadas().some(f => f.includes('Atenção Flow: Caminhão quatro quatro oito oito') && f.includes('96'))) {
+        throw new Error('Alarme oficial SGPA de velocidade deveria falar com Atenção Flow: ' + JSON.stringify(__test.falasCapturadas()));
+      }
+      if (![...document.querySelectorAll('#toasts .toast')].some(t => t.dataset.chave === velOficial.chave)) {
+        throw new Error('Alarme oficial SGPA de velocidade deveria exibir o toast flutuante lateral');
+      }
+      __test.restaurarFalas();
+    }""")
+    print('OK: Regressão v5.2.0 (Trator 32275 383min sem repetição + Frente 3 reconhecida + Velocidade 100% Oficial SGPA) validada')
+
     assert not errors, errors
     assert not any(m=='POST' for m,u in requests), 'Teste tentou POST'
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+18} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+19} grupos de verificações.')

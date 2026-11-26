@@ -7,7 +7,7 @@
 }(typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis), function () {
   'use strict';
 
-  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'aguardandoBasculamento', 'frenteDividida', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente', 'emergencia', 'telemetriaMuda', 'qualidadeColheita', 'inconsistenciaApontamento', 'riscoMoenda', 'bateVolta', 'manutencaoPreditiva', 'semOperadorTrabalhando', 'chaveGeralLigada', 'abastecimentoMotorLigado', 'microParadasCronicas'];
+  var CATEGORIAS = ['velocidade', 'rpm', 'ocioso', 'motorCondicao', 'generico', 'aguardandoCaminhao', 'aguardandoBasculamento', 'frenteDividida', 'semApontamento', 'refeicao', 'paradaImprodutiva', 'gestaoFrente', 'emergencia', 'telemetriaMuda', 'inconsistenciaApontamento', 'riscoMoenda', 'bateVolta', 'manutencaoPreditiva', 'semOperadorTrabalhando', 'chaveGeralLigada', 'abastecimentoMotorLigado', 'microParadasCronicas'];
   var DEFAULTS = {
     velocidade: true,
     rpm: true,
@@ -23,7 +23,6 @@
     gestaoFrente: true,
     emergencia: true,
     telemetriaMuda: true,
-    qualidadeColheita: true,
     inconsistenciaApontamento: true,
     riscoMoenda: true,
     bateVolta: true,
@@ -335,7 +334,7 @@
       var aliases = {
         velocidade: 'velocidade', rpm: 'rpm', ocioso: 'ocioso',
         motorcondicao: 'motorCondicao', generico: 'generico', aguardandocaminhao: 'aguardandoCaminhao', aguardandobasculamento: 'aguardandoBasculamento', frentedividida: 'frenteDividida', semapontamento: 'semApontamento', refeicao: 'refeicao', paradaimprodutiva: 'paradaImprodutiva', gestaofrente: 'gestaoFrente',
-        ociososemapontamento: 'ocioso', emergencia: 'emergencia', telemetriamuda: 'telemetriaMuda', qualidadecolheita: 'qualidadeColheita',
+        ociososemapontamento: 'ocioso', emergencia: 'emergencia', telemetriamuda: 'telemetriaMuda',
         inconsistenciaapontamento: 'inconsistenciaApontamento', riscomoenda: 'riscoMoenda', batevolta: 'bateVolta', manutencaopreditiva: 'manutencaoPreditiva',
         semoperadortrabalhando: 'semOperadorTrabalhando', chavegeralligada: 'chaveGeralLigada', abastecimentomotorligado: 'abastecimentoMotorLigado', microparadascronicas: 'microParadasCronicas'
       };
@@ -552,8 +551,7 @@
     var ev = isObject(event) ? event : eventFor(item);
     var cat = categoryFromAlert(item);
     if (cat === 'gestaoFrente' || cat === 'riscoMoenda' || cat === 'frenteDividida' ||
-        cat === 'aguardandoCaminhao' || cat === 'aguardandoBasculamento' ||
-        cat === 'qualidadeColheita' || cat === 'microParadasCronicas') {
+        cat === 'aguardandoCaminhao' || cat === 'aguardandoBasculamento' || cat === 'microParadasCronicas') {
       return 'COA';
     }
     if (cat === 'bateVolta' || ehGrupoBombeiro(item, ev)) {
@@ -668,20 +666,6 @@
         (mtm ? ' há ' + String(mtm) + (mtm === 1 ? ' minuto' : ' minutos') : '') +
         '. Frente/grupo ' + String(ftm).trim() + '. Verificar computador de bordo.';
     }
-    if (selectedCategory === 'qualidadeColheita') {
-      var fqc = frenteOuGrupo(event);
-      var numDec = function (v) {
-        var n = Number(v);
-        if (!Number.isFinite(n) || n <= 0) return null;
-        return String(Math.round(n * 10) / 10).replace('.', ' vírgula ');
-      };
-      var vqc = numDec(item.valor);
-      var lqc = numDec(item.limite);
-      return 'Atenção Coa, qualidade de colheita: Colhedora ' + vehicleNumber(item, event) +
-        (vqc !== null ? ' colhendo a ' + vqc + ' quilômetros por hora' : ' acima da velocidade técnica') +
-        (lqc !== null ? ', limite técnico de ' + lqc : '') +
-        '. Frente/grupo ' + String(fqc).trim() + '. Verificar.';
-    }
     if (selectedCategory === 'inconsistenciaApontamento') {
       var finc = frenteOuGrupo(event);
       var tinc = cleanMessage(item.texto) || 'inconsistência de apontamento';
@@ -770,6 +754,8 @@
     return r === 'emergencia' || r === 'velocidade' || r === 'rpm' || r === 'motorCondicao' || r === 'abastecimentoMotorLigado';
   }
 
+  /* Emergência somente por apontamento confirmado de incêndio/fogo/sinistro ou alarme oficial SGPA.
+     Nunca dispara por velocidade de telemetria sem alarme oficial do portal. */
   function emergenciaOperacional(e) {
     if (!e || typeof e !== 'object') return null;
     var opBruta = e.operacao || e.descOperacao || '';
@@ -777,25 +763,29 @@
     if (e.operacaoConfirmada === true && /\b(?:incendio|fogo|queimada|combate a? ?incendio|emergencia fogo|sinistro)\b/.test(op)) {
       return { tipo: 'incendio', motivo: opBruta || 'Combate a incêndio' };
     }
-    var tipo = norm([e.tipo, e.tipoCompleto, e.nome, e.grupoEquipamento, e.frente].filter(Boolean).join(' '));
-    var vel = numericAlertValue(e.velocidade);
-    if (/bombeir/.test(tipo) && vel !== null && vel >= 40) {
-      return { tipo: 'bombeiro', motivo: 'Caminhão em deslocamento rápido de emergência (' + Math.round(vel) + ' km/h)' };
-    }
     return null;
   }
 
-  function colheitaAcimaDaFaixa(e, limiteKmH) {
-    if (!e || typeof e !== 'object' || e.operacaoConfirmada !== true) return false;
-    var lim = Number(limiteKmH);
-    if (!Number.isFinite(lim) || lim <= 0) return false;
-    var tipo = norm([e.tipo, e.tipoCompleto, e.nome].filter(Boolean).join(' '));
-    if (!/colhed/.test(tipo)) return false;
-    var op = norm(e.operacao || e.descOperacao || '').replace(/^\d+\s*-\s*/, '');
-    if (!/(?:colheita|colhendo|corte\s+mecaniz)/.test(op)) return false;
-    if (/(?:aguard|parada|manobra|desloc|manutenc|transp|refeic|sem apont|troca)/.test(op)) return false;
+  /* Velocidade é exclusivamente o alarme oficial do portal SGPA (nunca cálculo local). */
+  function colheitaAcimaDaFaixa() {
+    return false;
+  }
+
+  /* Frota muda elegível: janela operacional de 25..180 min (máquinas paradas há > 3h ou
+     desligadas em Chuva/Clima/Manutenção/Oficina não geram alerta repetido). */
+  function frotaMudaElegivel(e, minutosMinimos) {
+    if (!e || typeof e !== 'object') return false;
+    var min = Math.max(0, Number(minutosMinimos) || 0);
+    if (!min) return false;
+    var atrasoSeg = e.atraso != null && Number.isFinite(Number(e.atraso)) ? Number(e.atraso) : null;
+    if (atrasoSeg === null || atrasoSeg < min * 60 || atrasoSeg > 3 * 3600) return false;
     var vel = numericAlertValue(e.velocidade);
-    return vel !== null && vel > lim;
+    var parado = vel === null || vel <= 0.5;
+    if (parado) {
+      var contextoOp = norm([e.operacao, e.descOperacao, e.grupoOperacao, e.descGrupoOperacao].filter(Boolean).join(' '));
+      if (/\b(?:chuva|clima|manutenc\w*|oficina|entressafra|reforma)\b/.test(contextoOp)) return false;
+    }
+    return true;
   }
 
   function analisarFrentesCtt(listaFrota, opcoes) {
@@ -870,7 +860,7 @@
       var opTxt = norm(e.operacao || e.descOperacao || '').replace(/^\d+\s*-\s*/, '');
       var parada = e.operacaoConfirmada === true ? paradaImprodutiva(e) : null;
       var atrasoSeg = e.atraso != null && Number.isFinite(Number(e.atraso)) ? Number(e.atraso) : null;
-      var muda = minutosMuda > 0 && atrasoSeg !== null && atrasoSeg >= minutosMuda * 60 && atrasoSeg <= 12 * 3600;
+      var muda = frotaMudaElegivel(e, minutosMuda);
       var emManut = (parada && (parada.id === 'aguardMecanico' || parada.id === 'emManutencao' || parada.id === 'aguardComboio')) ||
         /\b(?:manutenc|mecan|borrach|socorro|oficina|quebra|eletric)\b/.test(opTxt);
 
@@ -1731,6 +1721,7 @@
     ehAlertaSeguranca: ehAlertaSeguranca,
     emergenciaOperacional: emergenciaOperacional,
     colheitaAcimaDaFaixa: colheitaAcimaDaFaixa,
+    frotaMudaElegivel: frotaMudaElegivel,
     analisarFrentesCtt: analisarFrentesCtt,
     textoCobrancaWhatsApp: textoCobrancaWhatsApp,
     turnoAtualCoa: turnoAtualCoa,
