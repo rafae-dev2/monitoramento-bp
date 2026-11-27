@@ -175,6 +175,7 @@ order by total desc;
 -- em sequência no SQL Editor:
 --   1) `supabase/migrations/20261123162425_pwa_push_infrastructure.sql`
 --   2) `supabase/migrations/20261125030000_supabase_free_budget_and_retention.sql`
+--   3) `supabase/migrations/20261127140000_pwa_presets_cloud.sql` (Cofre de Presets COA & FLOW na nuvem)
 -- A segunda migração adiciona cache compartilhado do token SGPA no monitor (evitando
 -- 1.440 logins/dia em cold starts), elimina egress desnecessário de `synchronize_alarms`
 -- (>95% de economia) e executa retenção horária automática em lotes (14d ocorrências Push,

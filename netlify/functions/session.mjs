@@ -10,7 +10,13 @@
  *      com deduplicação em memória de eventId, lote único PostgREST e fallback individual.
  */
 
-import { VOZES_GEMINI_BR, sanitizarApiKeyGemini, sintetizarVozGemini, raciocinarComGemini } from '../lib/gemini-coa.mjs';
+import {
+  VOZES_GEMINI_BR,
+  sanitizarApiKeyGemini,
+  sintetizarVozGemini,
+  raciocinarComGemini,
+  gerarLocucaoInteligenteAlerta,
+} from '../lib/gemini-coa.mjs';
 
 const AUTH_API = process.env.AUTH_API || 'https://auth-api.saas-solinftec.com/auth-api-03/v2';
 const SGPA_API = process.env.SGPA_API || 'https://sgpa-api-br.saas-solinftec.com/slf03';
@@ -453,6 +459,255 @@ async function gravarLoteAlertas(itens, contexto) {
 }
 
 /* ------------------------------------------------------------------ */
+/* cofre de presets COA & FLOW no banco Supabase + cache de borda     */
+/* ------------------------------------------------------------------ */
+
+const presetsNuvemMemoria = new Map();
+
+function normalizarCodigoPresetSrv(bruto) {
+  return String(bruto || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+}
+
+function sanitizarConfigPresetSrv(cfg) {
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return null;
+  const limpo = { ...cfg };
+  for (const proibido of ['geminiKey', 'apiKey', 'token', 'password', 'senha', 'secret']) {
+    delete limpo[proibido];
+  }
+  const serial = JSON.stringify(limpo);
+  if (serial.length > 96_000) return null;
+  return limpo;
+}
+
+async function chamarRpcPresetsSupabase(action, data) {
+  const base = String(process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+  const key = String(process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || '').trim();
+  if (!base || !key) return { disponivel: false, motivo: 'sem_credenciais_supabase' };
+
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+    apikey: key,
+  };
+  if (!key.startsWith('sb_publishable_')) headers.Authorization = `Bearer ${key}`;
+
+  try {
+    const res = await fetch(`${base}/rest/v1/rpc/pwa_presets_rpc`, {
+      method: 'POST',
+      headers,
+      signal: sinalTimeout(SUPABASE_TIMEOUT_MS),
+      body: JSON.stringify({ p_action: action, p_data: data }),
+    });
+    if (res.ok) {
+      const json = await res.json().catch(() => null);
+      if (json && json.ok) return { disponivel: true, via: 'supabase_rpc', dados: json };
+      if (json && json.error === 'not_found') return { disponivel: true, via: 'supabase_rpc', naoEncontrado: true };
+    }
+    // Fallback automático para tabela pwa_config caso a chave possua permissão direta e a migração RPC ainda não tenha sido colada
+    const chaveAlt = String(process.env.SUPABASE_KEY || '').trim();
+    if (chaveAlt) {
+      const hdrCfg = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        apikey: chaveAlt,
+      };
+      if (!chaveAlt.startsWith('sb_publishable_')) hdrCfg.Authorization = `Bearer ${chaveAlt}`;
+      if (action === 'salvar') {
+        const chaveLinha = `preset:${data.codigo}`;
+        const valorObj = {
+          codigo: data.codigo,
+          nome: data.nome,
+          setor: data.setor,
+          autor: data.autor || null,
+          unidade: data.unidade || null,
+          versaoApp: data.versaoApp || null,
+          checksum: data.checksum || null,
+          temaVisual: data.tema || null,
+          painelFixo: Boolean(data.painelFixo),
+          resumo: data.resumo || {},
+          config: data.config,
+          atualizadoEm: new Date().toISOString(),
+        };
+        const rUp = await fetch(`${base}/rest/v1/pwa_config?on_conflict=chave`, {
+          method: 'POST',
+          headers: { ...hdrCfg, Prefer: 'resolution=merge-duplicates,return=minimal' },
+          signal: sinalTimeout(SUPABASE_TIMEOUT_MS),
+          body: JSON.stringify({ chave: chaveLinha, valor: valorObj, atualizado_em: valorObj.atualizadoEm }),
+        });
+        if (rUp.ok) {
+          return {
+            disponivel: true,
+            via: 'supabase_pwa_config',
+            dados: { ok: true, codigo: data.codigo, nome: data.nome, setor: data.setor, atualizadoEm: valorObj.atualizadoEm },
+          };
+        }
+      } else if (action === 'carregar') {
+        const chaveLinha = encodeURIComponent(`eq.preset:${data.codigo}`);
+        const rGet = await fetch(`${base}/rest/v1/pwa_config?chave=${chaveLinha}&select=valor,atualizado_em&limit=1`, {
+          method: 'GET',
+          headers: hdrCfg,
+          signal: sinalTimeout(SUPABASE_TIMEOUT_MS),
+        });
+        if (rGet.ok) {
+          const arr = await rGet.json().catch(() => []);
+          if (Array.isArray(arr) && arr.length && arr[0] && arr[0].valor) {
+            return { disponivel: true, via: 'supabase_pwa_config', dados: { ok: true, preset: arr[0].valor } };
+          }
+          return { disponivel: true, via: 'supabase_pwa_config', naoEncontrado: true };
+        }
+      } else if (action === 'listar') {
+        const rList = await fetch(`${base}/rest/v1/pwa_config?chave=like.preset:*&select=valor,atualizado_em&order=atualizado_em.desc&limit=40`, {
+          method: 'GET',
+          headers: hdrCfg,
+          signal: sinalTimeout(SUPABASE_TIMEOUT_MS),
+        });
+        if (rList.ok) {
+          const arr = await rList.json().catch(() => []);
+          const presets = (Array.isArray(arr) ? arr : [])
+            .map((x) => x && x.valor)
+            .filter((v) => v && v.codigo)
+            .map((v) => ({
+              codigo: v.codigo,
+              nome: v.nome,
+              setor: v.setor || 'todos',
+              autor: v.autor || null,
+              temaVisual: v.temaVisual || null,
+              resumo: v.resumo || {},
+              atualizadoEm: v.atualizadoEm || null,
+            }));
+          return { disponivel: true, via: 'supabase_pwa_config', dados: { ok: true, presets } };
+        }
+      } else if (action === 'excluir') {
+        const chaveLinha = encodeURIComponent(`eq.preset:${data.codigo}`);
+        const rDel = await fetch(`${base}/rest/v1/pwa_config?chave=${chaveLinha}`, {
+          method: 'DELETE',
+          headers: hdrCfg,
+          signal: sinalTimeout(SUPABASE_TIMEOUT_MS),
+        });
+        if (rDel.ok) return { disponivel: true, via: 'supabase_pwa_config', dados: { ok: true, codigo: data.codigo } };
+      }
+    }
+    return { disponivel: false, motivo: `supabase_http_${res.status}` };
+  } catch (e) {
+    return { disponivel: false, motivo: e.message || 'erro_rede_supabase' };
+  }
+}
+
+async function operarPresetNuvem(subacao, corpo) {
+  if (subacao === 'salvar') {
+    const codigo = normalizarCodigoPresetSrv(corpo.codigo);
+    const nome = String(corpo.nome || '').trim().slice(0, 120);
+    const setorBruto = String(corpo.setor || 'todos').toUpperCase();
+    const setor = setorBruto === 'COA' || setorBruto === 'FLOW' ? setorBruto : 'todos';
+    const config = sanitizarConfigPresetSrv(corpo.config);
+    if (codigo.length < 2 || !nome || !config) {
+      return { status: 400, body: { ok: false, erro: 'Informe um código (mín. 2 letras/números), nome e configuração válida.' } };
+    }
+    const registro = {
+      codigo,
+      nome,
+      setor,
+      autor: String(corpo.autor || '').trim().slice(0, 80) || null,
+      unidade: String(corpo.unidade || '').trim().slice(0, 80) || null,
+      versaoApp: String(corpo.versaoApp || '').trim().slice(0, 24) || null,
+      checksum: String(corpo.checksum || '').trim().slice(0, 64) || null,
+      tema: String(corpo.temaVisual || corpo.tema || '').trim().slice(0, 24) || null,
+      painelFixo: Boolean(corpo.painelFixo),
+      resumo: corpo.resumo && typeof corpo.resumo === 'object' ? corpo.resumo : {},
+      config,
+      atualizadoEm: new Date().toISOString(),
+    };
+    presetsNuvemMemoria.delete(codigo);
+    presetsNuvemMemoria.set(codigo, {
+      ...registro,
+      temaVisual: registro.tema,
+    });
+    podarMapa(presetsNuvemMemoria, 80);
+
+    const db = await chamarRpcPresetsSupabase('salvar', registro);
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        codigo,
+        nome,
+        setor,
+        persistidoBanco: Boolean(db.disponivel),
+        armazenamento: db.disponivel ? db.via : 'memoria_borda',
+        avisoBanco: db.disponivel
+          ? null
+          : 'Salvo na sessão de borda e no cofre local. Para persistência permanente no Supabase, execute supabase/migrations/20261127140000_pwa_presets_cloud.sql no SQL Editor.',
+        atualizadoEm: (db.dados && db.dados.atualizadoEm) || registro.atualizadoEm,
+      },
+    };
+  }
+
+  if (subacao === 'carregar') {
+    const codigo = normalizarCodigoPresetSrv(corpo.codigo);
+    if (codigo.length < 2) {
+      return { status: 400, body: { ok: false, erro: 'Informe um código de perfil válido.' } };
+    }
+    const db = await chamarRpcPresetsSupabase('carregar', { codigo });
+    if (db.disponivel && db.dados && db.dados.preset) {
+      presetsNuvemMemoria.set(codigo, db.dados.preset);
+      podarMapa(presetsNuvemMemoria, 80);
+      return { status: 200, body: { ok: true, origem: db.via, preset: db.dados.preset } };
+    }
+    if (presetsNuvemMemoria.has(codigo)) {
+      return { status: 200, body: { ok: true, origem: 'memoria_borda', preset: presetsNuvemMemoria.get(codigo) } };
+    }
+    return { status: 404, body: { ok: false, erro: `Nenhum preset encontrado para o código "${codigo}".` } };
+  }
+
+  if (subacao === 'listar') {
+    const db = await chamarRpcPresetsSupabase('listar', {});
+    const mapa = new Map();
+    if (db.disponivel && db.dados && Array.isArray(db.dados.presets)) {
+      for (const item of db.dados.presets) {
+        if (item && item.codigo) mapa.set(item.codigo, item);
+      }
+    }
+    for (const [cod, item] of presetsNuvemMemoria.entries()) {
+      if (!mapa.has(cod)) {
+        mapa.set(cod, {
+          codigo: item.codigo,
+          nome: item.nome,
+          setor: item.setor || 'todos',
+          autor: item.autor || null,
+          temaVisual: item.temaVisual || item.tema || null,
+          resumo: item.resumo || {},
+          atualizadoEm: item.atualizadoEm || null,
+        });
+      }
+    }
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        bancoConectado: Boolean(db.disponivel),
+        presets: [...mapa.values()].slice(0, 40),
+      },
+    };
+  }
+
+  if (subacao === 'excluir') {
+    const codigo = normalizarCodigoPresetSrv(corpo.codigo);
+    if (codigo.length < 2) return { status: 400, body: { ok: false, erro: 'Código inválido.' } };
+    presetsNuvemMemoria.delete(codigo);
+    const db = await chamarRpcPresetsSupabase('excluir', { codigo });
+    return { status: 200, body: { ok: true, codigo, removidoBanco: Boolean(db.disponivel) } };
+  }
+
+  return { status: 400, body: { ok: false, erro: 'Subação de preset desconhecida.' } };
+}
+
+/* ------------------------------------------------------------------ */
 /* handler                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -557,6 +812,53 @@ export default async function handler(req, ctx) {
         { status: e.status || 502, headers: JSON_HEADERS },
       );
     }
+  }
+
+  // POST ?acao=ia_locucao_alerta → analisa alerta com raciocínio Gemini + contexto da frente e já sintetiza áudio WAV pt-BR
+  if (acao === 'ia_locucao_alerta' && req.method === 'POST') {
+    const corpo = await req.json().catch(() => null);
+    if (!corpo || typeof corpo !== 'object') {
+      return new Response(JSON.stringify({ ok: false, erro: 'corpo inválido' }), { status: 400, headers: JSON_HEADERS });
+    }
+    try {
+      const resultado = await gerarLocucaoInteligenteAlerta(corpo);
+      return new Response(JSON.stringify(resultado), { status: 200, headers: JSON_HEADERS });
+    } catch (e) {
+      return new Response(
+        JSON.stringify({ ok: false, semChave: !!e.semChave, erro: e.message || 'falha ao gerar locução inteligente Gemini' }),
+        { status: e.status || 502, headers: JSON_HEADERS },
+      );
+    }
+  }
+
+  // GET / POST ?acao=preset_nuvem → salva, carrega, lista ou exclui presets COA/FLOW no banco Supabase
+  if (acao === 'preset_nuvem') {
+    if (req.method === 'GET') {
+      const codigo = url.searchParams.get('codigo');
+      const resOp = await operarPresetNuvem(codigo ? 'carregar' : 'listar', { codigo });
+      return new Response(JSON.stringify(resOp.body), { status: resOp.status, headers: JSON_HEADERS });
+    }
+    if (req.method === 'POST') {
+      const text = await req.text().catch(() => '');
+      if (text.length > 120_000) {
+        return new Response(JSON.stringify({ ok: false, erro: 'preset excede o tamanho máximo permitido' }), {
+          status: 413,
+          headers: JSON_HEADERS,
+        });
+      }
+      let corpo = null;
+      try {
+        corpo = JSON.parse(text);
+      } catch {
+        return new Response(JSON.stringify({ ok: false, erro: 'JSON inválido' }), { status: 400, headers: JSON_HEADERS });
+      }
+      if (!corpo || typeof corpo !== 'object') {
+        return new Response(JSON.stringify({ ok: false, erro: 'corpo inválido' }), { status: 400, headers: JSON_HEADERS });
+      }
+      const resOp = await operarPresetNuvem(String(corpo.subacao || corpo.operacao || 'salvar').toLowerCase(), corpo);
+      return new Response(JSON.stringify(resOp.body), { status: resOp.status, headers: JSON_HEADERS });
+    }
+    return new Response(JSON.stringify({ ok: false, erro: 'método não permitido' }), { status: 405, headers: JSON_HEADERS });
   }
 
   const force = url.searchParams.get('fresh') === '1';

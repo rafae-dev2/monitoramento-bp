@@ -26,18 +26,20 @@
 
 #alert-badge {
   position: absolute;
-  top: -5px;
-  right: -5px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
+  top: -4px;
+  right: -3px;
+  z-index: 3;
+  pointer-events: none;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4.5px;
   border-radius: 999px;
   background: var(--bp-vermelho);
   color: #fff;
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
-  line-height: 18px;
+  line-height: 17px;
   text-align: center;
   box-shadow: 0 0 0 2px #0d1720, 0 2px 6px rgba(0, 0, 0, 0.45);
 }
@@ -4834,6 +4836,339 @@ html[data-acabamento='claro'] .chamados-bp-box {
 html[data-acabamento='claro'] #iframe-chamados-bp {
   background: #f8fafc;
 }
+
+/* =====================================================================
+   COFRE DE PRESETS COA & FLOW + DIAGNÓSTICO IA NOS CARTÕES (v6.5.0)
+   ===================================================================== */
+
+.a-ia-insight {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 6px 0 4px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.14) 0%, rgba(14, 116, 144, 0.16) 100%);
+  border: 1px solid rgba(52, 211, 153, 0.34);
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.a-ia-tag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(16, 185, 129, 0.25);
+  border: 1px solid rgba(52, 211, 153, 0.45);
+  color: #a7f3d0;
+}
+
+.presets-hero-card,
+.presets-form-box,
+.presets-cloud-card,
+.presets-io-card {
+  padding: 14px;
+  border-radius: 14px;
+  background: linear-gradient(160deg, rgba(20, 33, 47, 0.88) 0%, rgba(12, 21, 31, 0.94) 100%);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  margin-bottom: 12px;
+}
+
+.presets-hero-card {
+  background:
+    radial-gradient(80% 120% at 0% 0%, rgba(16, 185, 129, 0.16) 0%, transparent 60%),
+    linear-gradient(160deg, rgba(19, 34, 49, 0.92) 0%, rgba(11, 20, 29, 0.96) 100%);
+  border-color: rgba(52, 211, 153, 0.32);
+}
+
+.presets-hero-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.presets-resumo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.preset-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(8, 14, 21, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.preset-kpi span {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+}
+
+.preset-kpi strong {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.presets-cofre-alerta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  color: #fef3c7;
+  font-size: 12.5px;
+}
+
+.presets-grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 8px 0 14px;
+}
+
+.preset-oficial-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(15, 25, 36, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  transition: border-color 0.16s ease, transform 0.14s ease;
+}
+
+.preset-oficial-card:hover {
+  border-color: rgba(250, 204, 21, 0.45);
+  transform: translateY(-1px);
+}
+
+.preset-oficial-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.preset-oficial-head strong {
+  font-size: 13.5px;
+  line-height: 1.3;
+  color: #f8fafc;
+}
+
+.preset-oficial-card p {
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+.preset-oficial-card button {
+  width: 100%;
+  justify-content: center;
+}
+
+.preset-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.preset-badge.coa {
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid rgba(52, 211, 153, 0.42);
+  color: #a7f3d0;
+}
+
+.preset-badge.flow {
+  background: rgba(37, 99, 235, 0.24);
+  border: 1px solid rgba(96, 165, 250, 0.48);
+  color: #dbeafe;
+}
+
+.preset-badge.geral {
+  background: rgba(245, 158, 11, 0.2);
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  color: #fde68a;
+}
+
+.presets-salvos-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.preset-salvo-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: rgba(12, 20, 30, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.preset-salvo-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.preset-salvo-topo {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.preset-salvo-topo strong {
+  font-size: 13.5px;
+  color: #f8fafc;
+}
+
+.preset-salvo-acoes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.preset-salvo-acoes button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.preset-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 18px 14px;
+  border-radius: 12px;
+  border: 1.5px dashed rgba(52, 211, 153, 0.45);
+  background: rgba(6, 78, 59, 0.12);
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.preset-dropzone:hover,
+.preset-dropzone:focus-visible,
+.preset-dropzone.arrastando {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: #34d399;
+  outline: none;
+}
+
+.preset-dropzone strong {
+  font-size: 13px;
+  color: #ecfdf5;
+}
+
+.preset-dropzone span {
+  font-size: 11.5px;
+  color: #94a3b8;
+}
+
+/* Overrides do Tema Claro Solar Executivo para Presets e Diagnóstico IA */
+html[data-acabamento='claro'] .a-ia-insight {
+  background: #ecfdf5;
+  border-color: rgba(5, 150, 105, 0.42);
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .a-ia-tag {
+  background: #d1fae5;
+  border-color: rgba(5, 150, 105, 0.5);
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] :is(.presets-hero-card, .presets-form-box, .presets-cloud-card, .presets-io-card, .preset-oficial-card, .preset-salvo-item) {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #0f172a;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+}
+
+html[data-acabamento='claro'] .preset-kpi {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+html[data-acabamento='claro'] .preset-kpi span {
+  color: #475569;
+}
+
+html[data-acabamento='claro'] :is(.preset-kpi strong, .preset-oficial-head strong, .preset-salvo-topo strong) {
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .preset-badge.coa {
+  background: #dcfce7;
+  border-color: rgba(5, 150, 105, 0.45);
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] .preset-badge.flow {
+  background: #dbeafe;
+  border-color: rgba(37, 99, 235, 0.45);
+  color: #1e40af;
+}
+
+html[data-acabamento='claro'] .preset-badge.geral {
+  background: #fef3c7;
+  border-color: rgba(217, 119, 6, 0.45);
+  color: #92400e;
+}
+
+html[data-acabamento='claro'] .preset-dropzone {
+  background: #f0fdf4;
+  border-color: #059669;
+}
+
+html[data-acabamento='claro'] .preset-dropzone strong {
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] .preset-dropzone span {
+  color: #475569;
+}
+
 
 
 

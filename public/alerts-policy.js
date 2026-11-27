@@ -376,6 +376,8 @@
 
     return Object.assign({}, source, {
       somenteCriticos: Boolean(source.somenteCriticos),
+      iaNarrarAlertas: source.iaNarrarAlertas !== false,
+      escopoNarracaoIa: source.escopoNarracaoIa === 'criticos' ? 'criticos' : 'todos',
       notificarCategorias: categories,
       tiposNotificacao: isObject(source.tiposNotificacao) ? Object.assign({}, source.tiposNotificacao) : {},
       tiposCriticos: isObject(source.tiposCriticos) ? Object.assign({}, source.tiposCriticos) : {},
@@ -2278,6 +2280,465 @@
     };
   }
 
+  var PRESETS_OFICIAIS = [
+    {
+      id: 'coa-oficial',
+      codigo: 'OFICIAL-COA',
+      nome: '🚜 Controle COA — Colheita, Transbordo & Linha Amarela',
+      setor: 'COA',
+      icone: '🚜',
+      descricao: 'Foco total nas máquinas agrícolas do COA: colhedoras, tratores, transbordos (905 / frente dividida), linha amarela, auditoria pente-fino e voz Kore.',
+      temaSugerido: 'escuro',
+      patch: {
+        ativo: true,
+        setorMonitorado: 'COA',
+        gruposEquipamento: ['COLHEDORAS', 'TRATORES', 'TRANSBORDOS', 'LINHA AMARELA', 'OFICINA VOLANTE'],
+        somenteCriticos: false,
+        gestaoFrenteAtiva: true,
+        flowUltimoCaminhaoAtivo: false,
+        auditarApontamento: true,
+        penteFinoAtivo: true,
+        microParadasAtiva: true,
+        manutencaoPreditivaAtiva: true,
+        voz: true,
+        motorVoz: 'auto',
+        vozGemini: 'Kore',
+        vozDuplaSetor: false,
+        estiloDirecaoGemini: 'comando',
+        iaAtiva: true,
+        iaNarrarAlertas: true,
+        escopoNarracaoIa: 'todos'
+      }
+    },
+    {
+      id: 'flow-oficial',
+      codigo: 'OFICIAL-FLOW',
+      nome: '🚛 Controle FLOW — Caminhões, Bombeiros & Leves',
+      setor: 'FLOW',
+      icone: '🚛',
+      descricao: 'Foco logístico na malha rodoviária: caminhões canavieiros (próprios e terceiros), último caminhão carregando nas Frentes 1/2/3, bate-volta, velocidade SGPA, bombeiros e leves com voz Puck.',
+      temaSugerido: 'vidro',
+      patch: {
+        ativo: true,
+        setorMonitorado: 'FLOW',
+        gruposEquipamento: [
+          'CAMINHÕES CANAVIEIROS',
+          'CAMINHÕES CANAVIEIRO TERC',
+          'CAMINHÕES BOMBEIROS',
+          'CAMINHÕES COMBOIO',
+          'CAMINHÕES PIPA / APOIO',
+          'CAMINHÕES MUNCK / PRANCHA',
+          'VEÍCULOS LEVES'
+        ],
+        somenteCriticos: false,
+        gestaoFrenteAtiva: true,
+        flowUltimoCaminhaoAtivo: true,
+        flowFrente1Ativa: true,
+        flowFrente2Ativa: true,
+        flowFrente3Ativa: true,
+        minutosBateVoltaMax: 55,
+        voz: true,
+        motorVoz: 'auto',
+        vozGemini: 'Puck',
+        vozGeminiFlow: 'Puck',
+        vozDuplaSetor: false,
+        estiloDirecaoGemini: 'comando',
+        iaAtiva: true,
+        iaNarrarAlertas: true,
+        escopoNarracaoIa: 'todos'
+      }
+    },
+    {
+      id: 'criticos-plantao',
+      codigo: 'PLANTAO-CRITICOS',
+      nome: '🔥 Plantão Executivo — Somente Alertas Críticos',
+      setor: 'todos',
+      icone: '🔥',
+      descricao: 'Zero ruído: fala e notifica apenas emergências, velocidade oficial SGPA, RPM máxima, frente dividida, abastecimento c/ motor ligado, último caminhão Flow e códigos marcados com ⭐.',
+      temaSugerido: 'black',
+      patch: {
+        ativo: true,
+        setorMonitorado: 'todos',
+        gruposEquipamento: [],
+        somenteCriticos: true,
+        flowUltimoCaminhaoAtivo: true,
+        voz: true,
+        motorVoz: 'auto',
+        vozGemini: 'Fenrir',
+        vozGeminiFlow: 'Puck',
+        vozDuplaSetor: true,
+        estiloDirecaoGemini: 'urgente',
+        iaAtiva: true,
+        iaNarrarAlertas: true,
+        escopoNarracaoIa: 'criticos'
+      }
+    },
+    {
+      id: 'usina-completa',
+      codigo: 'USINA-COMPLETA',
+      nome: '🌐 Sala Integrada — Usina Inteira (COA + FLOW)',
+      setor: 'todos',
+      icone: '🌐',
+      descricao: 'Monitoramento completo de todas as frentes e grupos, diferenciando automaticamente a voz Kore para o Controle COA e a voz Puck para o Controle FLOW.',
+      temaSugerido: 'esmeralda',
+      patch: {
+        ativo: true,
+        setorMonitorado: 'todos',
+        gruposEquipamento: [],
+        frentes: [],
+        somenteCriticos: false,
+        gestaoFrenteAtiva: true,
+        flowUltimoCaminhaoAtivo: true,
+        flowFrente1Ativa: true,
+        flowFrente2Ativa: true,
+        flowFrente3Ativa: true,
+        penteFinoAtivo: true,
+        voz: true,
+        motorVoz: 'auto',
+        vozGemini: 'Kore',
+        vozGeminiFlow: 'Puck',
+        vozDuplaSetor: true,
+        estiloDirecaoGemini: 'comando',
+        iaAtiva: true,
+        iaNarrarAlertas: true,
+        escopoNarracaoIa: 'todos'
+      }
+    }
+  ];
+
+  var CAMPOS_PROIBIDOS_PRESET = {
+    geminiKey: true,
+    apiKey: true,
+    token: true,
+    password: true,
+    senha: true,
+    secret: true,
+    silencioAte: true,
+    selecaoMapa: true
+  };
+
+  function canonicalizarValorPreset(val) {
+    if (val === null || val === undefined) return null;
+    if (typeof val === 'number') return Number.isFinite(val) ? val : null;
+    if (typeof val === 'boolean' || typeof val === 'string') return val;
+    if (Array.isArray(val)) return val.map(canonicalizarValorPreset);
+    if (typeof val === 'object') {
+      var chaves = Object.keys(val).sort();
+      var out = {};
+      for (var i = 0; i < chaves.length; i += 1) {
+        var k = chaves[i];
+        if (val[k] !== undefined && !CAMPOS_PROIBIDOS_PRESET[k]) {
+          out[k] = canonicalizarValorPreset(val[k]);
+        }
+      }
+      return out;
+    }
+    return String(val);
+  }
+
+  function calcularChecksumPreset(configObj) {
+    var canon = JSON.stringify(canonicalizarValorPreset(configObj || {}));
+    var h1 = 0x811c9dc5;
+    var h2 = 0x01000193;
+    for (var i = 0; i < canon.length; i += 1) {
+      var c = canon.charCodeAt(i);
+      h1 ^= c;
+      h1 = Math.imul(h1, 0x01000193) >>> 0;
+      h2 ^= (c + ((i & 0xff) << 1));
+      h2 = Math.imul(h2, 0x85ebca6b) >>> 0;
+    }
+    return ('00000000' + h1.toString(16)).slice(-8) + ('00000000' + h2.toString(16)).slice(-8);
+  }
+
+  function sanitizarConfigParaPreset(cfg) {
+    var base = normalizeCfg(isObject(cfg) ? cfg : {});
+    var limpo = canonicalizarValorPreset(base);
+    if (!isObject(limpo)) limpo = {};
+    limpo.silencioAte = 0;
+    if (typeof limpo.intervaloSeg === 'number' && limpo.intervaloSeg < 30) limpo.intervaloSeg = 30;
+    if (typeof limpo.amostras === 'number' && limpo.amostras < 1) limpo.amostras = 1;
+    if (typeof limpo.volume === 'number') limpo.volume = Math.max(0, Math.min(1, limpo.volume));
+    if (typeof limpo.taxa === 'number') limpo.taxa = Math.max(0.5, Math.min(2, limpo.taxa));
+    if (typeof limpo.tom === 'number') limpo.tom = Math.max(0.5, Math.min(2, limpo.tom));
+    return limpo;
+  }
+
+  function resumoPreset(cfg) {
+    var c = normalizeCfg(isObject(cfg) ? cfg : {});
+    var cats = isObject(c.notificarCategorias) ? c.notificarCategorias : {};
+    var catKeys = CATEGORIAS;
+    var ativas = 0;
+    for (var i = 0; i < catKeys.length; i += 1) {
+      if (cats[catKeys[i]] !== false) ativas += 1;
+    }
+    var tipos = isObject(c.tiposNotificacao) ? c.tiposNotificacao : {};
+    var tipoKeys = Object.keys(tipos);
+    var tiposOn = 0;
+    var tiposOff = 0;
+    for (var j = 0; j < tipoKeys.length; j += 1) {
+      if (tipos[tipoKeys[j]] === true) tiposOn += 1;
+      else if (tipos[tipoKeys[j]] === false) tiposOff += 1;
+    }
+    var crits = isObject(c.tiposCriticos) ? c.tiposCriticos : {};
+    var critKeys = Object.keys(crits).filter(function (k) { return crits[k] === true; });
+    var paradas = isObject(c.paradasLimites) ? Object.keys(c.paradasLimites).length : 0;
+    return {
+      setor: c.setorMonitorado || 'todos',
+      somenteCriticos: Boolean(c.somenteCriticos),
+      categoriasAtivas: ativas,
+      totalCategorias: catKeys.length,
+      codigosSgpaPersonalizados: tipoKeys.length,
+      codigosSgpaAtivados: tiposOn,
+      codigosSgpaSilenciados: tiposOff,
+      codigosMarcadosCriticos: critKeys.length,
+      gruposSelecionados: Array.isArray(c.gruposEquipamento) ? c.gruposEquipamento.length : 0,
+      frentesSelecionadas: Array.isArray(c.frentes) ? c.frentes.length : 0,
+      paradasPersonalizadas: paradas,
+      vozGemini: c.vozGemini || 'Kore',
+      vozGeminiFlow: c.vozGeminiFlow || 'Puck',
+      iaNarrarAlertas: c.iaNarrarAlertas !== false
+    };
+  }
+
+  function exportarPacotePreset(cfg, meta) {
+    var m = isObject(meta) ? meta : {};
+    var configLimpa = sanitizarConfigParaPreset(cfg);
+    var setorCalc = m.setor === 'COA' || m.setor === 'FLOW'
+      ? m.setor
+      : (configLimpa.setorMonitorado === 'COA' || configLimpa.setorMonitorado === 'FLOW' ? configLimpa.setorMonitorado : 'todos');
+    var nomeLimpo = String(m.nome || (setorCalc === 'COA' ? 'Preset Controle COA' : setorCalc === 'FLOW' ? 'Preset Controle FLOW' : 'Preset Monitoramento BP')).trim().slice(0, 120);
+    var codigoLimpo = String(m.codigo || nomeLimpo)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48) || 'PRESET-BP';
+    var checksum = calcularChecksumPreset(configLimpa);
+    var pacote = {
+      formato: 'monitoramento-bp.preset.v1',
+      versaoSchema: 1,
+      versaoApp: String(m.versaoApp || '6.5.0'),
+      exportadoEm: m.exportadoEm || new Date().toISOString(),
+      codigo: codigoLimpo,
+      nome: nomeLimpo,
+      setor: setorCalc,
+      autor: m.autor ? String(m.autor).trim().slice(0, 80) : '',
+      unidade: m.unidade ? String(m.unidade).trim().slice(0, 80) : 'Usina Branco Peres',
+      temaVisual: m.temaVisual ? String(m.temaVisual).trim().slice(0, 24) : 'vidro',
+      painelFixo: Boolean(m.painelFixo),
+      resumo: resumoPreset(configLimpa),
+      checksum: checksum,
+      config: configLimpa
+    };
+    if (Array.isArray(m.meusPresets) && m.meusPresets.length) {
+      pacote.meusPresets = m.meusPresets.slice(0, 30).map(function (p) {
+        var cfgP = sanitizarConfigParaPreset(p && p.config ? p.config : {});
+        return {
+          id: String((p && p.id) || ('p-' + Date.now())),
+          codigo: String((p && p.codigo) || 'PRESET').slice(0, 48),
+          nome: String((p && p.nome) || 'Preset salvo').slice(0, 120),
+          setor: p && (p.setor === 'COA' || p.setor === 'FLOW') ? p.setor : (cfgP.setorMonitorado || 'todos'),
+          temaVisual: p && p.temaVisual ? String(p.temaVisual).slice(0, 24) : 'vidro',
+          painelFixo: Boolean(p && p.painelFixo),
+          salvoEm: (p && p.salvoEm) || new Date().toISOString(),
+          resumo: resumoPreset(cfgP),
+          checksum: calcularChecksumPreset(cfgP),
+          config: cfgP
+        };
+      });
+    }
+    return pacote;
+  }
+
+  function utf8ParaBase64Url(str) {
+    var utf8 = encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function (_, p1) {
+      return String.fromCharCode(parseInt(p1, 16));
+    });
+    var b64 = typeof btoa === 'function'
+      ? btoa(utf8)
+      : Buffer.from(str, 'utf8').toString('base64');
+    return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  function base64UrlParaUtf8(b64url) {
+    var b64 = String(b64url || '').replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4 !== 0) b64 += '=';
+    if (typeof atob === 'function') {
+      var bin = atob(b64);
+      var pct = '';
+      for (var i = 0; i < bin.length; i += 1) {
+        pct += '%' + ('00' + bin.charCodeAt(i).toString(16)).slice(-2);
+      }
+      return decodeURIComponent(pct);
+    }
+    return Buffer.from(b64, 'base64').toString('utf8');
+  }
+
+  function codificarCodigoPortatilPreset(pacoteOuCfg, meta) {
+    var pct = isObject(pacoteOuCfg) && pacoteOuCfg.formato === 'monitoramento-bp.preset.v1'
+      ? Object.assign({}, pacoteOuCfg)
+      : exportarPacotePreset(pacoteOuCfg, meta);
+    delete pct.meusPresets;
+    return 'BPPRESET1:' + utf8ParaBase64Url(JSON.stringify(pct));
+  }
+
+  function decodificarCodigoPortatilPreset(texto) {
+    var s = String(texto || '').trim();
+    var m = /BPPRESET1:([A-Za-z0-9_-]{16,})/.exec(s);
+    if (!m) throw new Error('Código portátil BPPRESET1 não encontrado no texto.');
+    var jsonStr = base64UrlParaUtf8(m[1]);
+    return JSON.parse(jsonStr);
+  }
+
+  function validarEImportarPacotePreset(entrada, cfgPadrao) {
+    var avisos = [];
+    var bruto = entrada;
+    if (typeof bruto === 'string') {
+      var txt = bruto.trim();
+      if (!txt) return { ok: false, erro: 'Arquivo ou código de configuração está vazio.' };
+      if (txt.length > 512000) return { ok: false, erro: 'Arquivo excede o tamanho máximo de segurança (512 KB).' };
+      try {
+        if (/BPPRESET1:[A-Za-z0-9_-]{16,}/.test(txt)) {
+          bruto = decodificarCodigoPortatilPreset(txt);
+        } else {
+          bruto = JSON.parse(txt);
+        }
+      } catch (e) {
+        return { ok: false, erro: 'Formato inválido: envie um arquivo .json exportado pelo Monitoramento BP ou um código BPPRESET1 válido.' };
+      }
+    }
+
+    if (!isObject(bruto)) {
+      return { ok: false, erro: 'Conteúdo de configuração inválido (não é um objeto JSON).' };
+    }
+
+    var ehEnvelopeOficial = bruto.formato === 'monitoramento-bp.preset.v1' || isObject(bruto.config);
+    var cfgExtraida = ehEnvelopeOficial ? bruto.config : bruto;
+    if (!isObject(cfgExtraida)) {
+      return { ok: false, erro: 'O arquivo não contém um bloco "config" válido de preferências.' };
+    }
+
+    // Verifica integridade do checksum quando o arquivo traz assinatura oficial
+    if (bruto.checksum && typeof bruto.checksum === 'string') {
+      var calculado = calcularChecksumPreset(sanitizarConfigParaPreset(cfgExtraida));
+      var direto = calcularChecksumPreset(cfgExtraida);
+      if (bruto.checksum !== calculado && bruto.checksum !== direto) {
+        return {
+          ok: false,
+          erro: 'Falha na verificação de integridade (checksum divergente): o arquivo parece ter sido corrompido ou truncado no envio.'
+        };
+      }
+    } else {
+      avisos.push('Configuração importada em modo de compatibilidade (sem assinatura de checksum).');
+    }
+
+    var base = isObject(cfgPadrao) ? JSON.parse(JSON.stringify(cfgPadrao)) : {};
+    var mesclada = Object.assign({}, base, sanitizarConfigParaPreset(cfgExtraida));
+    var configFinal = sanitizarConfigParaPreset(normalizeCfg(mesclada));
+    var resumo = resumoPreset(configFinal);
+    var setorFinal = bruto.setor === 'COA' || bruto.setor === 'FLOW'
+      ? bruto.setor
+      : (configFinal.setorMonitorado || 'todos');
+    var nomeFinal = String(bruto.nome || (setorFinal === 'COA' ? 'Preset COA Importado' : setorFinal === 'FLOW' ? 'Preset FLOW Importado' : 'Preset Importado')).trim().slice(0, 120);
+    var codigoFinal = String(bruto.codigo || nomeFinal)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48) || 'IMPORTADO';
+
+    var listaColecao = [];
+    if (Array.isArray(bruto.meusPresets)) {
+      for (var i = 0; i < bruto.meusPresets.length && listaColecao.length < 30; i += 1) {
+        var item = bruto.meusPresets[i];
+        if (isObject(item) && isObject(item.config)) {
+          var cfgItem = sanitizarConfigParaPreset(normalizeCfg(Object.assign({}, base, item.config)));
+          listaColecao.push({
+            id: String(item.id || ('imp-' + i + '-' + Date.now())),
+            codigo: String(item.codigo || 'PRESET').slice(0, 48),
+            nome: String(item.nome || ('Preset ' + (i + 1))).slice(0, 120),
+            setor: item.setor === 'COA' || item.setor === 'FLOW' ? item.setor : (cfgItem.setorMonitorado || 'todos'),
+            temaVisual: item.temaVisual ? String(item.temaVisual).slice(0, 24) : 'vidro',
+            painelFixo: Boolean(item.painelFixo),
+            salvoEm: item.salvoEm || new Date().toISOString(),
+            resumo: resumoPreset(cfgItem),
+            checksum: calcularChecksumPreset(cfgItem),
+            config: cfgItem
+          });
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      codigo: codigoFinal,
+      nome: nomeFinal,
+      setor: setorFinal,
+      autor: bruto.autor ? String(bruto.autor).trim().slice(0, 80) : '',
+      temaVisual: bruto.temaVisual || bruto.tema || null,
+      painelFixo: typeof bruto.painelFixo === 'boolean' ? bruto.painelFixo : null,
+      exportadoEm: bruto.exportadoEm || bruto.atualizadoEm || null,
+      checksum: calcularChecksumPreset(configFinal),
+      resumo: resumo,
+      config: configFinal,
+      meusPresets: listaColecao,
+      avisos: avisos
+    };
+  }
+
+  function narrarAlertaContextualLocal(alerta, contexto) {
+    var a = isObject(alerta) ? alerta : {};
+    var ctx = isObject(contexto) ? contexto : {};
+    var setor = a.setor === 'FLOW' ? 'FLOW' : 'COA';
+    var prefixo = setor === 'FLOW' ? 'Atenção flôu: ' : 'Atenção côa: ';
+    var classe = a.classe || classeEquipamentoFalado(a, a.e);
+    var num = garantirFrotaEmNumeros(String(a.numero || a.equipamento || ''));
+    var frente = (a.e && (a.e.frente || a.e.frenteInferida || a.e.grupoEquipamento)) || a.frente || '';
+    var fResumo = null;
+    if (frente && ctx.resumoCtt && Array.isArray(ctx.resumoCtt.frentes)) {
+      for (var i = 0; i < ctx.resumoCtt.frentes.length; i += 1) {
+        if (norm(ctx.resumoCtt.frentes[i].frente) === norm(frente)) {
+          fResumo = ctx.resumoCtt.frentes[i];
+          break;
+        }
+      }
+    }
+    var causa = '';
+    var acao = '';
+    if (a.regra === 'flowUltimoCaminhao') {
+      causa = (frente || 'Frente de colheita') + ' ficou com apenas 1 caminhão em carregamento e zero no aguarde.';
+      acao = 'Despachar imediatamente o próximo caminhão canavieiro para não parar colhedora por falta de transporte.';
+    } else if (a.regra === 'aguardandoCaminhao' && fResumo) {
+      causa = fResumo.transbordos905 + ' transbordo(s) em 905 na ' + frente + ' com ' + fResumo.caminhoesFila + ' caminhão(ões) em fila e ' + fResumo.colhedorasColhendo + ' colhedora(s) operando.';
+      acao = fResumo.caminhoesFila === 0
+        ? 'Solicitar ao flôu envio imediato de canavieiro para a ' + frente + '.'
+        : 'Alinhar posicionamento entre o caminhão já na frente e o transbordo ' + num + '.';
+    } else if (a.regra === 'velocidade') {
+      causa = 'Alarme oficial de velocidade emitido pelo SGPA' + (a.valor ? ' (' + a.valor + ' km/h)' : '') + (a.operador ? ' com operador ' + a.operador : '') + '.';
+      acao = 'Acionar condutor no rádio imediatamente e registrar ciência de segurança.';
+    } else if (fResumo) {
+      causa = 'Na ' + frente + ': ' + fResumo.colhedorasColhendo + '/' + fResumo.colhedorasTotal + ' colhedoras colhendo, ' + fResumo.transbordos905 + ' transbordos em 905 e ' + fResumo.caminhoesFila + ' caminhões em fila.';
+      acao = setor === 'FLOW'
+        ? 'Atuar na logística do ' + classe + ' ' + num + ' priorizando equilíbrio de giro da ' + frente + '.'
+        : 'Cobrar tratativa imediata na ' + frente + ' sobre ' + classe + ' ' + num + '.';
+    } else {
+      causa = (a.nome || a.regra || 'Ocorrência ativa') + (frente ? ' em ' + frente : '') + '.';
+      acao = setor === 'FLOW' ? 'Verificar disponibilidade e despacho no Controle flôu.' : 'Verificar operação e apontamento no Controle côa.';
+    }
+    var baseTexto = String(a.texto || a.nome || 'em alerta').replace(/\.$/, '');
+    var fala = prefixo + classe + ' ' + num + ' ' + baseTexto + (frente && baseTexto.toLowerCase().indexOf(frente.toLowerCase()) === -1 ? ' na ' + frente : '') + '. ' + causa + ' ' + acao;
+    return {
+      ok: true,
+      origem: 'especialista-local',
+      falaInteligente: fala.slice(0, 380),
+      causaRaiz: causa,
+      acaoImediata: acao,
+      nivelUrgencia: Number(a.severidade) >= 3 ? 'critica' : 'normal'
+    };
+  }
+
   return Object.freeze({
     norm: norm,
     alarmeTrocaDeTurno: alarmeTrocaDeTurno,
@@ -2300,6 +2761,7 @@
     VOZES_GEMINI_BR: VOZES_GEMINI_BR,
     GRUPOS_PADRAO_USINA: GRUPOS_PADRAO_USINA,
     FRENTES_PADRAO_USINA: FRENTES_PADRAO_USINA,
+    PRESETS_OFICIAIS: PRESETS_OFICIAIS,
     paradaImprodutiva: paradaImprodutiva,
     limiteParada: limiteParada,
     liderFrente: liderFrente,
@@ -2337,12 +2799,20 @@
     gerarPlacarPositivoTurno: gerarPlacarPositivoTurno,
     interpretarComandoCoa: interpretarComandoCoa,
     raciocinarOperacaoCoa: raciocinarOperacaoCoa,
+    narrarAlertaContextualLocal: narrarAlertaContextualLocal,
     operandoSemOperador: operandoSemOperador,
     meiaChaveParada: meiaChaveParada,
     abastecendoComMotorLigado: abastecendoComMotorLigado,
     avaliarMicroParadas: avaliarMicroParadas,
     mapearFrenteChamado: mapearFrenteChamado,
     mapearCodigoChamado: mapearCodigoChamado,
-    montarRascunhoChamado: montarRascunhoChamado
+    montarRascunhoChamado: montarRascunhoChamado,
+    calcularChecksumPreset: calcularChecksumPreset,
+    sanitizarConfigParaPreset: sanitizarConfigParaPreset,
+    resumoPreset: resumoPreset,
+    exportarPacotePreset: exportarPacotePreset,
+    codificarCodigoPortatilPreset: codificarCodigoPortatilPreset,
+    decodificarCodigoPortatilPreset: decodificarCodigoPortatilPreset,
+    validarEImportarPacotePreset: validarEImportarPacotePreset
   });
 }));

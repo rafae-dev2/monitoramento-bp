@@ -1695,7 +1695,7 @@ with sync_playwright() as pw:
       __test.capturarFalas();
       MonitoramentoAlertas.abrirConfig('alertas');
       const abasCfg = [...document.querySelectorAll('#cfg-abas [data-cfg-aba]')].map(b => b.dataset.cfgAba);
-      if (abasCfg.join(',') !== 'alertas,sgpa,escopo,tempos,vozes,ia,tudo') {
+      if (abasCfg.join(',') !== 'alertas,presets,sgpa,escopo,tempos,vozes,ia,tudo') {
         throw new Error('Abas de Preferências inesperadas: ' + abasCfg.join(','));
       }
 
@@ -2002,9 +2002,171 @@ with sync_playwright() as pw:
     page.wait_for_function("window.__nativePitchSpoken.some(x => x.text === 'Atenção côa e côa: acionar flôu e flôu imediatamente.')", timeout=3000)
     print('OK: Central de Alertas Dark Mode Executivo v6.4.0, pronúncia fonética côa/flôu sem soletrar e frota numérica nas notificações validados')
 
+    # Validação Integrada v6.5.0: Presets COA/FLOW, Exportar/Importar Robusto + Desfazer e Narrador Inteligente Gemini em Tempo Real
+    page.evaluate("""async () => {
+      __test.reset();
+      __test.capturarFalas();
+
+      // 1) Aba Presets & Backup + Presets Oficiais COA e FLOW
+      MonitoramentoAlertas.abrirConfig('presets');
+      if (document.querySelector('[data-cfg-painel="presets"]').classList.contains('hide')) {
+        throw new Error('Aba Presets & Backup não abriu');
+      }
+      MonitoramentoAlertas.aplicarPresetOficial('flow-oficial');
+      if (MonitoramentoAlertas.config().setorMonitorado !== 'FLOW') {
+        throw new Error('Preset flow-oficial deveria ativar setor FLOW: ' + MonitoramentoAlertas.config().setorMonitorado);
+      }
+      const tagBar = document.querySelector('#brand .brand-tag');
+      if (tagBar && tagBar.dataset.setor !== 'FLOW') {
+        throw new Error('Badge do cabeçalho deveria refletir FLOW: ' + tagBar.dataset.setor);
+      }
+
+      MonitoramentoAlertas.aplicarPresetOficial('coa-oficial');
+      if (MonitoramentoAlertas.config().setorMonitorado !== 'COA') {
+        throw new Error('Preset coa-oficial deveria ativar setor COA');
+      }
+      if (tagBar && tagBar.dataset.setor !== 'COA') {
+        throw new Error('Badge do cabeçalho deveria refletir COA: ' + tagBar.dataset.setor);
+      }
+
+      // 2) Refinamento de horas do operador + Salvar Preset + Exportar (.json / BPPRESET1:) + Importar pelo parceiro de turno + Desfazer 1-clique
+      MonitoramentoAlertas.aplicarTema('esmeralda');
+      MonitoramentoAlertas.configurar({
+        setorMonitorado: 'COA',
+        frentes: [2, 3],
+        tiposNotificacao: { '905': true, '125': true, '402': false },
+        tiposCriticos: { '12744': true },
+        geminiKey: 'chave-privada-do-operador-local',
+      });
+      MonitoramentoAlertas.salvarMeuPresetAtual('COA Refinado Turno A', 'COA');
+      if (!MonitoramentoAlertas.meusPresets().some(p => p.nome === 'COA Refinado Turno A')) {
+        throw new Error('Preset personalizado não foi salvo em Meus Presets');
+      }
+
+      const pacoteJson = MonitoramentoAlertas.exportarPacotePresetAtual();
+      const serialJson = JSON.stringify(pacoteJson);
+      if (serialJson.includes('chave-privada-do-operador-local') || ('geminiKey' in pacoteJson.config)) {
+        throw new Error('Exportação de preset jamais pode vazar geminiKey privada');
+      }
+      const codigoPortatil = MonitoramentoAlertas.copiarCodigoPortatilAtual();
+      if (!codigoPortatil.startsWith('BPPRESET1:') || codigoPortatil.includes('chave-privada-do-operador-local')) {
+        throw new Error('Código portátil BPPRESET1 inválido ou vazou chave: ' + codigoPortatil.slice(0, 40));
+      }
+
+      // Simula outro estado antes do parceiro importar o preset recebido
+      MonitoramentoAlertas.aplicarTema('claro');
+      MonitoramentoAlertas.configurar({
+        setorMonitorado: 'FLOW',
+        frentes: [1],
+        tiposNotificacao: { '905': false },
+        tiposCriticos: {},
+        geminiKey: 'chave-propria-do-parceiro',
+      });
+      const imp = MonitoramentoAlertas.importarPreset(codigoPortatil, 'WhatsApp Parceiro');
+      if (!imp || !imp.ok) {
+        throw new Error('Falha ao importar código portátil BPPRESET1: ' + JSON.stringify(imp));
+      }
+      const cfgPosImp = MonitoramentoAlertas.config();
+      if (cfgPosImp.setorMonitorado !== 'COA' || JSON.stringify(cfgPosImp.frentes) !== '[2,3]' || cfgPosImp.tiposNotificacao['905'] !== true || cfgPosImp.tiposNotificacao['402'] !== false || cfgPosImp.tiposCriticos['12744'] !== true) {
+        throw new Error('Importação não restaurou fielmente os códigos SGPA e frentes: ' + JSON.stringify(cfgPosImp));
+      }
+      if (cfgPosImp.geminiKey !== 'chave-propria-do-parceiro') {
+        throw new Error('Importação deveria preservar a chave local já existente do parceiro: ' + cfgPosImp.geminiKey);
+      }
+      if (MonitoramentoAlertas.obterTema() !== 'esmeralda') {
+        throw new Error('Importação deveria restaurar o tema visual do preset (esmeralda): ' + MonitoramentoAlertas.obterTema());
+      }
+
+      // Testa Desfazer 1-clique (restaura estado FLOW anterior à importação)
+      MonitoramentoAlertas.desfazerUltimoPreset();
+      if (MonitoramentoAlertas.config().setorMonitorado !== 'FLOW' || JSON.stringify(MonitoramentoAlertas.config().frentes) !== '[1]') {
+        throw new Error('Desfazer último preset não restaurou a configuração anterior');
+      }
+      MonitoramentoAlertas.aplicarTema('escuro');
+      document.getElementById('cfg-fechar-x').click();
+
+      // 3) IA Gemini analisando o alerta em tempo real e falando com raciocínio de causa-raiz
+      __test.reset();
+      __test.restaurarFalas();
+      MonitoramentoAlertas.pararVoz();
+      window.__nativePitchSpoken.length = 0;
+      localStorage.setItem('bperes.ia.geminiKey.v1', 'chave-mock-em-memoria-teste-123456');
+      const fetchOriginal = window.fetch;
+      let chamadasGeminiMock = 0;
+      window.fetch = async (input, init) => {
+        const u = typeof input === 'string' ? input : input.url;
+        if (u.includes('generativelanguage.googleapis.com')) {
+          chamadasGeminiMock += 1;
+          return new Response(JSON.stringify({
+            candidates: [{
+              content: {
+                parts: [{
+                  text: JSON.stringify({
+                    falaInteligente: 'Atenção côa: Colhedora 57850 com velocidade excedida na Frente 2 e 2 transbordos retidos em 905. Acione o flôu para enviar caminhão imediatamente.',
+                    causaRaiz: 'Falta de caminhão canavieiro na Frente 2 prendendo os transbordos carregados',
+                    acaoImediata: 'Solicitar ao controle flôu redirecionamento imediato de caminhão vazio para a Frente 2',
+                    nivelUrgencia: 'critica',
+                  }),
+                }],
+              },
+            }],
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return fetchOriginal(input, init);
+      };
+      try {
+        MonitoramentoAlertas.configurar({
+          ativo: true,
+          voz: true,
+          motorVoz: 'sistema',
+          vozURI: 'android:Android PT-BR A',
+          setorMonitorado: 'todos',
+          frentes: [],
+          gruposEquipamento: [],
+          iaAtiva: true,
+          iaNarrarAlertas: true,
+          escopoNarracaoIa: 'todos',
+        });
+        __test.espelharAlarmes([
+          { cdEquipamento: 'IA-01', cdId: 'IA-ALR-1', cdTpAlarme: 5, descTpAlarme: 'VELOCIDADE', descEquipamento: '57850 - Colhedora', descFrente: 'Frente 2', vlAlarme: 12, fgOnline: true },
+        ]);
+        const t0 = Date.now();
+        while (Date.now() - t0 < 2500) {
+          const vivo = MonitoramentoAlertas.ativos().find(a => a.numero === '57850');
+          if (vivo && vivo.iaAnalise && vivo.iaAnalise.causaRaiz && window.__nativePitchSpoken.length > 0) break;
+          await new Promise(r => setTimeout(r, 40));
+        }
+        const alertaIa = MonitoramentoAlertas.ativos().find(a => a.numero === '57850');
+        if (!alertaIa || !alertaIa.iaAnalise || !alertaIa.iaAnalise.causaRaiz.includes('Falta de caminhão')) {
+          throw new Error('Alerta não recebeu análise de causa-raiz do Gemini em tempo real: ' + JSON.stringify({
+            chamadasGeminiMock,
+            ativosNums: MonitoramentoAlertas.ativos().map(a => ({ n: a.numero, notificar: a.notificar, ia: a.iaAnalise })),
+            spoken: window.__nativePitchSpoken,
+          }));
+        }
+        if (chamadasGeminiMock < 1) {
+          throw new Error('Deveria ter consultado o modelo Gemini em memória ao disparar o alerta');
+        }
+        if (!window.__nativePitchSpoken.some(s => s.text.includes('2 transbordos retidos') && s.text.includes('flôu'))) {
+          throw new Error('Voz deveria ter falado o raciocínio inteligente do Gemini: ' + JSON.stringify(window.__nativePitchSpoken));
+        }
+        MonitoramentoAlertas.abrirPainel('ativos');
+        const boxInsight = document.querySelector('#lista-ativos .a-ia-insight');
+        if (!boxInsight || !boxInsight.textContent.includes('Falta de caminhão') || !boxInsight.textContent.includes('controle flôu')) {
+          throw new Error('Card do alerta não renderizou o bloco .a-ia-insight com causa-raiz e ação recomendada');
+        }
+      } finally {
+        window.fetch = fetchOriginal;
+        localStorage.removeItem('bperes.ia.geminiKey.v1');
+        MonitoramentoAlertas.pararVoz();
+        MonitoramentoAlertas.configurar({ voz: false });
+      }
+    }""")
+    print('OK: v6.5.0 Presets COA/FLOW, Exportar/Importar (.json + BPPRESET1:) sem vazar segredos, Desfazer 1-clique e Narrador Analítico Gemini em Tempo Real validados')
+
     assert not errors, errors
     assert not any(m=='POST' for m,u in requests), 'Teste tentou POST'
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+23} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+24} grupos de verificações.')

@@ -31,11 +31,15 @@
 (() => {
   'use strict';
 
-  const VERSAO = '6.4.0';
+  const VERSAO = '6.5.0';
   const KEY_PAINEL_FIXO = 'bperes.visual.painel-fixo.v1';
   const KEY_GEMINI_KEY = 'bperes.ia.geminiKey.v1';
   const policy = window.AlertasPolicy;
   const KEY_CFG = 'bperes.alertas.cfg.v2';
+  const KEY_PRESETS = 'bperes.alertas.presets.v1';
+  const KEY_PRESET_UNDO = 'bperes.alertas.preset-undo.v1';
+  const KEY_CODIGO_NUVEM = 'bperes.alertas.preset-nuvem-cod.v1';
+  const IDB_COFRE_NOME = 'bperes_cofre_v1';
   const KEY_HIST = 'bperes.alertas.hist.v2';
   const KEY_ACK = 'bperes.alertas.ack.v2';
   const KEY_TRATATIVAS = 'bperes.coa.tratativas.v1';
@@ -276,6 +280,8 @@
     reescalarCriticos: true,
     reescalarCriticosMin: 5,
     iaAtiva: true,
+    iaNarrarAlertas: true,
+    escopoNarracaoIa: 'todos', // 'todos' | 'criticos'
     modeloIa: 'gemini-2.5-flash',
     silencioAte: 0,
   };
@@ -285,6 +291,11 @@
   /* ------------------------------------------------------------------ */
 
   let cfg = policy.normalizeCfg(Object.assign({}, PADRAO, carregar(KEY_CFG, PADRAO)));
+  let meusPresets = carregar(KEY_PRESETS, []);
+  let ultimoBackupPreset = carregar(KEY_PRESET_UNDO, null);
+  let presetsNuvemLista = [];
+  let carregandoPresetsNuvem = false;
+  let cofreIdbSnapshotDisponivel = null;
   let hist = carregar(KEY_HIST, []);
   let acks = carregar(KEY_ACK, {});
   let tratativas = carregar(KEY_TRATATIVAS, {});
@@ -310,6 +321,8 @@
   let historicoChatIa = [];
   let audioGeminiAtivo = null;
   const cacheAudioGemini = new Map(); // chave => data:audio/wav;base64,...
+  const cacheNarracaoIa = new Map(); // chave => { ts, resultado }
+  const ultimoDisparoIaPorChave = new Map(); // chave alerta => timestamp
   const microParadasMapa = new Map(); // id → { paradoDesde, episodios: [{ duracaoMin, fimMs }] }
   const frotaMudaAvisada = new Map ? new Set() : new Set(); // numero/id já avisado no episódio atual de perda de sinal
   let timerResumoRajada = null;
@@ -376,20 +389,99 @@
   function carregar(chave, padrao) {
     try {
       const bruto = localStorage.getItem(chave);
-      if (!bruto) return JSON.parse(JSON.stringify(padrao));
+      if (!bruto) return padrao === null ? null : JSON.parse(JSON.stringify(padrao));
       const salvo = JSON.parse(bruto);
+      if (padrao === null) return salvo;
       if (Array.isArray(padrao)) return Array.isArray(salvo) ? salvo : [];
       return JSON.parse(JSON.stringify(Object.assign({}, padrao, salvo && typeof salvo === 'object' ? salvo : {})));
     } catch {
-      return JSON.parse(JSON.stringify(padrao));
+      return padrao === null ? null : JSON.parse(JSON.stringify(padrao));
+    }
+  }
+
+  function abrirBancoCofreIdb() {
+    if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+    return new Promise((resolve) => {
+      try {
+        const req = indexedDB.open(IDB_COFRE_NOME, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  function espelharCofreIdb(chave, valor) {
+    abrirBancoCofreIdb().then((db) => {
+      if (!db) return;
+      try {
+        const tx = db.transaction('kv', 'readwrite');
+        tx.objectStore('kv').put({ ts: agora(), valor }, chave);
+        tx.oncomplete = () => { try { db.close(); } catch { /* ok */ } };
+      } catch {
+        try { db.close(); } catch { /* ok */ }
+      }
+    });
+  }
+
+  function lerCofreIdb(chave) {
+    return abrirBancoCofreIdb().then((db) => {
+      if (!db) return null;
+      return new Promise((resolve) => {
+        try {
+          const tx = db.transaction('kv', 'readonly');
+          const req = tx.objectStore('kv').get(chave);
+          req.onsuccess = () => {
+            try { db.close(); } catch { /* ok */ }
+            resolve(req.result || null);
+          };
+          req.onerror = () => {
+            try { db.close(); } catch { /* ok */ }
+            resolve(null);
+          };
+        } catch {
+          try { db.close(); } catch { /* ok */ }
+          resolve(null);
+        }
+      });
+    });
+  }
+
+  async function verificarCofreAntiPerda() {
+    try {
+      const [presetsIdb, cfgIdb] = await Promise.all([
+        lerCofreIdb(KEY_PRESETS),
+        lerCofreIdb(KEY_CFG),
+      ]);
+      if ((!Array.isArray(meusPresets) || !meusPresets.length) && presetsIdb && Array.isArray(presetsIdb.valor) && presetsIdb.valor.length) {
+        meusPresets = presetsIdb.valor;
+        try { localStorage.setItem(KEY_PRESETS, JSON.stringify(meusPresets)); } catch { /* ok */ }
+      }
+      let temCfgLocal = false;
+      try { temCfgLocal = Boolean(localStorage.getItem(KEY_CFG)); } catch { /* ok */ }
+      if (!temCfgLocal && cfgIdb && cfgIdb.valor && typeof cfgIdb.valor === 'object') {
+        cofreIdbSnapshotDisponivel = cfgIdb;
+      }
+      if (el.cfg && !el.cfg.classList.contains('hide')) renderPainelPresets();
+    } catch {
+      /* sem IndexedDB */
     }
   }
 
   function salvar(chave, valor) {
     try {
-      localStorage.setItem(chave, JSON.stringify(valor));
+      if (valor === null || valor === undefined) localStorage.removeItem(chave);
+      else localStorage.setItem(chave, JSON.stringify(valor));
     } catch {
-      /* storage cheio ou bloqueado: segue sem persistir */
+      /* storage cheio ou bloqueado: segue com espelhamento IDB */
+    }
+    if (chave === KEY_CFG || chave === KEY_PRESETS || chave === KEY_PRESET_UNDO) {
+      espelharCofreIdb(chave, valor);
     }
   }
 
@@ -3368,7 +3460,8 @@
     if (!silenciado && !demais) {
       if ((oficial || localAberto || a.simulado) && cfg.som) tocar(emergencia || urgenteFlow ? 4 : regra.severidade, emergencia);
       if (vaiFalar) {
-        falar(alerta.fala, { oficial, emergencia: emergencia || urgenteFlow, alerta, toastExibido: true });
+        const narrarComIa = !a.simulado && deveNarrarAlertaAutomaticoIa(alerta);
+        falar(alerta.fala, { oficial, emergencia: emergencia || urgenteFlow, alerta, toastExibido: true, narrarComIa });
         faladoEm.set(chave, ts);
       }
       if ((oficial || localAberto || a.simulado) && cfg.vibrar) vibrar(emergencia ? 4 : regra.severidade);
@@ -3728,16 +3821,232 @@
     return dataUrl;
   }
 
+  function deveNarrarAlertaAutomaticoIa(alerta) {
+    if (!alerta || cfg.iaAtiva === false || cfg.iaNarrarAlertas === false) return false;
+    if (!geminiDisponivel()) return false;
+    if (cfg.escopoNarracaoIa === 'criticos' && !policy.ehAlertaCritico(cfg, alerta)) return false;
+    const ch = String(alerta.chave || alerta.numero || '');
+    const ult = ultimoDisparoIaPorChave.get(ch) || 0;
+    if (ult && agora() - ult < 45_000) return false;
+    ultimoDisparoIaPorChave.set(ch, agora());
+    if (ultimoDisparoIaPorChave.size > 160) {
+      const prim = ultimoDisparoIaPorChave.keys().next().value;
+      if (prim !== undefined) ultimoDisparoIaPorChave.delete(prim);
+    }
+    return true;
+  }
+
+  function serializarAlertaParaIa(a) {
+    if (!a) return null;
+    const durMin = a.inicio ? Math.max(0, Math.round((agora() - a.inicio) / 60000)) : 0;
+    const reincidencias = hist.filter((h) => h && h.equipamento === a.numero && agora() - (h.ts || 0) < 6 * 3600_000).length;
+    return {
+      chave: a.chave,
+      numero: a.numero,
+      classe: a.classe,
+      setor: setorDoAlerta(a),
+      regra: a.regra,
+      codigoSgpa: a.tipoAlarme || '',
+      nomeAlarme: a.nomeAlarme || a.nome || '',
+      severidade: a.severidade,
+      valor: a.valor,
+      limite: a.limite,
+      texto: a.texto,
+      detalhe: a.detalhe || '',
+      fonte: a.fonte,
+      operador: a.operador || '',
+      duracaoMinutos: durMin,
+      reincidenciasTurno: reincidencias,
+      frente: (a.e && (a.e.frente || a.e.frenteInferida)) || '',
+      grupoEquipamento: (a.e && a.e.grupoEquipamento) || '',
+      operacaoAtual: (a.e && a.e.operacao) || '',
+      velocidadeKmH: a.e && a.e.velocidade != null ? a.e.velocidade : null,
+      rpmMotor: a.e && a.e.rpm != null ? a.e.rpm : null,
+    };
+  }
+
+  async function requisitarLocucaoInteligenteGemini(item, voz, estilo, gerarAudioWav) {
+    const chaveLocal = obterChaveGeminiLocal();
+    const alertaSerial = serializarAlertaParaIa(item.alertaRef);
+    const contexto = montarContextoIa(item.alertaRef || null);
+    const assinaturaCache = item.modoBoletimIa
+      ? `boletim|${voz}|${ativos.size}|${Math.floor(agora() / 20000)}`
+      : `${(alertaSerial && alertaSerial.chave) || item.texto}|${voz}|${Math.floor(agora() / 30000)}`;
+    const emCache = cacheNarracaoIa.get(assinaturaCache);
+    if (emCache && agora() - emCache.ts < 30_000) return emCache.resultado;
+
+    let resp = null;
+    if (ctx.proxy && ctx.audit) {
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const tmr = ctrl ? setTimeout(() => ctrl.abort(), 9500) : null;
+      try {
+        const r = await fetch('/.netlify/functions/session?acao=ia_locucao_alerta', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: ctrl ? ctrl.signal : undefined,
+          body: JSON.stringify({
+            alerta: alertaSerial,
+            contexto,
+            voz,
+            estilo,
+            modelo: cfg.modeloIa || 'gemini-2.5-flash',
+            gerarAudio: Boolean(gerarAudioWav),
+            modoBoletim: Boolean(item.modoBoletimIa),
+            apiKey: chaveLocal || undefined,
+          }),
+        });
+        const j = await r.json().catch(() => null);
+        if (r.ok && j && j.ok && j.falaInteligente) {
+          if (!chaveLocal) {
+            iaServidorConfigurado = true;
+            atualizarStatusGeminiUi();
+          }
+          resp = j;
+        }
+      } catch {
+        /* fallback direto se chave local disponível */
+      } finally {
+        if (tmr) clearTimeout(tmr);
+      }
+    }
+
+    if (!resp && chaveLocal) {
+      const promptDir = item.modoBoletimIa
+        ? `Você é o Narrador Sênior da Usina Branco Peres. Analise todos os alertas ativos de côa e flôu e gere JSON {"falaInteligente":"Atenção côa e flôu: ...","causaRaiz":"...","acaoImediata":"...","nivelUrgencia":"alta"} sem markdown (máx. 520 caracteres em falaInteligente).\nCONTEXTO:\n${JSON.stringify(contexto)}`
+        : `Você é o Narrador Sênior da Usina Branco Peres. Analise o alerta cruzado com a frente e gere JSON {"falaInteligente":"Atenção ${item.setor === 'FLOW' ? 'flôu' : 'côa'}: ...","causaRaiz":"...","acaoImediata":"...","nivelUrgencia":"normal"} sem markdown (máx. 360 caracteres em falaInteligente, velocidade somente oficial SGPA, bombeiro é sempre Caminhão).\nALERTA:\n${JSON.stringify(alertaSerial)}\nCONTEXTO:\n${JSON.stringify(contexto)}`;
+      const { r, j } = await chamarGeminiDiretoCliente(cfg.modeloIa || 'gemini-2.5-flash', chaveLocal, {
+        contents: [{ role: 'user', parts: [{ text: promptDir }] }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 550, responseMimeType: 'application/json' },
+      });
+      const parts = (((j || {}).candidates || [])[0] || {}).content && j.candidates[0].content.parts || [];
+      const txt = parts.filter((p) => p && typeof p.text === 'string' && !p.thought).map((p) => p.text).join('\n').trim();
+      if (r && r.ok && txt) {
+        let obj = null;
+        try { obj = JSON.parse(txt.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')); } catch { obj = { falaInteligente: txt.replace(/[*#•`"]/g, '').slice(0, 380) }; }
+        if (obj && obj.falaInteligente) {
+          resp = {
+            ok: true,
+            origem: 'gemini',
+            modelo: cfg.modeloIa || 'gemini-2.5-flash',
+            falaInteligente: String(obj.falaInteligente).trim(),
+            causaRaiz: String(obj.causaRaiz || '').trim(),
+            acaoImediata: String(obj.acaoImediata || '').trim(),
+            nivelUrgencia: String(obj.nivelUrgencia || 'normal'),
+          };
+          if (gerarAudioWav) {
+            try {
+              const wavUrl = await requisitarAudioGemini(resp.falaInteligente, voz, estilo);
+              resp.dataUrl = wavUrl;
+            } catch {
+              resp.audioIndisponivel = true;
+            }
+          }
+        }
+      }
+    }
+
+    if (!resp || !resp.falaInteligente) throw new Error('Narração analítica Gemini indisponível');
+    if (!resp.dataUrl && resp.audioBase64) {
+      resp.dataUrl = `data:${resp.mimeType || 'audio/wav'};base64,${resp.audioBase64}`;
+    }
+
+    if (item.alertaRef) {
+      const infoIa = {
+        falaInteligente: resp.falaInteligente,
+        causaRaiz: resp.causaRaiz || '',
+        acaoImediata: resp.acaoImediata || '',
+        nivelUrgencia: resp.nivelUrgencia || 'normal',
+        modelo: resp.modelo || 'gemini-2.5-flash',
+        ts: agora(),
+      };
+      item.alertaRef.iaAnalise = infoIa;
+      const vivo = ativos.get(item.alertaRef.chave);
+      if (vivo) vivo.iaAnalise = infoIa;
+      renderAtivos();
+    }
+    if (item.modoBoletimIa) {
+      ultimaAnaliseIa = {
+        ok: true,
+        origem: 'gemini',
+        modelo: resp.modelo || 'gemini-2.5-flash',
+        pergunta: '🎙️ Boletim Falado Inteligente dos Alertas Ativos',
+        mensagemRadio: resp.falaInteligente,
+        analise: [
+          '• Locução Inteligente Emitida na Sala:',
+          `  "${resp.falaInteligente}"`,
+          resp.causaRaiz ? `\n• Causa-Raiz Principal:\n  - ${resp.causaRaiz}` : '',
+          resp.acaoImediata ? `\n• Ação Prioritária Recomendada:\n  - ${resp.acaoImediata}` : '',
+        ].filter(Boolean).join('\n'),
+        ts: agora(),
+      };
+      renderCopilotoIa();
+    }
+
+    cacheNarracaoIa.set(assinaturaCache, { ts: agora(), resultado: resp });
+    if (cacheNarracaoIa.size > 35) {
+      const pKey = cacheNarracaoIa.keys().next().value;
+      if (pKey !== undefined) cacheNarracaoIa.delete(pKey);
+    }
+    return resp;
+  }
+
+  function narrarAlertaSobDemandaIa(alerta) {
+    if (!alerta) return;
+    const localCtx = montarContextoIa(alerta);
+    const fallback = policy.narrarAlertaContextualLocal(alerta, localCtx);
+    if (!alerta.iaAnalise) {
+      alerta.iaAnalise = {
+        falaInteligente: fallback.falaInteligente,
+        causaRaiz: fallback.causaRaiz,
+        acaoImediata: fallback.acaoImediata,
+        nivelUrgencia: fallback.nivelUrgencia,
+        modelo: geminiDisponivel() ? 'gemini-2.5-flash' : 'Motor Causal Local',
+        ts: agora(),
+      };
+      renderAtivos();
+    }
+    if (!cfg.voz) configurar({ voz: true });
+    mostrarAviso(`🎙️🧠 Analisando ${alerta.classe} ${alerta.numero} com IA e preparando locução…`, 'info');
+    falar(fallback.falaInteligente, {
+      oficial: true,
+      forcarGemini: true,
+      alerta,
+      toastExibido: true,
+      narrarComIa: geminiDisponivel(),
+    });
+  }
+
+  function narrarBoletimAtivosIa() {
+    const lista = [...ativos.values()];
+    const ctxAtual = montarContextoIa(null);
+    const localDiag = policy.raciocinarOperacaoCoa(ctxAtual, 'Boletim falado dos alertas ativos');
+    const textoFallback = lista.length
+      ? localDiag.mensagemRadio
+      : 'Atenção côa e flôu: nenhum alerta ativo pendente no momento. Operação estabilizada nas frentes monitoradas.';
+    if (!cfg.voz) configurar({ voz: true });
+    mostrarAviso('🎙️🧠 Gerando boletim falado inteligente com análise de causa-raiz…', 'info');
+    falar(textoFallback, {
+      oficial: true,
+      forcarGemini: true,
+      toastExibido: true,
+      narrarComIa: lista.length > 0 && geminiDisponivel(),
+      modoBoletimIa: lista.length > 0,
+    });
+  }
+
   function falar(texto, opcoes) {
     if (!cfg.voz) return;
     const emergencia = !!(opcoes && opcoes.emergencia);
     const textoFalado = paraPronunciaNatural(texto);
-    const setor = opcoes && opcoes.alerta ? opcoes.alerta.setor : (/^Atenção Flow/i.test(textoFalado) ? 'FLOW' : 'COA');
+    const setor = opcoes && opcoes.alerta ? opcoes.alerta.setor : (/^Atenção (?:Flow|flôu)/i.test(textoFalado) ? 'FLOW' : 'COA');
     const item = {
       texto: textoFalado,
       oficial: !!(opcoes && opcoes.oficial) || emergencia,
       emergencia,
       setor,
+      alertaRef: (opcoes && opcoes.alerta) || null,
+      narrarComIa: !!(opcoes && opcoes.narrarComIa),
+      modoBoletimIa: !!(opcoes && opcoes.modoBoletimIa),
       forcarGemini: !!(opcoes && opcoes.forcarGemini),
       retentou: false,
     };
@@ -3786,44 +4095,77 @@
     return false;
   }
 
+  function reproduzirDataUrlAudioGemini(dataUrl, itemFallback) {
+    if (!falando) return;
+    const player = new Audio(dataUrl);
+    audioGeminiAtivo = player;
+    player.volume = Math.max(0, Math.min(1, Number(cfg.volume) || 1));
+    player.playbackRate = Math.max(0.6, Math.min(1.6, Number(cfg.taxa) || 1));
+    const encerrar = () => {
+      if (audioGeminiAtivo === player) audioGeminiAtivo = null;
+      falando = false;
+      setTimeout(descargarFila, 140);
+    };
+    player.onended = encerrar;
+    player.onerror = () => {
+      if (audioGeminiAtivo === player) audioGeminiAtivo = null;
+      falando = false;
+      fila.unshift(Object.assign({}, itemFallback, { narrarComIa: false, semGemini: true }));
+      setTimeout(descargarFila, 60);
+    };
+    const playPromise = player.play();
+    if (playPromise && typeof playPromise.catch === 'function') {
+      playPromise.catch(() => {
+        if (audioGeminiAtivo === player) audioGeminiAtivo = null;
+        falando = false;
+        fila.unshift(Object.assign({}, itemFallback, { narrarComIa: false, semGemini: true }));
+        setTimeout(descargarFila, 60);
+      });
+    }
+  }
+
   function descargarFila() {
     if (falando || vozBloqueada || !fila.length) return;
     limparTimersVozWeb();
     const item = fila.shift();
     const texto = paraFoneticaLocucao(item.texto);
 
+    // 1) Narração Analítica Inteligente Gemini (analisa o alerta + contexto da frente e fala com raciocínio)
+    if (item.narrarComIa && !item.iaTentada && geminiDisponivel()) {
+      item.iaTentada = true;
+      falando = true;
+      const vozG = escolherVozGeminiItem(item, texto);
+      const estiloG = item.emergencia ? 'urgente' : (cfg.estiloDirecaoGemini || 'comando');
+      const precisaWavGemini = deveUsarVozGemini(item) && typeof Audio !== 'undefined';
+      requisitarLocucaoInteligenteGemini(item, vozG, estiloG, precisaWavGemini)
+        .then((respIa) => {
+          if (!falando) return;
+          const textoRaciocinado = paraPronunciaNatural(respIa.falaInteligente || item.texto);
+          ultimaFalaEmitida = { texto: textoRaciocinado, ts: agora(), oficial: item.oficial, emergencia: item.emergencia, ia: true };
+          if (precisaWavGemini && respIa.dataUrl) {
+            reproduzirDataUrlAudioGemini(respIa.dataUrl, Object.assign({}, item, { texto: textoRaciocinado }));
+            return;
+          }
+          falando = false;
+          fila.unshift(Object.assign({}, item, { texto: textoRaciocinado, narrarComIa: false, semGemini: true }));
+          setTimeout(descargarFila, 40);
+        })
+        .catch(() => {
+          falando = false;
+          fila.unshift(Object.assign({}, item, { narrarComIa: false }));
+          setTimeout(descargarFila, 40);
+        });
+      return;
+    }
+
+    // 2) Vozes neurais brasileiras Gemini TTS diretas
     if (deveUsarVozGemini(item) && typeof Audio !== 'undefined') {
       falando = true;
       const vozG = escolherVozGeminiItem(item, texto);
       const estiloG = item.emergencia ? 'urgente' : (cfg.estiloDirecaoGemini || 'comando');
       requisitarAudioGemini(texto, vozG, estiloG)
         .then((dataUrl) => {
-          if (!falando) return;
-          const player = new Audio(dataUrl);
-          audioGeminiAtivo = player;
-          player.volume = Math.max(0, Math.min(1, Number(cfg.volume) || 1));
-          player.playbackRate = Math.max(0.6, Math.min(1.6, Number(cfg.taxa) || 1));
-          const encerrar = () => {
-            if (audioGeminiAtivo === player) audioGeminiAtivo = null;
-            falando = false;
-            setTimeout(descargarFila, 140);
-          };
-          player.onended = encerrar;
-          player.onerror = () => {
-            if (audioGeminiAtivo === player) audioGeminiAtivo = null;
-            falando = false;
-            fila.unshift(Object.assign({}, item, { semGemini: true }));
-            setTimeout(descargarFila, 60);
-          };
-          const playPromise = player.play();
-          if (playPromise && typeof playPromise.catch === 'function') {
-            playPromise.catch(() => {
-              if (audioGeminiAtivo === player) audioGeminiAtivo = null;
-              falando = false;
-              fila.unshift(Object.assign({}, item, { semGemini: true }));
-              setTimeout(descargarFila, 60);
-            });
-          }
+          reproduzirDataUrlAudioGemini(dataUrl, item);
         })
         .catch(() => {
           falando = false;
@@ -4559,6 +4901,8 @@
         <button class="aba" data-aba="historico">Histórico <span id="cont-hist" class="pill">0</span></button>
       </div>
       <div class="atalhos">
+        <button id="btn-boletim-ia" class="icone" type="button" title="Ouvir boletim inteligente falado pela IA Gemini sobre os alertas ativos" aria-label="Ouvir boletim IA">🧠🎙️</button>
+        <button id="btn-presets-atalho" class="icone" type="button" title="Presets COA &amp; FLOW · Salvar, Exportar, Importar ou Banco" aria-label="Presets de configuração">💾</button>
         <button id="btn-calar" class="icone" title="Calar apenas a fala atual (mantém próximos alertas)" aria-label="Calar fala atual">⏹</button>
         <button id="btn-som" class="icone" title="Som do alerta">🔊</button>
         <button id="btn-voz" class="icone" title="Fala do alerta">🗣️</button>
@@ -4650,10 +4994,11 @@
       <button id="cfg-fechar-x" class="icone cfg-fechar-x" type="button" title="Fechar preferências" aria-label="Fechar preferências">✕</button>
     </div>
     <h2 id="cfg-titulo">Preferências e Controle Personalizado</h2>
-    <p class="fine">Organize exatamente o que deseja monitorar: escolha apenas alertas críticos ou personalize cada um dos alertas do SGPA, filtre grupos de equipamentos e frentes, ajuste tempos, vozes brasileiras Gemini e o Copiloto IA.</p>
+    <p class="fine">Organize exatamente o que deseja monitorar: salve Presets COA &amp; FLOW no cofre/banco, exporte para seu parceiro de turno, personalize os 2.972 alertas do SGPA e ative o narrador inteligente Gemini.</p>
 
     <div id="cfg-abas" class="cfg-abas" role="tablist" aria-label="Seções de preferências">
       <button type="button" role="tab" id="tab-cfg-alertas" class="cfg-aba on" data-cfg-aba="alertas" aria-selected="true">🚨 Alertas &amp; Críticos</button>
+      <button type="button" role="tab" id="tab-cfg-presets" class="cfg-aba" data-cfg-aba="presets" aria-selected="false">💾 Presets &amp; Backup</button>
       <button type="button" role="tab" id="tab-cfg-sgpa" class="cfg-aba" data-cfg-aba="sgpa" aria-selected="false">📋 Catálogo SGPA</button>
       <button type="button" role="tab" id="tab-cfg-escopo" class="cfg-aba" data-cfg-aba="escopo" aria-selected="false">🚜 Frentes &amp; Grupos</button>
       <button type="button" role="tab" id="tab-cfg-tempos" class="cfg-aba" data-cfg-aba="tempos" aria-selected="false">⚙️ Ajustes &amp; Tempos</button>
@@ -4661,6 +5006,93 @@
       <button type="button" role="tab" id="tab-cfg-ia" class="cfg-aba" data-cfg-aba="ia" aria-selected="false">🧠 IA &amp; Sistema</button>
       <button type="button" role="tab" id="tab-cfg-tudo" class="cfg-aba" data-cfg-aba="tudo" aria-selected="false" title="Mostrar todas as seções de uma vez">📑 Tudo</button>
     </div>
+
+    <!-- ABA PRESETS, BANCO DE DADOS & EXPORTAR / IMPORTAR -->
+    <section class="cfg-painel-aba hide" data-cfg-painel="presets" aria-labelledby="tab-cfg-presets">
+      <div class="presets-hero-card">
+        <div class="presets-hero-head">
+          <div>
+            <strong>💾 Cofre de Presets Operacionais · COA &amp; FLOW</strong>
+            <p class="fine" style="margin:2px 0 0">Proteja todas as suas horas de refinamento (2.972 códigos SGPA, ⭐ críticos, frentes, grupos, tempos, vozes e tema). Salve no aparelho com espelhamento duplo anti-perda, grave no banco Supabase ou envie o arquivo assinado ao seu parceiro de turno.</p>
+          </div>
+          <button type="button" id="preset-btn-desfazer" class="preset-btn hide" title="Restaurar exatamente a configuração que estava ativa antes da última importação ou preset">↩️ Desfazer última troca</button>
+        </div>
+        <div id="preset-resumo-atual" class="presets-resumo-grid"></div>
+        <div id="preset-cofre-recuperar" class="presets-cofre-alerta hide">
+          <span>🛡️ <b>Cofre Anti-Perda detectou um backup anterior neste aparelho!</b> Deseja recuperar suas configurações salvas?</span>
+          <button type="button" id="preset-btn-restaurar-cofre" class="primary">Restaurar agora</button>
+        </div>
+      </div>
+
+      <h3 class="secao-alertas">⚡ Presets Oficiais Prontos (Aplicação em 1 Clique)</h3>
+      <p class="fine">Comece com uma base calibrada para sua mesa de controle e depois refine à vontade.</p>
+      <div id="cfg-presets-oficiais" class="presets-grid-cards"></div>
+
+      <h3 class="secao-alertas">⭐ Meus Presets Personalizados neste Aparelho</h3>
+      <div class="presets-form-box">
+        <div class="grade">
+          <label class="campo"><span>Nome do seu Preset (ex.: Meu COA Turno A · Refinado)</span>
+            <input id="preset-novo-nome" type="text" maxlength="100" placeholder="Ex.: COA Turno A — Rafael" autocomplete="off">
+          </label>
+          <label class="campo"><span>Mesa / Identificação</span>
+            <select id="preset-novo-setor">
+              <option value="auto">Automático conforme filtro atual</option>
+              <option value="COA">🚜 Controle COA</option>
+              <option value="FLOW">🚛 Controle FLOW</option>
+              <option value="todos">🌐 Geral (COA + FLOW)</option>
+            </select>
+          </label>
+        </div>
+        <div class="voice-btn-row" style="margin-top:8px">
+          <button type="button" id="preset-btn-salvar-local" class="primary">💾 Salvar Configuração Atual nos Meus Presets</button>
+        </div>
+      </div>
+      <div id="cfg-meus-presets-lista" class="presets-salvos-lista"></div>
+
+      <h3 class="secao-alertas">☁️ Salvar e Recuperar no Banco de Dados (Nuvem Supabase)</h3>
+      <div class="presets-cloud-card">
+        <p class="fine">Use um <b>Código de Perfil</b> simples (ex.: <code>RAFAEL-COA</code>, <code>FLOW-TURNO-B</code>, <code>EQUIPE-COA</code>) para guardar sua configuração no banco e puxar de qualquer outro computador ou celular sem perder nada.</p>
+        <div class="grade">
+          <label class="campo"><span>Código do Perfil no Banco (letras, números e traço)</span>
+            <input id="preset-nuvem-codigo" type="text" maxlength="48" placeholder="Ex.: RAFAEL-COA ou FLOW-TURNO-A" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="campo"><span>Seu Nome / Turno (opcional)</span>
+            <input id="preset-nuvem-autor" type="text" maxlength="60" placeholder="Ex.: Rafael · Turno A" autocomplete="off">
+          </label>
+        </div>
+        <div class="voice-btn-row" style="margin-top:8px">
+          <button type="button" id="preset-btn-salvar-nuvem" class="primary">☁️ Salvar no Banco Agora</button>
+          <button type="button" id="preset-btn-carregar-nuvem">☁️ Carregar Código do Banco</button>
+          <button type="button" id="preset-btn-listar-nuvem">🔄 Ver Perfis Salvos na Equipe</button>
+        </div>
+        <p id="preset-nuvem-status" class="fine" style="margin-top:6px"></p>
+        <div id="preset-nuvem-lista" class="presets-salvos-lista"></div>
+      </div>
+
+      <h3 class="secao-alertas">📦 Exportar &amp; Importar para Parceiro de Turno (Arquivo .json + WhatsApp)</h3>
+      <div class="presets-io-card">
+        <p class="fine">Gere um arquivo <code>.json</code> assinado com verificação de integridade (checksum) para enviar ao seu parceiro de turno, ou copie o código portátil para mandar direto no WhatsApp. Nenhuma senha ou chave privada é incluída no arquivo.</p>
+        <div class="voice-btn-row">
+          <button type="button" id="preset-btn-exportar-json" class="primary">⬇️ Exportar Arquivo .json p/ Parceiro</button>
+          <button type="button" id="preset-btn-copiar-codigo">📋 Copiar Código Portátil (WhatsApp)</button>
+        </div>
+
+        <div id="preset-dropzone" class="preset-dropzone" tabindex="0" role="button" aria-label="Selecionar ou arrastar arquivo JSON de configuração">
+          <input id="preset-input-arquivo" type="file" accept=".json,application/json" class="hide">
+          <strong>📂 Clique para escolher o arquivo <code>.json</code> ou arraste-o aqui</strong>
+          <span>Valida integridade (checksum), todos os 2.972 códigos SGPA, tempos, frentes, grupos e tema automaticamente</span>
+        </div>
+
+        <label class="campo" style="margin-top:10px">
+          <span>Ou cole abaixo o Código Portátil (<code>BPPRESET1:...</code>) / JSON enviado pelo parceiro</span>
+          <textarea id="preset-colar-codigo" rows="3" spellcheck="false" autocomplete="off" placeholder="Cole aqui o código BPPRESET1:... recebido no WhatsApp ou o conteúdo do arquivo .json"></textarea>
+        </label>
+        <div class="voice-btn-row" style="margin-top:8px">
+          <button type="button" id="preset-btn-importar-colado">📥 Validar e Aplicar Configuração Colada</button>
+        </div>
+        <p id="preset-import-status" class="fine" style="margin-top:6px" role="status" aria-live="polite"></p>
+      </div>
+    </section>
 
     <!-- ABA 1: ALERTAS & CRÍTICOS -->
     <section class="cfg-painel-aba" data-cfg-painel="alertas" aria-labelledby="tab-cfg-alertas">
@@ -4674,6 +5106,7 @@
           <button type="button" id="cfg-preset-criticos" class="preset-btn crit">🔥 Ativar Só Críticos</button>
           <button type="button" id="cfg-preset-todas" class="preset-btn">✅ Marcar todas categorias</button>
           <button type="button" id="cfg-preset-nenhuma" class="preset-btn">🔇 Silenciar categorias</button>
+          <button type="button" id="cfg-ir-presets" class="preset-btn dest">💾 Presets COA/FLOW &amp; Exportar →</button>
           <button type="button" id="cfg-ir-sgpa" class="preset-btn dest">📋 Escolher um por um no SGPA →</button>
         </div>
       </div>
@@ -4917,12 +5350,13 @@
     <section class="cfg-painel-aba hide" data-cfg-painel="ia" aria-labelledby="tab-cfg-ia">
       <div class="gemini-voice-card">
         <div class="gemini-voice-head">
-          <strong>🧠 Inteligência Artificial — Copiloto de Raciocínio COA &amp; FLOW</strong>
+          <strong>🧠 Inteligência Artificial — Copiloto &amp; Narrador de Alertas Gemini</strong>
           <span id="cfg-ia-status-badge" class="pill">Motor Híbrido Ativo</span>
         </div>
-        <p class="fine">O aplicativo já traz um <b>Motor Causal Especialista COA/FLOW</b> funcionando na hora sem chave externa. Para liberar também o raciocínio generativo <b>Google Gemini 2.5 Flash Thinking</b> e as <b>Novas Vozes Brasileiras Gemini</b>, informe uma chave gratuita do Google AI Studio abaixo (salva apenas neste aparelho) ou configure <code>GEMINI_API_KEY</code> no Netlify.</p>
+        <p class="fine">O aplicativo cruza em tempo real os alertas com a telemetria da frente e usa o <b>Google Gemini 2.5 Flash Thinking</b> para analisar a causa-raiz e <b>falar com raciocínio operacional</b> nas novas vozes brasileiras Gemini. Sem chave externa, mantém o Motor Causal Especialista COA/FLOW ativo sem interrupção.</p>
         <div class="switches">
-          <label class="chk"><input id="cfg-ia-ativa" type="checkbox"><span>Ativar Copiloto de IA na Central e botão “🧠 IA” nos cartões de alerta</span></label>
+          <label class="chk"><input id="cfg-ia-ativa" type="checkbox"><span>Ativar Copiloto de IA na Central e botões “🧠 IA” / “🎙️ Narrar IA” nos cartões</span></label>
+          <label class="chk"><input id="cfg-ia-narrar-alertas" type="checkbox"><span><b>🎙️🧠 IA Narradora Inteligente:</b> Gemini analisa automaticamente o alerta + frente e fala com diagnóstico e ação recomendada</span></label>
         </div>
         <div class="grade" style="margin-top:6px">
           <label class="campo"><span>Chave Google Gemini API neste aparelho (opcional · aceita <code>AQ...</code> ou <code>AIza...</code>)</span>
@@ -4934,9 +5368,16 @@
               <option value="gemini-2.5-pro">Gemini 2.5 Pro (Análise Estratégica Máxima)</option>
             </select>
           </label>
+          <label class="campo"><span>Quando usar a Narração Analítica da IA</span>
+            <select id="cfg-escopo-narracao-ia">
+              <option value="todos">Todos os alertas falados (COA &amp; FLOW)</option>
+              <option value="criticos">Somente alertas críticos e urgentes</option>
+            </select>
+          </label>
         </div>
         <div class="voice-btn-row" style="margin-top:8px">
-          <button id="cfg-testar-ia" type="button" class="primary">🧠 Testar Raciocínio da IA Agora</button>
+          <button id="cfg-testar-narracao-ia" type="button" class="primary">🎙️🧠 Ouvir IA Analisando e Falando</button>
+          <button id="cfg-testar-ia" type="button">📋 Abrir Diagnóstico Escrito IA</button>
           <button id="cfg-limpar-key" type="button">Limpar chave local</button>
         </div>
       </div>
@@ -5116,6 +5557,8 @@
     for (const b of p.querySelectorAll('.aba')) {
       b.onclick = () => selecionarAbaCentral(b.dataset.aba);
     }
+    if ($('btn-boletim-ia')) $('btn-boletim-ia').onclick = () => narrarBoletimAtivosIa();
+    if ($('btn-presets-atalho')) $('btn-presets-atalho').onclick = () => abrirConfig('presets');
     if ($('btn-calar')) $('btn-calar').onclick = calarFalaAtual;
     $('btn-som').onclick = () => {
       configurar({ som: !cfg.som });
@@ -5169,6 +5612,53 @@
       btnAba.onclick = () => selecionarAbaConfig(btnAba.dataset.cfgAba);
     });
     if ($('cfg-ir-sgpa')) $('cfg-ir-sgpa').onclick = () => selecionarAbaConfig('sgpa');
+    if ($('cfg-ir-presets')) $('cfg-ir-presets').onclick = () => selecionarAbaConfig('presets');
+
+    // Eventos do Cofre de Presets, Nuvem Supabase e Exportar/Importar
+    if ($('preset-btn-salvar-local')) $('preset-btn-salvar-local').onclick = () => salvarMeuPresetAtual();
+    if ($('preset-btn-desfazer')) $('preset-btn-desfazer').onclick = () => desfazerUltimoPreset();
+    if ($('preset-btn-restaurar-cofre')) $('preset-btn-restaurar-cofre').onclick = () => restaurarSnapshotCofreIdb();
+    if ($('preset-btn-salvar-nuvem')) $('preset-btn-salvar-nuvem').onclick = () => salvarPresetNoBancoNuvem();
+    if ($('preset-btn-carregar-nuvem')) $('preset-btn-carregar-nuvem').onclick = () => carregarPresetDoBancoNuvem();
+    if ($('preset-btn-listar-nuvem')) $('preset-btn-listar-nuvem').onclick = () => listarPresetsDoBancoNuvem(true);
+    if ($('preset-btn-exportar-json')) $('preset-btn-exportar-json').onclick = () => exportarPresetArquivoJson();
+    if ($('preset-btn-copiar-codigo')) $('preset-btn-copiar-codigo').onclick = () => copiarCodigoPortatilAtual();
+    if ($('preset-btn-importar-colado')) {
+      $('preset-btn-importar-colado').onclick = () => {
+        const inp = $('preset-colar-codigo');
+        importarTextoOuObjetoPreset(inp ? inp.value : '', 'código/texto colado');
+      };
+    }
+    const dropzone = $('preset-dropzone');
+    const inputArq = $('preset-input-arquivo');
+    if (dropzone && inputArq) {
+      dropzone.onclick = (ev) => {
+        if (ev.target !== inputArq) inputArq.click();
+      };
+      dropzone.onkeydown = (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          inputArq.click();
+        }
+      };
+      inputArq.onchange = () => {
+        const arq = inputArq.files && inputArq.files[0];
+        if (arq) lerArquivoPresetJson(arq);
+        inputArq.value = '';
+      };
+      dropzone.addEventListener('dragover', (ev) => {
+        ev.preventDefault();
+        dropzone.classList.add('arrastando');
+      });
+      dropzone.addEventListener('dragleave', () => dropzone.classList.remove('arrastando'));
+      dropzone.addEventListener('drop', (ev) => {
+        ev.preventDefault();
+        dropzone.classList.remove('arrastando');
+        const arq = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+        if (arq) lerArquivoPresetJson(arq);
+      });
+    }
+
     if ($('cfg-somente-criticos')) {
       $('cfg-somente-criticos').onchange = () => {
         configurar({ somenteCriticos: $('cfg-somente-criticos').checked });
@@ -5340,11 +5830,42 @@
         falar('Atenção Coa: nova voz brasileira do Gemini ativa na sala de controle. Colhedora cinco sete oito três oito operando na Frente 1.', { oficial: true, forcarGemini: true });
       };
     }
+    if ($('cfg-testar-narracao-ia')) {
+      $('cfg-testar-narracao-ia').onclick = async () => {
+        if ($('cfg-gemini-key') && $('cfg-gemini-key').value.trim()) {
+          salvarChaveGeminiLocal($('cfg-gemini-key').value.trim());
+        }
+        configurar({
+          voz: true,
+          iaAtiva: true,
+          iaNarrarAlertas: $('cfg-ia-narrar-alertas') ? $('cfg-ia-narrar-alertas').checked : true,
+          escopoNarracaoIa: $('cfg-escopo-narracao-ia') ? $('cfg-escopo-narracao-ia').value : 'todos',
+          modeloIa: $('cfg-modelo-ia') ? $('cfg-modelo-ia').value : 'gemini-2.5-flash',
+        });
+        if (!geminiDisponivel() && ctx.proxy && ctx.audit) await verificarStatusIaServidor();
+        atualizarStatusGeminiUi();
+        const primeiroAtivo = [...ativos.values()][0] || {
+          chave: 'DEMO-IA|aguardandoCaminhao',
+          numero: '32275',
+          classe: 'Transbordo',
+          setor: 'COA',
+          regra: 'aguardandoCaminhao',
+          nome: 'Aguardando caminhão',
+          severidade: 3,
+          texto: 'aguardando caminhão na Frente 2 com colhedoras colhendo e zero canavieiro em fila',
+          fonte: 'app',
+          e: { frente: 'Frente 2', operacao: '905 - Aguardando Caminhão', velocidade: 0, rpm: 1180 },
+        };
+        narrarAlertaSobDemandaIa(primeiroAtivo);
+      };
+    }
     if ($('cfg-testar-ia')) {
       $('cfg-testar-ia').onclick = async () => {
         if ($('cfg-gemini-key')) salvarChaveGeminiLocal($('cfg-gemini-key').value.trim());
         configurar({
           iaAtiva: $('cfg-ia-ativa') ? $('cfg-ia-ativa').checked : true,
+          iaNarrarAlertas: $('cfg-ia-narrar-alertas') ? $('cfg-ia-narrar-alertas').checked : true,
+          escopoNarracaoIa: $('cfg-escopo-narracao-ia') ? $('cfg-escopo-narracao-ia').value : 'todos',
           modeloIa: $('cfg-modelo-ia') ? $('cfg-modelo-ia').value : 'gemini-2.5-flash',
         });
         if (!geminiDisponivel() && ctx.proxy && ctx.audit) {
@@ -5463,7 +5984,7 @@
   }
 
   function selecionarAbaConfig(aba) {
-    const validas = ['alertas', 'sgpa', 'escopo', 'tempos', 'vozes', 'ia', 'tudo'];
+    const validas = ['alertas', 'presets', 'sgpa', 'escopo', 'tempos', 'vozes', 'ia', 'tudo'];
     abaConfigAtiva = validas.includes(aba) ? aba : 'alertas';
     if (!el.cfg) return abaConfigAtiva;
     el.cfg.querySelectorAll('[data-cfg-aba]').forEach((b) => {
@@ -5475,6 +5996,9 @@
       const mostrar = abaConfigAtiva === 'tudo' || sec.dataset.cfgPainel === abaConfigAtiva;
       sec.classList.toggle('hide', !mostrar);
     });
+    if (abaConfigAtiva === 'presets' || abaConfigAtiva === 'tudo') {
+      renderPainelPresets();
+    }
     return abaConfigAtiva;
   }
 
@@ -6284,6 +6808,12 @@
   }
 
   function renderHudBarra() {
+    const tagSetor = document.querySelector('#brand .brand-tag');
+    if (tagSetor) {
+      const ehFlow = cfg.setorMonitorado === 'FLOW';
+      tagSetor.textContent = ehFlow ? 'FLOW' : 'COA';
+      tagSetor.dataset.setor = ehFlow ? 'FLOW' : 'COA';
+    }
     const pillLive = $('coa-live');
     const txtLive = $('coa-live-txt');
     if (pillLive && txtLive) {
@@ -6541,6 +7071,12 @@
     const eqVivo = (a.e && a.e.id && frota.get(String(a.e.id))) || a.e || null;
     const telemetriaHtml = contexto === 'central' ? montarFaixaTelemetria(eqVivo) : '';
     const setor = setorDoAlerta(a);
+    const iaHtml = a.iaAnalise && (a.iaAnalise.causaRaiz || a.iaAnalise.acaoImediata || a.iaAnalise.falaInteligente)
+      ? `<div class="a-ia-insight">
+          <span class="a-ia-tag">✨ Análise IA</span>
+          <span>${a.iaAnalise.causaRaiz ? `<b>Causa:</b> ${esc(a.iaAnalise.causaRaiz)} ` : ''}${a.iaAnalise.acaoImediata ? `· <b>Ação:</b> ${esc(a.iaAnalise.acaoImediata)}` : (!a.iaAnalise.causaRaiz ? esc(a.iaAnalise.falaInteligente) : '')}</span>
+        </div>`
+      : '';
     d.innerHTML = `
       <div class="a-top">
         <span class="a-icone">${a.icone}</span>
@@ -6564,6 +7100,7 @@
       ${telemetriaHtml}
       <p class="a-meta">${esc(a.descricao)}${a.operador ? ' · operador <b>' + esc(a.operador) + '</b>' : ' · <b>sem operador definido</b>'}${a.detalhe ? '<br>' + esc(a.detalhe) : ''}</p>
       <p class="a-fala">🗣️ ${esc(a.fala)}</p>
+      ${iaHtml}
       ${mostrarPainelTratativa ? `
       <div class="a-tratativa">
         <div class="a-trat-tags">${TAGS_TRATATIVA_COA.map((tag) => `<button type="button" data-trat-tag="${esc(tag)}" class="${trat && trat.tag === tag ? 'on' : ''}">${esc(tag)}</button>`).join('')}</div>
@@ -6575,6 +7112,7 @@
       <div class="a-acoes">
         <button type="button" data-q="chamado" class="btn-chamado" title="Abrir Sistema de Chamados já preenchido com as informações deste alerta">📋 registrar chamado</button>
         <button data-q="ouvir">▶ ouvir</button>
+        ${cfg.iaAtiva !== false ? '<button type="button" data-q="ia-voz" title="IA analisa este alerta cruzado com a frente e fala o diagnóstico">🎙️ narrar IA</button>' : ''}
         <button data-q="mapa">📍 ver no mapa</button>
         <button data-q="whats" title="Copiar cobrança padronizada COA e abrir WhatsApp">💬 cobrar</button>
         ${cfg.iaAtiva !== false ? '<button data-q="ia" title="Analisar causa-raiz e plano de ação deste alerta com IA">🧠 IA</button>' : ''}
@@ -6593,6 +7131,10 @@
       mostrarToast(a, false);
       falar(a.fala, { toastExibido: true });
     };
+    const btnIaVozCard = d.querySelector('[data-q="ia-voz"]');
+    if (btnIaVozCard) {
+      btnIaVozCard.onclick = () => narrarAlertaSobDemandaIa(a);
+    }
     d.querySelector('[data-q="mapa"]').onclick = () => abrirNoMapa(a);
     d.querySelector('[data-q="whats"]').onclick = () => cobrarNoWhatsApp(a);
     const btnIaCard = d.querySelector('[data-q="ia"]');
@@ -7542,6 +8084,7 @@
           <button type="button" id="ia-btn-cfg" class="preset-btn">${conectado ? '✨ Voz/IA Gemini ON' : '🔑 Ativar Gemini'}</button>
         </div>
         <div class="ia-atalhos">
+          <button type="button" id="ia-boletim-voz" class="primary">🎙️🧠 Narrar Boletim dos Alertas Ativos</button>
           <button type="button" data-ia-prompt="Faça o diagnóstico completo de causa-raiz dos gargalos das frentes e alertas ativos agora.">🔍 Causa-Raiz Geral</button>
           <button type="button" data-ia-prompt="Quais ações imediatas o Controle Flow deve tomar agora nos caminhões e veículos leves?">🚛 Foco Controle Flow</button>
           <button type="button" data-ia-prompt="Quais ações imediatas o Controle Coa deve tomar agora nas colhedoras, tratores e transbordos?">🚜 Foco Controle Coa</button>
@@ -7568,6 +8111,8 @@
     `;
     const btnCfg = $('ia-btn-cfg');
     if (btnCfg) btnCfg.onclick = () => abrirConfig('ia');
+    const btnBolVoz = $('ia-boletim-voz');
+    if (btnBolVoz) btnBolVoz.onclick = () => narrarBoletimAtivosIa();
     el.ia.querySelectorAll('[data-ia-prompt]').forEach((b) => {
       b.onclick = () => executarAnaliseIa(b.dataset.iaPrompt);
     });
@@ -7596,6 +8141,545 @@
         copiarTextoArea(txt, 'Diagnóstico IA copiado p/ WhatsApp.', 'https://wa.me/?text=' + encodeURIComponent(txt));
       };
     }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* cofre de presets COA & FLOW · local + banco nuvem + export/import  */
+  /* ------------------------------------------------------------------ */
+
+  function registrarBackupAntesDePreset(motivo) {
+    ultimoBackupPreset = {
+      motivo: String(motivo || 'Alteração anterior'),
+      salvoEm: new Date().toISOString(),
+      temaVisual: normalizarTema(document.documentElement.dataset.acabamento),
+      painelFixo: Boolean(painelFixo),
+      config: policy.sanitizarConfigParaPreset(cfg),
+    };
+    salvar(KEY_PRESET_UNDO, ultimoBackupPreset);
+  }
+
+  function aplicarConfiguracaoCompletaDePreset(entrada, opcoes = {}) {
+    const validado = entrada && entrada.ok === true && entrada.config
+      ? entrada
+      : policy.validarEImportarPacotePreset(entrada, PADRAO);
+    if (!validado || !validado.ok) {
+      mostrarAviso((validado && validado.erro) || 'Não foi possível aplicar este preset.', 'erro');
+      return validado;
+    }
+    if (opcoes.criarUndo !== false) {
+      registrarBackupAntesDePreset(validado.nome || 'Preset');
+    }
+    if (opcoes.substituirCompleto !== false) {
+      cfg.tiposNotificacao = {};
+      cfg.tiposCriticos = {};
+      cfg.paradasLimites = {};
+      cfg.refeicaoGrupos = {};
+    }
+    const novoCfg = Object.assign({}, PADRAO, validado.config);
+    configurar(novoCfg);
+    if (validado.temaVisual && opcoes.aplicarTema !== false) {
+      aplicarAcabamento(validado.temaVisual, true);
+    }
+    if (typeof validado.painelFixo === 'boolean' && opcoes.aplicarLayout !== false && validado.painelFixo !== painelFixo) {
+      painelFixo = validado.painelFixo;
+      try { localStorage.setItem(KEY_PAINEL_FIXO, painelFixo ? '1' : '0'); } catch { /* ok */ }
+      sincronizarPainelFixo();
+    }
+    if (opcoes.mesclarColecao !== false && Array.isArray(validado.meusPresets) && validado.meusPresets.length) {
+      const porCod = new Map(meusPresets.map((p) => [p.codigo || p.nome, p]));
+      for (const p of validado.meusPresets) {
+        porCod.set(p.codigo || p.nome, p);
+      }
+      meusPresets = [...porCod.values()].slice(0, 30);
+      salvar(KEY_PRESETS, meusPresets);
+    }
+    if (el.cfg && !el.cfg.classList.contains('hide')) {
+      renderConfig();
+      renderPainelPresets();
+    }
+    renderAtivos();
+    renderCabecalho();
+    cicloImediato();
+    return validado;
+  }
+
+  function desfazerUltimoPreset() {
+    if (!ultimoBackupPreset || !ultimoBackupPreset.config) {
+      mostrarAviso('Nenhum backup anterior disponível para desfazer.', 'info');
+      return false;
+    }
+    const snap = ultimoBackupPreset;
+    ultimoBackupPreset = null;
+    salvar(KEY_PRESET_UNDO, null);
+    aplicarConfiguracaoCompletaDePreset(
+      {
+        formato: 'monitoramento-bp.preset.v1',
+        nome: 'Configuração anterior restaurada',
+        temaVisual: snap.temaVisual,
+        painelFixo: snap.painelFixo,
+        config: snap.config,
+      },
+      { criarUndo: false },
+    );
+    mostrarAviso('↩️ Configuração anterior restaurada integralmente!', 'info');
+    return true;
+  }
+
+  function restaurarSnapshotCofreIdb() {
+    if (!cofreIdbSnapshotDisponivel || !cofreIdbSnapshotDisponivel.valor) return false;
+    const rec = cofreIdbSnapshotDisponivel.valor;
+    cofreIdbSnapshotDisponivel = null;
+    aplicarConfiguracaoCompletaDePreset(rec, { criarUndo: true });
+    mostrarAviso('🛡️ Configurações restauradas com sucesso do Cofre Anti-Perda deste aparelho!', 'info');
+    return true;
+  }
+
+  function aplicarPresetOficial(presetId) {
+    const p = (policy.PRESETS_OFICIAIS || []).find((x) => x.id === presetId);
+    if (!p) return false;
+    registrarBackupAntesDePreset(p.nome);
+    configurar(Object.assign({}, p.patch));
+    if (el.cfg && !el.cfg.classList.contains('hide')) {
+      renderConfig();
+      renderPainelPresets();
+    }
+    renderAtivos();
+    renderCabecalho();
+    cicloImediato();
+    mostrarAviso(`✅ Preset "${p.nome}" aplicado!`, 'info');
+    return true;
+  }
+
+  function salvarMeuPresetAtual(nomeExplicito, setorExplicito) {
+    const inpNome = $('preset-novo-nome');
+    const selSetor = $('preset-novo-setor');
+    const setorEscolhido = setorExplicito || (selSetor && selSetor.value !== 'auto' ? selSetor.value : (cfg.setorMonitorado || 'todos'));
+    const nomeBase = String(
+      nomeExplicito != null
+        ? nomeExplicito
+        : (inpNome && inpNome.value.trim()) ||
+          (setorEscolhido === 'COA' ? 'Meu Preset Controle COA' : setorEscolhido === 'FLOW' ? 'Meu Preset Controle FLOW' : 'Meu Preset Personalizado')
+    ).trim().slice(0, 100);
+    const pacote = policy.exportarPacotePreset(cfg, {
+      nome: nomeBase,
+      setor: setorEscolhido,
+      versaoApp: VERSAO,
+      autor: ctx.usuario || '',
+      unidade: ctx.unidade || 'Usina Branco Peres',
+      temaVisual: normalizarTema(document.documentElement.dataset.acabamento),
+      painelFixo: Boolean(painelFixo),
+    });
+    const registro = {
+      id: 'preset-' + agora() + '-' + Math.random().toString(36).slice(2, 6),
+      codigo: pacote.codigo,
+      nome: pacote.nome,
+      setor: pacote.setor,
+      temaVisual: pacote.temaVisual,
+      painelFixo: pacote.painelFixo,
+      salvoEm: pacote.exportadoEm,
+      resumo: pacote.resumo,
+      checksum: pacote.checksum,
+      config: pacote.config,
+    };
+    const idxExistente = meusPresets.findIndex((p) => norm(p.nome) === norm(registro.nome));
+    if (idxExistente >= 0) {
+      registro.id = meusPresets[idxExistente].id;
+      meusPresets[idxExistente] = registro;
+    } else {
+      meusPresets.unshift(registro);
+      if (meusPresets.length > 30) meusPresets.length = 30;
+    }
+    salvar(KEY_PRESETS, meusPresets);
+    if (inpNome && nomeExplicito == null) inpNome.value = '';
+    const inpCodNuvem = $('preset-nuvem-codigo');
+    if (inpCodNuvem && !inpCodNuvem.value.trim()) inpCodNuvem.value = registro.codigo;
+    renderPainelPresets();
+    mostrarAviso(`💾 Preset "${registro.nome}" salvo com proteção dupla neste aparelho!`, 'info');
+    return registro;
+  }
+
+  function atualizarMeuPresetExistente(id) {
+    const idx = meusPresets.findIndex((p) => p.id === id);
+    if (idx < 0) return false;
+    const atual = meusPresets[idx];
+    const pacote = policy.exportarPacotePreset(cfg, {
+      codigo: atual.codigo,
+      nome: atual.nome,
+      setor: cfg.setorMonitorado === 'COA' || cfg.setorMonitorado === 'FLOW' ? cfg.setorMonitorado : atual.setor,
+      versaoApp: VERSAO,
+      temaVisual: normalizarTema(document.documentElement.dataset.acabamento),
+      painelFixo: Boolean(painelFixo),
+    });
+    meusPresets[idx] = Object.assign({}, atual, {
+      setor: pacote.setor,
+      temaVisual: pacote.temaVisual,
+      painelFixo: pacote.painelFixo,
+      salvoEm: pacote.exportadoEm,
+      resumo: pacote.resumo,
+      checksum: pacote.checksum,
+      config: pacote.config,
+    });
+    salvar(KEY_PRESETS, meusPresets);
+    renderPainelPresets();
+    mostrarAviso(`🔄 Preset "${atual.nome}" atualizado com sua configuração atual!`, 'info');
+    return true;
+  }
+
+  function excluirMeuPreset(id) {
+    meusPresets = meusPresets.filter((p) => p.id !== id);
+    salvar(KEY_PRESETS, meusPresets);
+    renderPainelPresets();
+    mostrarAviso('Preset removido da lista deste aparelho.', 'info');
+  }
+
+  function exportarPresetArquivoJson(presetItem) {
+    const pacote = presetItem && presetItem.config
+      ? policy.exportarPacotePreset(presetItem.config, {
+        codigo: presetItem.codigo,
+        nome: presetItem.nome,
+        setor: presetItem.setor,
+        versaoApp: VERSAO,
+        autor: ctx.usuario || '',
+        unidade: ctx.unidade || 'Usina Branco Peres',
+        temaVisual: presetItem.temaVisual || normalizarTema(document.documentElement.dataset.acabamento),
+        painelFixo: Boolean(presetItem.painelFixo),
+      })
+      : policy.exportarPacotePreset(cfg, {
+        nome: ($('preset-novo-nome') && $('preset-novo-nome').value.trim()) ||
+          (cfg.setorMonitorado === 'COA' ? 'Preset Controle COA' : cfg.setorMonitorado === 'FLOW' ? 'Preset Controle FLOW' : 'Preset Monitoramento BP'),
+        setor: cfg.setorMonitorado || 'todos',
+        versaoApp: VERSAO,
+        autor: ($('preset-nuvem-autor') && $('preset-nuvem-autor').value.trim()) || ctx.usuario || '',
+        unidade: ctx.unidade || 'Usina Branco Peres',
+        temaVisual: normalizarTema(document.documentElement.dataset.acabamento),
+        painelFixo: Boolean(painelFixo),
+        meusPresets,
+      });
+    const slug = String(pacote.codigo || 'preset-bp').toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+    const dataIso = new Date().toISOString().slice(0, 10);
+    const jsonFormatado = JSON.stringify(pacote, null, 2);
+    const blob = new Blob([jsonFormatado], { type: 'application/json;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `preset-${slug}-monitoramento-bp-${dataIso}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+    mostrarAviso(`⬇️ Arquivo "${link.download}" exportado com assinatura de integridade! Envie ao seu parceiro de turno.`, 'info');
+    return pacote;
+  }
+
+  function copiarCodigoPortatilAtual(presetItem) {
+    const alvoCfg = presetItem && presetItem.config ? presetItem.config : cfg;
+    const codigoPortatil = policy.codificarCodigoPortatilPreset(alvoCfg, {
+      nome: (presetItem && presetItem.nome) ||
+        ($('preset-novo-nome') && $('preset-novo-nome').value.trim()) ||
+        (cfg.setorMonitorado === 'COA' ? 'Preset Controle COA' : cfg.setorMonitorado === 'FLOW' ? 'Preset Controle FLOW' : 'Preset Monitoramento BP'),
+      setor: (presetItem && presetItem.setor) || cfg.setorMonitorado || 'todos',
+      versaoApp: VERSAO,
+      temaVisual: (presetItem && presetItem.temaVisual) || normalizarTema(document.documentElement.dataset.acabamento),
+      painelFixo: presetItem ? Boolean(presetItem.painelFixo) : Boolean(painelFixo),
+    });
+    copiarTextoArea(codigoPortatil, '📋 Código portátil copiado! Envie no WhatsApp para seu parceiro colar em Presets & Backup.');
+    return codigoPortatil;
+  }
+
+  function definirStatusImportacao(msg, erro) {
+    const st = $('preset-import-status');
+    if (!st) return;
+    st.textContent = msg || '';
+    st.style.color = erro ? 'var(--danger, #ef4444)' : 'var(--ok, #10b981)';
+  }
+
+  function importarTextoOuObjetoPreset(entrada, origemRotulo = 'arquivo') {
+    const res = policy.validarEImportarPacotePreset(entrada, PADRAO);
+    if (!res.ok) {
+      definirStatusImportacao('❌ ' + res.erro, true);
+      mostrarAviso(res.erro, 'erro');
+      return res;
+    }
+    aplicarConfiguracaoCompletaDePreset(res, { criarUndo: true, substituirCompleto: true, mesclarColecao: true });
+    // Também adiciona o preset importado à biblioteca "Meus Presets" para não se perder
+    salvarMeuPresetAtual(res.nome, res.setor);
+    const inpColar = $('preset-colar-codigo');
+    if (inpColar) inpColar.value = '';
+    const r = res.resumo || {};
+    const msgOk = `✅ Importado de ${origemRotulo}: "${res.nome}" (${r.setor === 'FLOW' ? 'FLOW' : r.setor === 'COA' ? 'COA' : 'Geral'} · ${r.codigosSgpaPersonalizados || 0} códigos SGPA personalizados · ${r.codigosMarcadosCriticos || 0} ⭐ críticos · integridade verificada).`;
+    definirStatusImportacao(msgOk, false);
+    mostrarAviso(msgOk, 'info');
+    return res;
+  }
+
+  function lerArquivoPresetJson(arquivo) {
+    if (!arquivo) return;
+    if (arquivo.size > 512_000) {
+      definirStatusImportacao('❌ Arquivo maior que 512 KB. Selecione um arquivo .json exportado pelo Monitoramento BP.', true);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      importarTextoOuObjetoPreset(String(reader.result || ''), arquivo.name || 'arquivo .json');
+    };
+    reader.onerror = () => {
+      definirStatusImportacao('❌ Não foi possível ler o arquivo selecionado.', true);
+    };
+    reader.readAsText(arquivo, 'utf-8');
+  }
+
+  function definirStatusNuvem(msg, erro) {
+    const st = $('preset-nuvem-status');
+    if (!st) return;
+    st.textContent = msg || '';
+    st.style.color = erro ? 'var(--danger, #ef4444)' : '';
+  }
+
+  async function salvarPresetNoBancoNuvem(presetItem) {
+    const inpCod = $('preset-nuvem-codigo');
+    const inpAutor = $('preset-nuvem-autor');
+    const codigoBruto = (presetItem && presetItem.codigo) || (inpCod && inpCod.value.trim()) || '';
+    const codigo = codigoBruto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+    if (codigo.length < 2) {
+      definirStatusNuvem('Informe um Código do Perfil com pelo menos 2 letras/números (ex.: RAFAEL-COA ou FLOW-TURNO-A).', true);
+      if (inpCod) inpCod.focus();
+      return null;
+    }
+    if (inpCod) inpCod.value = codigo;
+    try { localStorage.setItem(KEY_CODIGO_NUVEM, codigo); } catch { /* ok */ }
+
+    const nomePreset = (presetItem && presetItem.nome) ||
+      ($('preset-novo-nome') && $('preset-novo-nome').value.trim()) ||
+      `Perfil ${codigo}`;
+    const pacote = policy.exportarPacotePreset(presetItem && presetItem.config ? presetItem.config : cfg, {
+      codigo,
+      nome: nomePreset,
+      setor: (presetItem && presetItem.setor) || cfg.setorMonitorado || 'todos',
+      autor: (inpAutor && inpAutor.value.trim()) || ctx.usuario || '',
+      unidade: ctx.unidade || 'Usina Branco Peres',
+      versaoApp: VERSAO,
+      temaVisual: (presetItem && presetItem.temaVisual) || normalizarTema(document.documentElement.dataset.acabamento),
+      painelFixo: presetItem ? Boolean(presetItem.painelFixo) : Boolean(painelFixo),
+    });
+
+    // Garante cópia também no cofre local
+    salvarMeuPresetAtual(pacote.nome, pacote.setor);
+    definirStatusNuvem(`☁️ Salvando perfil "${codigo}" no servidor/banco…`, false);
+
+    try {
+      const r = await fetch('/.netlify/functions/session?acao=preset_nuvem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subacao: 'salvar',
+          codigo: pacote.codigo,
+          nome: pacote.nome,
+          setor: pacote.setor,
+          autor: pacote.autor,
+          unidade: pacote.unidade,
+          versaoApp: pacote.versaoApp,
+          checksum: pacote.checksum,
+          temaVisual: pacote.temaVisual,
+          painelFixo: pacote.painelFixo,
+          resumo: pacote.resumo,
+          config: pacote.config,
+        }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j || !j.ok) {
+        throw new Error((j && j.erro) || `HTTP ${r.status}`);
+      }
+      const msg = j.persistidoBanco
+        ? `✅ Perfil "${j.codigo}" gravado no Banco Supabase! Seu parceiro ou outro aparelho pode carregar digitando ${j.codigo}.`
+        : `✅ Perfil "${j.codigo}" salvo no cofre local + sessão ativa. (${j.avisoBanco || ''})`;
+      definirStatusNuvem(msg, false);
+      mostrarAviso(`☁️ Perfil "${j.codigo}" salvo!`, 'info');
+      listarPresetsDoBancoNuvem(false).catch(() => {});
+      return j;
+    } catch (e) {
+      definirStatusNuvem(`⚠️ Servidor offline no momento (${e.message || 'rede'}). Seu preset já ficou salvo no Cofre Local deste aparelho — use Exportar .json se precisar enviar agora.`, true);
+      return null;
+    }
+  }
+
+  async function carregarPresetDoBancoNuvem(codigoExplicito) {
+    const inpCod = $('preset-nuvem-codigo');
+    const codigo = String(codigoExplicito || (inpCod && inpCod.value) || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48);
+    if (codigo.length < 2) {
+      definirStatusNuvem('Digite o Código do Perfil salvo no banco (ex.: RAFAEL-COA) para carregar.', true);
+      if (inpCod) inpCod.focus();
+      return null;
+    }
+    if (inpCod) inpCod.value = codigo;
+    definirStatusNuvem(`☁️ Buscando perfil "${codigo}" no banco…`, false);
+    try {
+      const r = await fetch(`/.netlify/functions/session?acao=preset_nuvem&codigo=${encodeURIComponent(codigo)}`, { cache: 'no-store' });
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j || !j.ok || !j.preset) {
+        throw new Error((j && j.erro) || `Código "${codigo}" não encontrado`);
+      }
+      try { localStorage.setItem(KEY_CODIGO_NUVEM, codigo); } catch { /* ok */ }
+      const aplicado = importarTextoOuObjetoPreset(j.preset, `Banco Nuvem (${codigo})`);
+      if (aplicado && aplicado.ok) {
+        definirStatusNuvem(`✅ Perfil "${codigo}" (${j.preset.nome || codigo}) carregado e aplicado com sucesso!`, false);
+      }
+      return aplicado;
+    } catch (e) {
+      definirStatusNuvem(`❌ ${e.message || 'Não foi possível carregar o perfil do banco.'}`, true);
+      mostrarAviso(e.message || 'Perfil não encontrado no banco.', 'erro');
+      return null;
+    }
+  }
+
+  async function listarPresetsDoBancoNuvem(mostrarFeedback) {
+    if (carregandoPresetsNuvem) return presetsNuvemLista;
+    carregandoPresetsNuvem = true;
+    if (mostrarFeedback) definirStatusNuvem('🔄 Consultando perfis salvos no banco…', false);
+    try {
+      const r = await fetch('/.netlify/functions/session?acao=preset_nuvem', { cache: 'no-store' });
+      const j = await r.json().catch(() => null);
+      if (r.ok && j && j.ok && Array.isArray(j.presets)) {
+        presetsNuvemLista = j.presets;
+        if (mostrarFeedback) {
+          definirStatusNuvem(
+            presetsNuvemLista.length
+              ? `☁️ ${presetsNuvemLista.length} perfil(is) disponível(is) para carregar com 1 clique.`
+              : 'Nenhum perfil salvo no banco ainda. Digite um código acima e clique em “Salvar no Banco Agora”.',
+            false,
+          );
+        }
+      }
+    } catch {
+      if (mostrarFeedback) definirStatusNuvem('Não foi possível consultar a lista da nuvem neste momento.', true);
+    } finally {
+      carregandoPresetsNuvem = false;
+      renderListaPresetsNuvem();
+    }
+    return presetsNuvemLista;
+  }
+
+  function renderListaPresetsNuvem() {
+    const box = $('preset-nuvem-lista');
+    if (!box) return;
+    box.innerHTML = '';
+    for (const item of presetsNuvemLista) {
+      const cardNuvem = document.createElement('div');
+      cardNuvem.className = 'preset-salvo-item';
+      const r = item.resumo || {};
+      const tagCls = item.setor === 'FLOW' ? 'flow' : item.setor === 'COA' ? 'coa' : 'geral';
+      cardNuvem.innerHTML = `
+        <div class="preset-salvo-info">
+          <div class="preset-salvo-topo">
+            <span class="preset-badge ${tagCls}">${item.setor === 'FLOW' ? '🚛 FLOW' : item.setor === 'COA' ? '🚜 COA' : '🌐 GERAL'}</span>
+            <strong>${esc(item.nome || item.codigo)}</strong>
+            <code>${esc(item.codigo)}</code>
+          </div>
+          <small class="fine">${item.autor ? `Por ${esc(item.autor)} · ` : ''}${r.codigosSgpaPersonalizados || 0} códigos SGPA · ${r.codigosMarcadosCriticos || 0} ⭐ críticos${item.atualizadoEm ? ' · ' + new Date(item.atualizadoEm).toLocaleString('pt-BR') : ''}</small>
+        </div>
+        <div class="preset-salvo-acoes">
+          <button type="button" class="primary" data-nuvem-carregar="${esc(item.codigo)}">☁️ Carregar</button>
+        </div>
+      `;
+      const btnCarregar = cardNuvem.querySelector('[data-nuvem-carregar]');
+      if (btnCarregar) btnCarregar.onclick = () => carregarPresetDoBancoNuvem(item.codigo);
+      box.appendChild(cardNuvem);
+    }
+  }
+
+  function renderPainelPresets() {
+    const boxResumo = $('preset-resumo-atual');
+    if (!boxResumo) return;
+    const rAtual = policy.resumoPreset(cfg);
+    const temaAtual = normalizarTema(document.documentElement.dataset.acabamento);
+    boxResumo.innerHTML = `
+      <div class="preset-kpi"><span>Mesa ativa</span><strong>${rAtual.setor === 'FLOW' ? '🚛 FLOW' : rAtual.setor === 'COA' ? '🚜 COA' : '🌐 COA + FLOW'}</strong></div>
+      <div class="preset-kpi"><span>Categorias ativas</span><strong>${rAtual.categoriasAtivas}/${rAtual.totalCategorias}${rAtual.somenteCriticos ? ' (🔥 Só Críticos)' : ''}</strong></div>
+      <div class="preset-kpi"><span>Códigos SGPA ajustados</span><strong>${rAtual.codigosSgpaPersonalizados} (${rAtual.codigosMarcadosCriticos} ⭐)</strong></div>
+      <div class="preset-kpi"><span>Escopo &amp; Tema</span><strong>${rAtual.gruposSelecionados || 'Todos'} grp · ${temaAtual}</strong></div>
+    `;
+
+    const btnUndo = $('preset-btn-desfazer');
+    if (btnUndo) btnUndo.classList.toggle('hide', !(ultimoBackupPreset && ultimoBackupPreset.config));
+
+    const boxCofre = $('preset-cofre-recuperar');
+    if (boxCofre) boxCofre.classList.toggle('hide', !(cofreIdbSnapshotDisponivel && cofreIdbSnapshotDisponivel.valor));
+
+    const inpCod = $('preset-nuvem-codigo');
+    if (inpCod && !inpCod.value) {
+      try {
+        const codSalvo = localStorage.getItem(KEY_CODIGO_NUVEM) || '';
+        if (codSalvo) inpCod.value = codSalvo;
+      } catch { /* ok */ }
+    }
+
+    const boxOficiais = $('cfg-presets-oficiais');
+    if (boxOficiais) {
+      boxOficiais.innerHTML = '';
+      for (const p of policy.PRESETS_OFICIAIS || []) {
+        const elCard = document.createElement('div');
+        elCard.className = 'preset-oficial-card';
+        const tagCls = p.setor === 'FLOW' ? 'flow' : p.setor === 'COA' ? 'coa' : 'geral';
+        elCard.innerHTML = `
+          <div class="preset-oficial-head">
+            <span class="preset-badge ${tagCls}">${p.setor === 'FLOW' ? '🚛 MESA FLOW' : p.setor === 'COA' ? '🚜 MESA COA' : '⚡ PLANTÃO'}</span>
+            <strong>${esc(p.nome)}</strong>
+          </div>
+          <p class="fine">${esc(p.descricao)}</p>
+          <button type="button" data-aplicar-oficial="${esc(p.id)}">Aplicar este Preset</button>
+        `;
+        elCard.querySelector('[data-aplicar-oficial]').onclick = () => aplicarPresetOficial(p.id);
+        boxOficiais.appendChild(elCard);
+      }
+    }
+
+    const boxMeus = $('cfg-meus-presets-lista');
+    if (boxMeus) {
+      boxMeus.innerHTML = '';
+      if (!meusPresets.length) {
+        const vazio = document.createElement('p');
+        vazio.className = 'fine';
+        vazio.textContent = 'Você ainda não salvou nenhum preset personalizado neste aparelho. Digite um nome acima e clique em “Salvar Configuração Atual nos Meus Presets”.';
+        boxMeus.appendChild(vazio);
+      } else {
+        for (const p of meusPresets) {
+          const r = p.resumo || policy.resumoPreset(p.config || {});
+          const row = document.createElement('div');
+          row.className = 'preset-salvo-item';
+          const tagCls = p.setor === 'FLOW' ? 'flow' : p.setor === 'COA' ? 'coa' : 'geral';
+          const dt = p.salvoEm ? new Date(p.salvoEm).toLocaleString('pt-BR') : '';
+          row.innerHTML = `
+            <div class="preset-salvo-info">
+              <div class="preset-salvo-topo">
+                <span class="preset-badge ${tagCls}">${p.setor === 'FLOW' ? '🚛 FLOW' : p.setor === 'COA' ? '🚜 COA' : '🌐 GERAL'}</span>
+                <strong>${esc(p.nome)}</strong>
+                <code>${esc(p.codigo || '')}</code>
+              </div>
+              <small class="fine">${r.categoriasAtivas}/${r.totalCategorias} categorias · ${r.codigosSgpaPersonalizados || 0} códigos SGPA (${r.codigosMarcadosCriticos || 0} ⭐) · ${r.gruposSelecionados || 'Todos'} grupos${dt ? ' · salvo ' + esc(dt) : ''}</small>
+            </div>
+            <div class="preset-salvo-acoes">
+              <button type="button" class="primary" data-meu-aplicar="${esc(p.id)}" title="Aplicar este preset agora">▶ Aplicar</button>
+              <button type="button" data-meu-atualizar="${esc(p.id)}" title="Sobrescrever este preset com as configurações atuais">🔄 Atualizar</button>
+              <button type="button" data-meu-nuvem="${esc(p.id)}" title="Gravar este preset no Banco Supabase">☁️ Banco</button>
+              <button type="button" data-meu-json="${esc(p.id)}" title="Baixar arquivo .json deste preset para enviar ao parceiro">⬇️ .json</button>
+              <button type="button" data-meu-excluir="${esc(p.id)}" title="Remover da lista local">✕</button>
+            </div>
+          `;
+          row.querySelector('[data-meu-aplicar]').onclick = () => {
+            aplicarConfiguracaoCompletaDePreset(p, { criarUndo: true, substituirCompleto: true, mesclarColecao: false });
+            mostrarAviso(`✅ Preset "${p.nome}" carregado!`, 'info');
+          };
+          row.querySelector('[data-meu-atualizar]').onclick = () => atualizarMeuPresetExistente(p.id);
+          row.querySelector('[data-meu-nuvem]').onclick = () => salvarPresetNoBancoNuvem(p);
+          row.querySelector('[data-meu-json]').onclick = () => exportarPresetArquivoJson(p);
+          row.querySelector('[data-meu-excluir]').onclick = () => excluirMeuPreset(p.id);
+          boxMeus.appendChild(row);
+        }
+      }
+    }
+    renderListaPresetsNuvem();
   }
 
   function renderGruposEquipamento() {
@@ -7702,6 +8786,7 @@
       'cfg-voz-gemini-flow': cfg.vozGeminiFlow || 'Puck',
       'cfg-estilo-gemini': cfg.estiloDirecaoGemini || 'comando',
       'cfg-modelo-ia': cfg.modeloIa || 'gemini-2.5-flash',
+      'cfg-escopo-narracao-ia': cfg.escopoNarracaoIa || 'todos',
     };
     for (const [id, v] of Object.entries(valores)) {
       if ($(id)) $(id).value = v;
@@ -7715,6 +8800,7 @@
       'cfg-somente-criticos': !!cfg.somenteCriticos,
       'cfg-voz-dupla': cfg.vozDuplaSetor !== false,
       'cfg-ia-ativa': cfg.iaAtiva !== false,
+      'cfg-ia-narrar-alertas': cfg.iaNarrarAlertas !== false,
       'cfg-gestao-frente': cfg.gestaoFrenteAtiva !== false,
       'cfg-flow-ultimo-cam': cfg.flowUltimoCaminhaoAtivo !== false,
       'cfg-flow-f1': cfg.flowFrente1Ativa !== false,
@@ -7762,6 +8848,7 @@
     iniciarGlossario();
     renderGruposEquipamento();
     renderFrentesConfig();
+    renderPainelPresets();
     $('cfg-aviso').textContent =
       (geminiDisponivel() ? `Voz Gemini Brasil pronta (${cfg.vozGemini || 'Kore'}). ` : '') +
       (ponteNativa() ? 'Voz local: motor Android. ' : '') +
@@ -7787,6 +8874,8 @@
       vozDuplaSetor: $('cfg-voz-dupla') ? $('cfg-voz-dupla').checked : cfg.vozDuplaSetor !== false,
       estiloDirecaoGemini: $('cfg-estilo-gemini') ? $('cfg-estilo-gemini').value : cfg.estiloDirecaoGemini || 'comando',
       iaAtiva: $('cfg-ia-ativa') ? $('cfg-ia-ativa').checked : cfg.iaAtiva !== false,
+      iaNarrarAlertas: $('cfg-ia-narrar-alertas') ? $('cfg-ia-narrar-alertas').checked : cfg.iaNarrarAlertas !== false,
+      escopoNarracaoIa: $('cfg-escopo-narracao-ia') ? $('cfg-escopo-narracao-ia').value : cfg.escopoNarracaoIa || 'todos',
       modeloIa: $('cfg-modelo-ia') ? $('cfg-modelo-ia').value : cfg.modeloIa || 'gemini-2.5-flash',
       calcularLocal: $('cfg-local').checked,
       espelharServidor: $('cfg-serv').checked,
@@ -8105,6 +9194,7 @@
       });
     }
     configurar({});
+    verificarCofreAntiPerda().catch(() => {});
     verificarStatusIaServidor().catch(() => {});
     inicializarPush();
     carregarCatalogo().catch(() => {});
@@ -8180,6 +9270,24 @@
     configurar,
     selecionarAbaConfig,
     executarAnaliseIa,
+    narrarAlertaSobDemandaIa,
+    narrarBoletimAtivosIa,
+    salvarMeuPresetAtual,
+    aplicarPresetOficial,
+    aplicarConfiguracaoCompletaDePreset,
+    importarPreset: importarTextoOuObjetoPreset,
+    exportarPacotePresetAtual: () => policy.exportarPacotePreset(cfg, {
+      versaoApp: VERSAO,
+      temaVisual: normalizarTema(document.documentElement.dataset.acabamento),
+      painelFixo: Boolean(painelFixo),
+      meusPresets,
+    }),
+    copiarCodigoPortatilAtual,
+    salvarPresetNoBancoNuvem,
+    carregarPresetDoBancoNuvem,
+    listarPresetsDoBancoNuvem,
+    desfazerUltimoPreset,
+    meusPresets: () => meusPresets.slice(),
     testar,
     falar,
     pararVoz,

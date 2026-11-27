@@ -151,6 +151,72 @@ try:
         assert page.locator('#menu').evaluate("e => e.classList.contains('hide')"), 'Botão X deve fechar o Centro de Comando COA'
         print('OK: Centro de Comando COA alterna os 5 temas executivos com contraste WCAG >= 4.5:1 e fecha pelo X.')
 
+        page.evaluate("""() => {
+          const sev = document.getElementById('coa-sev');
+          if (sev) {
+            sev.classList.remove('hide');
+            sev.innerHTML = '<span class="s-crit">2 crít</span> · <span class="s-warn">6 atenção</span>';
+          }
+          const badge = document.getElementById('alert-badge');
+          if (badge) {
+            badge.classList.remove('hide');
+            badge.textContent = '8';
+          }
+        }""")
+        for vw, vh in ((320, 640), (390, 844), (412, 915), (580, 800), (640, 360), (720, 900), (768, 1024), (1280, 720)):
+            page.set_viewport_size({'width': vw, 'height': vh})
+            page.evaluate("""([vw]) => {
+              const vis = (el) => {
+                if (!el) return false;
+                const st = getComputedStyle(el);
+                if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 0.5 && r.height > 0.5;
+              };
+              const gruposTop = ['#brand', '#coa-hud', '#actions']
+                .map((s) => document.querySelector(s))
+                .filter(vis)
+                .map((el) => ({ id: el.id || el.className, r: el.getBoundingClientRect() }));
+              for (const g of gruposTop) {
+                if (g.r.left < -0.5 || g.r.right > vw + 0.5) {
+                  throw new Error(`Item ${g.id} vazou da largura ${vw}px: [${g.r.left.toFixed(1)}, ${g.r.right.toFixed(1)}]`);
+                }
+              }
+              for (let i = 0; i < gruposTop.length; i++) {
+                for (let j = i + 1; j < gruposTop.length; j++) {
+                  const a = gruposTop[i], b = gruposTop[j];
+                  const sobrepoeX = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
+                  if (sobrepoeX > 1) {
+                    throw new Error(`Sobreposição horizontal de ${sobrepoeX.toFixed(1)}px em ${vw}px entre ${a.id} e ${b.id}`);
+                  }
+                }
+              }
+              // Verifica também que o texto interno de #brand não vaza por cima de #coa-live
+              const brandEl = document.getElementById('brand');
+              const liveEl = document.getElementById('coa-live');
+              if (vis(brandEl) && vis(liveEl)) {
+                for (const sub of brandEl.querySelectorAll('.brand-kicker, #brand-nome')) {
+                  if (!vis(sub)) continue;
+                  const sr = sub.getBoundingClientRect();
+                  const lr = liveEl.getBoundingClientRect();
+                  if (Math.min(sr.right, lr.right) - Math.max(sr.left, lr.left) > 1) {
+                    throw new Error(`Texto de #brand (${sub.className || sub.id}) sobrepôs #coa-live em ${vw}px`);
+                  }
+                }
+              }
+              // Verifica que os botões visíveis dentro de #actions nunca se sobrepõem
+              const btns = [...document.querySelectorAll('#actions > button')].filter(vis);
+              for (let i = 0; i < btns.length; i++) {
+                for (let j = i + 1; j < btns.length; j++) {
+                  const ra = btns[i].getBoundingClientRect(), rb = btns[j].getBoundingClientRect();
+                  if (Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left) > 1) {
+                    throw new Error(`Botões ${btns[i].id} e ${btns[j].id} sobrepostos em ${vw}px`);
+                  }
+                }
+              }
+            }""", [vw])
+        print('OK: Cabeçalho executivo validado sem sobreposição entre marca, pílulas HUD e dock de ícones de 320px a 1280px.')
+
         page.click('#btn-menu')
         page.click('[data-act="fresh"]')
         page.wait_for_function("document.querySelector('#session-status').classList.contains('hide')", timeout=3000)

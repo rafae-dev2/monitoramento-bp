@@ -532,4 +532,90 @@ assert.equal(
   'Atenção Flow, urgente! Frente 2 com apenas um caminhão carregando, caminhão 4468, e nenhum caminhão no aguarde. Avaliar e enviar outro caminhão imediatamente.'
 );
 
-console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 + v5.1 + v5.2 + v6.0 + v6.1 + v6.2 + v6.4 passaram.');
+// v6.5.0: Cofre de Presets COA & FLOW, exportação/importação com checksum de integridade, código portátil WhatsApp e narrador contextual.
+assert.ok(Array.isArray(policy.PRESETS_OFICIAIS) && policy.PRESETS_OFICIAIS.length >= 4);
+assert.equal(policy.PRESETS_OFICIAIS.find((p) => p.id === 'coa-oficial').patch.setorMonitorado, 'COA');
+assert.equal(policy.PRESETS_OFICIAIS.find((p) => p.id === 'flow-oficial').patch.setorMonitorado, 'FLOW');
+
+const cfgRefinadaParceiro = {
+  ativo: true,
+  setorMonitorado: 'FLOW',
+  somenteCriticos: false,
+  gruposEquipamento: ['CAMINHÕES CANAVIEIROS', 'CAMINHÕES BOMBEIROS'],
+  frentes: ['Frente 1', 'Frente 2'],
+  tiposNotificacao: { '10820': true, '2203': true, '9999': false },
+  tiposCriticos: { '10820': true },
+  paradasLimites: { aguardandoCarregamento: 18 },
+  vozGemini: 'Puck',
+  iaNarrarAlertas: true,
+  escopoNarracaoIa: 'criticos',
+  // Campos sensíveis que JAMAIS podem vazar no arquivo exportado:
+  geminiKey: 'segredo-nao-deve-sair',
+  token: 'token-sgpa-secreto',
+  password: 'senha-secreta',
+};
+
+const pacoteExportado = policy.exportarPacotePreset(cfgRefinadaParceiro, {
+  nome: 'Turno A Flow Refinado',
+  setor: 'FLOW',
+  autor: 'Rafael',
+  temaVisual: 'escuro',
+  painelFixo: true,
+});
+assert.equal(pacoteExportado.formato, 'monitoramento-bp.preset.v1');
+assert.equal(pacoteExportado.codigo, 'TURNO-A-FLOW-REFINADO');
+assert.equal(pacoteExportado.setor, 'FLOW');
+assert.equal(pacoteExportado.resumo.codigosSgpaPersonalizados, 3);
+assert.equal(pacoteExportado.resumo.codigosMarcadosCriticos, 1);
+assert.equal('geminiKey' in pacoteExportado.config, false);
+assert.equal('token' in pacoteExportado.config, false);
+assert.equal('password' in pacoteExportado.config, false);
+
+const reimportadoJson = policy.validarEImportarPacotePreset(JSON.stringify(pacoteExportado), { intervaloSeg: 45, amostras: 1 });
+assert.equal(reimportadoJson.ok, true);
+assert.equal(reimportadoJson.setor, 'FLOW');
+assert.equal(reimportadoJson.temaVisual, 'escuro');
+assert.equal(reimportadoJson.painelFixo, true);
+assert.equal(reimportadoJson.config.tiposNotificacao['10820'], true);
+assert.equal(reimportadoJson.config.tiposNotificacao['9999'], false);
+assert.equal(reimportadoJson.config.tiposCriticos['10820'], true);
+assert.equal(reimportadoJson.config.escopoNarracaoIa, 'criticos');
+
+// Adulteração / corrupção de arquivo deve ser barrada pelo checksum
+const pacoteAdulterado = JSON.parse(JSON.stringify(pacoteExportado));
+pacoteAdulterado.config.setorMonitorado = 'COA';
+const resAdulterado = policy.validarEImportarPacotePreset(JSON.stringify(pacoteAdulterado), {});
+assert.equal(resAdulterado.ok, false);
+assert.match(resAdulterado.erro, /checksum/i);
+
+// Código portátil compacto p/ WhatsApp (BPPRESET1:...)
+const codWhats = policy.codificarCodigoPortatilPreset(cfgRefinadaParceiro, { nome: 'Flow Parceiro', setor: 'FLOW' });
+assert.match(codWhats, /^BPPRESET1:[A-Za-z0-9_-]+$/);
+const resWhats = policy.validarEImportarPacotePreset('Segue minha config: ' + codWhats, {});
+assert.equal(resWhats.ok, true);
+assert.equal(resWhats.nome, 'Flow Parceiro');
+assert.deepEqual(resWhats.config.gruposEquipamento, ['CAMINHÕES CANAVIEIROS', 'CAMINHÕES BOMBEIROS']);
+
+// Narrador contextual local cruza dados da frente
+const narrLocal = policy.narrarAlertaContextualLocal(
+  {
+    numero: '32275',
+    classe: 'Transbordo',
+    setor: 'COA',
+    regra: 'aguardandoCaminhao',
+    severidade: 3,
+    texto: 'aguardando caminhão',
+    e: { frente: 'Frente 2' },
+  },
+  {
+    resumoCtt: {
+      frentes: [{ frente: 'Frente 2', colhedorasTotal: 3, colhedorasColhendo: 2, transbordos905: 3, caminhoesFila: 0 }],
+    },
+  },
+);
+assert.equal(narrLocal.ok, true);
+assert.match(narrLocal.falaInteligente, /^Atenção côa:/);
+assert.match(narrLocal.falaInteligente, /32275/);
+assert.match(narrLocal.acaoImediata, /flôu/i);
+
+console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 + v5.1 + v5.2 + v6.0 + v6.1 + v6.2 + v6.4 + v6.5 passaram.');

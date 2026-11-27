@@ -6,7 +6,7 @@ const thisFile = fileURLToPath(import.meta.url);
 const mode = process.argv[2];
 
 if (!mode) {
-  for (const scenario of ['fresh-inflight', 'unauthorized-concurrent', 'gemini-ai-tts', 'gemini-aq-key-fallback']) {
+  for (const scenario of ['fresh-inflight', 'unauthorized-concurrent', 'gemini-ai-tts', 'gemini-aq-key-fallback', 'presets-cloud-and-alert-narrator']) {
     const output = execFileSync(process.execPath, [thisFile, scenario], { encoding: 'utf8' });
     process.stdout.write(output);
   }
@@ -23,11 +23,11 @@ process.env.CLIENT_OWNER = 'fixture';
 process.env.SOLINF_USER = 'fixture-user';
 process.env.SOLINF_PASS = 'fixture-password';
 process.env.PROPS_TTL_SECONDS = '432000';
-process.env.SUPABASE_URL = '';
-process.env.SUPABASE_KEY = '';
+process.env.SUPABASE_URL = mode === 'presets-cloud-and-alert-narrator' ? 'https://supabase.fixture.invalid' : '';
+process.env.SUPABASE_KEY = mode === 'presets-cloud-and-alert-narrator' ? 'anon-fixture-key' : '';
 const DUMMY_STD_KEY = ['fixture', 'gemini', 'std', 'mock', '1234567890'].join('-');
 const DUMMY_AQ_KEY = ['AQ', ['fixture', 'mock', 'only', '1234567890'].join('_')].join('.');
-if (mode === 'gemini-ai-tts') process.env.GEMINI_API_KEY = DUMMY_STD_KEY;
+if (mode === 'gemini-ai-tts' || mode === 'presets-cloud-and-alert-narrator') process.env.GEMINI_API_KEY = DUMMY_STD_KEY;
 else if (mode === 'gemini-aq-key-fallback') process.env.GEMINI_API_KEY = `GEMINI_API_KEY="${DUMMY_AQ_KEY}"`;
 else delete process.env.GEMINI_API_KEY;
 delete process.env.APP_KEY;
@@ -37,6 +37,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let logins = 0;
 const requisicoesDados = [];
 const chamadasGemini = [];
+const bancoPresets = new Map();
+const chamadasRpcPresets = [];
 
 function json(dados, status = 200) {
   return new Response(JSON.stringify(dados), {
@@ -48,6 +50,43 @@ function json(dados, status = 200) {
 globalThis.fetch = async (input, init = {}) => {
   const url = new URL(typeof input === 'string' ? input : input.url);
   const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+
+  if (url.hostname === 'supabase.fixture.invalid' && url.pathname.endsWith('/rest/v1/rpc/pwa_presets_rpc')) {
+    const body = JSON.parse(String(init.body || '{}'));
+    chamadasRpcPresets.push(body);
+    const act = body.p_action;
+    const d = body.p_data || {};
+    if (act === 'salvar') {
+      const row = {
+        codigo: d.codigo,
+        nome: d.nome,
+        setor: d.setor || 'COA',
+        operador: d.operador || '',
+        descricao: d.descricao || '',
+        versao: d.versao || '6.5.0',
+        checksum: d.checksum || '',
+        config: d.config || {},
+        updated_at: '2026-11-27T14:00:00Z',
+      };
+      bancoPresets.set(d.codigo, row);
+      return json({ ok: true, preset: Object.assign({}, row, { config: undefined }) });
+    }
+    if (act === 'carregar') {
+      const row = bancoPresets.get(d.codigo);
+      if (!row) return json({ ok: false, erro: 'Preset não encontrado' });
+      return json({ ok: true, preset: row });
+    }
+    if (act === 'listar') {
+      const presets = Array.from(bancoPresets.values()).map((r) => ({
+        codigo: r.codigo, nome: r.nome, setor: r.setor, operador: r.operador, checksum: r.checksum, updated_at: r.updated_at,
+      }));
+      return json({ ok: true, presets });
+    }
+    if (act === 'excluir') {
+      const removido = bancoPresets.delete(d.codigo);
+      return json({ ok: true, removido });
+    }
+  }
 
   if (url.hostname === 'generativelanguage.googleapis.com' || url.hostname === 'aiplatform.googleapis.com') {
     const body = JSON.parse(String(init.body || '{}'));
@@ -61,6 +100,25 @@ globalThis.fetch = async (input, init = {}) => {
         candidates: [{
           content: {
             parts: [{ inlineData: { mimeType: 'audio/L16;codec=pcm;rate=24000', data: pcmDummy } }],
+          },
+        }],
+      });
+    }
+    if (body?.generationConfig?.responseMimeType === 'application/json') {
+      return json({
+        candidates: [{
+          content: {
+            parts: [
+              { text: 'raciocínio interno sobre fila zero na Frente 2', thought: true },
+              {
+                text: JSON.stringify({
+                  falaInteligente: 'Atenção côa: Transbordo 32275 em 905 há 18 minutos na Frente 2, sem caminhão na fila e 2 colhedoras em 125. Acione o flôu para redirecionar canavieiro imediatamente.',
+                  causaRaiz: 'Falta de caminhão canavieiro na Frente 2 travando transbordo carregado e parando colhedoras',
+                  acaoImediata: 'Acionar controle flôu para despachar canavieiro vazio à Frente 2',
+                  nivelUrgencia: 'critico',
+                }),
+              },
+            ],
           },
         }],
       });
@@ -209,6 +267,91 @@ if (mode === 'fresh-inflight') {
   assert.equal(chamadasGemini.length, 3, 'segunda chamada na mesma instância já usa direto a superfície Vertex Express memoizada');
   assert.equal(chamadasGemini[2].host, 'aiplatform.googleapis.com');
   console.log('OK: chave AQ. sanitizada + fallback adaptativo AI Studio -> Vertex Express + cache por chave validados.');
+} else if (mode === 'presets-cloud-and-alert-narrator') {
+  const locRes = await handler(request('?acao=ia_locucao_alerta', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': 'test-narrador' },
+    body: JSON.stringify({
+      voz: 'Kore',
+      sintetizarAudio: true,
+      alerta: {
+        titulo: 'Transbordo 32275 — Transbordo Aguardando (905) há 18 min',
+        corpo: 'Frente 2 • sem caminhão na fila',
+        fala: 'Atenção côa: Transbordo 32275 aguardando descarga há 18 minutos na Frente 2.',
+        sev: 3,
+        cat: 'transbordo',
+        frente: 2,
+      },
+      contextoFrente: { frente: 2, colhedorasOperando: 0, colhedorasAguardandoTransbordo: 2, transbordos905: 2, filaCaminhoes: 0 },
+    }),
+  }), {});
+  const locBody = await locRes.json();
+  assert.equal(locRes.status, 200);
+  assert.equal(locBody.ok, true);
+  assert.match(locBody.falaInteligente, /Transbordo 32275/);
+  assert.match(locBody.falaInteligente, /côa/);
+  assert.match(locBody.causaRaiz, /Falta de caminhão canavieiro/);
+  assert.match(locBody.acaoImediata, /flôu/);
+  assert.equal(locBody.nivelUrgencia, 'critica');
+  assert.equal(locBody.mimeType, 'audio/wav');
+  assert.equal(Buffer.from(locBody.audioBase64, 'base64').subarray(0, 4).toString('ascii'), 'RIFF');
+  assert.equal(chamadasGemini.length, 2, 'ia_locucao_alerta deve encadear Gemini 2.5 Thinking JSON + Gemini TTS 24kHz em uma única ida ao servidor');
+
+  const saveRes = await handler(request('?acao=preset_nuvem', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': 'test-preset' },
+    body: JSON.stringify({
+      operacao: 'salvar',
+      codigo: 'COA Turno A',
+      nome: 'Preset COA Turno A',
+      setor: 'COA',
+      operador: 'Rafael Turno A',
+      descricao: 'Refinado para colheita noturna',
+      checksum: 'a1b2c3d4e5f60718',
+      config: {
+        frentes: [1, 2, 3],
+        tiposNotificacao: { '905': true, '125': true, '402': false },
+        tiposCriticos: { '905': true },
+        geminiKey: 'segredo-jamais-persistir',
+        token: 'token-jamais-persistir',
+        password: 'senha-jamais-persistir',
+      },
+    }),
+  }), {});
+  const saveBody = await saveRes.json();
+  assert.equal(saveRes.status, 200);
+  assert.equal(saveBody.ok, true);
+  assert.equal(saveBody.codigo, 'COA-TURNO-A');
+  const gravadoNoRpc = chamadasRpcPresets.find((c) => c.p_action === 'salvar');
+  assert.ok(gravadoNoRpc, 'deve invocar pwa_presets_rpc com salvar');
+  assert.equal('geminiKey' in gravadoNoRpc.p_data.config, false, 'servidor deve remover geminiKey antes do banco');
+  assert.equal('token' in gravadoNoRpc.p_data.config, false, 'servidor deve remover token antes do banco');
+  assert.equal('password' in gravadoNoRpc.p_data.config, false, 'servidor deve remover password antes do banco');
+  assert.deepEqual(gravadoNoRpc.p_data.config.tiposNotificacao, { '905': true, '125': true, '402': false });
+
+  const listRes = await handler(request('?acao=preset_nuvem'), {});
+  const listBody = await listRes.json();
+  assert.equal(listRes.status, 200);
+  assert.equal(listBody.ok, true);
+  assert.equal(listBody.presets.some((p) => p.codigo === 'COA-TURNO-A' && p.setor === 'COA'), true);
+
+  const loadRes = await handler(request('?acao=preset_nuvem&codigo=coa-turno-a'), {});
+  const loadBody = await loadRes.json();
+  assert.equal(loadRes.status, 200);
+  assert.equal(loadBody.ok, true);
+  assert.equal(loadBody.preset.nome, 'Preset COA Turno A');
+  assert.deepEqual(loadBody.preset.config.tiposCriticos, { '905': true });
+
+  const delRes = await handler(request('?acao=preset_nuvem', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': 'test-preset' },
+    body: JSON.stringify({ subacao: 'excluir', codigo: 'coa-turno-a' }),
+  }), {});
+  const delBody = await delRes.json();
+  assert.equal(delRes.status, 200);
+  assert.equal(delBody.ok, true);
+  assert.equal(bancoPresets.has('COA-TURNO-A'), false);
+  console.log('OK: ia_locucao_alerta (raciocínio Gemini + WAV 24kHz) e preset_nuvem (Supabase RPC sanitizado) validados.');
 } else {
   throw new Error(`Cenário desconhecido: ${mode}`);
 }

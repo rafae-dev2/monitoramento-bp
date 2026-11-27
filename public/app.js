@@ -619,6 +619,14 @@
         document.documentElement.dataset.telao = ativo ? '0' : '1';
       }
     }
+    if (act === 'presets' && ALERTAS_ON) {
+      if (!alertasLigados && session) ligarAlertas();
+      if (typeof MonitoramentoAlertas.abrirConfig === 'function') {
+        MonitoramentoAlertas.abrirConfig('presets');
+      } else {
+        MonitoramentoAlertas.abrirPainel();
+      }
+    }
     if (act === 'regras' && ALERTAS_ON) {
       if (!alertasLigados && session) ligarAlertas();
       MonitoramentoAlertas.abrirPainel();

@@ -2,7 +2,7 @@
  * Só cacheamos o casco do app (HTML/CSS/JS/ícones). Sessão, APIs e dados do portal
  * passam sempre pela rede e NUNCA entram no cache.
  */
-const SHELL = 'bperes-shell-v58';
+const SHELL = 'bperes-shell-v59';
 const ASSETS = [
   '/',
   '/index.html',

@@ -339,3 +339,160 @@ export async function raciocinarComGemini(opcoes = {}, deps = {}) {
     analise: texto,
   };
 }
+
+const SYSTEM_PROMPT_NARRADOR_ALERTA = [
+  'Você é o Narrador Sênior de Inteligência Operacional em Tempo Real da Sala de Controle da Usina Branco Peres (SGPA Solinftec).',
+  'Sua missão é analisar o alerta recém-disparado cruzando-o com a telemetria real da frente e falar diretamente no áudio da sala de controle com raciocínio preciso, humano e objetivo.',
+  'Divisão estrita das mesas:',
+  '- Controle flôu (escreva "flôu" no texto falado): responsável por todos os Caminhões (canavieiros, terceiros, comboio, pipa, munck e Caminhões Bombeiros — jamais chame bombeiro de trator) e Veículos Leves.',
+  '- Controle côa (escreva "côa" no texto falado): responsável por Colhedoras, Tratores, Transbordos e Linha Amarela.',
+  'Regras inegociáveis:',
+  '1. Velocidade é 100% oficial do portal SGPA; nunca invente velocidade, RPM, frente ou operador que não estejam no JSON recebido.',
+  '2. Inicie SEMPRE `falaInteligente` com "Atenção côa:" ou "Atenção flôu:" conforme o setor do alerta (ou "Atenção côa e flôu:" quando for boletim geral das duas mesas).',
+  '3. Em `falaInteligente`, gere texto limpo para locução falada em português do Brasil (zero asteriscos, zero bullets, zero emojis), direto ao ponto em 2 a 3 frases curtas: cite o equipamento/frente/evento real, explique a causa ou impacto cruzado na frente (ex.: fila de caminhões, transbordos em 905, colhedoras paradas, reincidência ou risco de moenda) e dê a ação imediata.',
+  '4. Retorne EXCLUSIVAMENTE um objeto JSON válido com as chaves:',
+  '   {"falaInteligente":"...","causaRaiz":"...","acaoImediata":"...","nivelUrgencia":"critica|alta|normal"}',
+].join('\n');
+
+function extrairJsonNarracao(textoBruto) {
+  const limpo = String(textoBruto || '')
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  if (!limpo) return null;
+  try {
+    const obj = JSON.parse(limpo);
+    if (obj && typeof obj === 'object') return obj;
+  } catch {
+    const ini = limpo.indexOf('{');
+    const fim = limpo.lastIndexOf('}');
+    if (ini >= 0 && fim > ini) {
+      try {
+        const sub = JSON.parse(limpo.slice(ini, fim + 1));
+        if (sub && typeof sub === 'object') return sub;
+      } catch {
+        /* fallback abaixo */
+      }
+    }
+  }
+  const semMarcacao = limpo.replace(/[*#•`"]/g, '').replace(/\s+/g, ' ').trim();
+  return semMarcacao ? { falaInteligente: semMarcacao.slice(0, 460) } : null;
+}
+
+export async function gerarLocucaoInteligenteAlerta(opcoes = {}, deps = {}) {
+  const env = deps.env || process.env;
+  const fetchImpl = deps.fetchImpl || fetch;
+  const apiKey = resolverApiKey(opcoes.apiKey, env);
+  if (!apiKey) {
+    const err = new Error('Chave GEMINI_API_KEY não configurada no servidor nem informada no aparelho.');
+    err.status = 501;
+    err.semChave = true;
+    throw err;
+  }
+
+  const modoBoletim = Boolean(opcoes.modoBoletim);
+  const limiteFala = modoBoletim ? 560 : 380;
+  const alertaJson = opcoes.alerta ? JSON.stringify(opcoes.alerta).slice(0, 5000) : 'null';
+  const contextoJson = JSON.stringify(opcoes.contexto || {}).slice(0, 18_000);
+  const instrucaoUsuario = modoBoletim
+    ? `Analise TODOS os alertas ativos e o panorama das frentes abaixo e gere um boletim falado executivo (máx. ${limiteFala} caracteres em falaInteligente) priorizando os gargalos mais urgentes para côa e flôu.\nCONTEXTO OPERACIONAL:\n${contextoJson}`
+    : `Analise o ALERTA RECÉM-DISPARADO cruzando com o CONTEXTO OPERACIONAL da frente e gere a locução inteligente (máx. ${limiteFala} caracteres em falaInteligente).\nALERTA:\n${alertaJson}\n\nCONTEXTO OPERACIONAL:\n${contextoJson}`;
+
+  const modeloSolicitado = String(opcoes.modelo || env.GEMINI_MODEL || DEFAULT_REASONING_MODEL).trim();
+  const montarPayload = (mod, usarJsonMime, usarThinking) => {
+    const p = {
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT_NARRADOR_ALERTA }] },
+      contents: [{ role: 'user', parts: [{ text: instrucaoUsuario }] }],
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 650,
+      },
+    };
+    if (usarJsonMime) p.generationConfig.responseMimeType = 'application/json';
+    if (usarThinking && /^gemini-2\.5/i.test(mod)) {
+      p.generationConfig.thinkingConfig = { thinkingBudget: 384 };
+    }
+    return p;
+  };
+
+  let modeloUsado = modeloSolicitado;
+  let resposta;
+  try {
+    resposta = await postGemini(modeloUsado, apiKey, montarPayload(modeloUsado, true, true), fetchImpl, env);
+  } catch (e1) {
+    if (modeloUsado !== FALLBACK_REASONING_MODEL && (!e1.status || e1.status === 400 || e1.status === 404 || e1.status >= 500)) {
+      modeloUsado = FALLBACK_REASONING_MODEL;
+      resposta = await postGemini(modeloUsado, apiKey, montarPayload(modeloUsado, false, false), fetchImpl, env);
+    } else {
+      throw e1;
+    }
+  }
+
+  const parts = (((resposta || {}).candidates || [])[0] || {}).content?.parts || [];
+  const bruto = parts
+    .filter((p) => p && typeof p.text === 'string' && !p.thought)
+    .map((p) => p.text)
+    .join('\n')
+    .trim();
+
+  const parsed = extrairJsonNarracao(bruto);
+  const falaInteligente = String((parsed && parsed.falaInteligente) || '')
+    .replace(/[*#•`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, limiteFala);
+
+  if (!falaInteligente) {
+    const err = new Error('O modelo Gemini não retornou locução analítica válida.');
+    err.status = 502;
+    throw err;
+  }
+
+  const causaRaiz = String((parsed && parsed.causaRaiz) || '').trim().slice(0, 260);
+  const acaoImediata = String((parsed && parsed.acaoImediata) || '').trim().slice(0, 260);
+  const urgBruta = String((parsed && parsed.nivelUrgencia) || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+  const nivelUrgencia = (urgBruta === 'critica' || urgBruta === 'critico')
+    ? 'critica'
+    : (urgBruta === 'alta' || urgBruta === 'alto' ? 'alta' : 'normal');
+
+  const resultado = {
+    ok: true,
+    origem: 'gemini',
+    modelo: modeloUsado,
+    falaInteligente,
+    causaRaiz,
+    acaoImediata,
+    nivelUrgencia,
+  };
+
+  if (opcoes.gerarAudio !== false) {
+    const estiloBase = nivelUrgencia === 'critica' ? 'urgente' : (opcoes.estilo || 'comando');
+    try {
+      const tts = await sintetizarVozGemini(
+        {
+          texto: falaInteligente,
+          voz: opcoes.voz,
+          estilo: estiloBase,
+          modelo: opcoes.modeloVoz,
+          apiKey,
+        },
+        deps,
+      );
+      resultado.voz = tts.voz;
+      resultado.mimeType = tts.mimeType;
+      resultado.sampleRate = tts.sampleRate;
+      resultado.audioBase64 = tts.audioBase64;
+    } catch (errTts) {
+      resultado.audioIndisponivel = true;
+      resultado.erroAudio = errTts && errTts.message ? errTts.message : 'falha ao sintetizar áudio';
+    }
+  }
+
+  return resultado;
+}
+
