@@ -1162,22 +1162,98 @@ with sync_playwright() as pw:
     print('OK: aviso falado de queda/recuperação SGPA e re-alerta de críticos pendentes (com pausa após reconhecimento) validados')
 
     page.evaluate("""() => {
+      function parseRgb(str) {
+        const m = String(str || '').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/);
+        if (!m) return null;
+        return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] === undefined ? 1 : Number(m[4])];
+      }
+      function bgEfetivo(el) {
+        let cur = el;
+        while (cur && cur !== document) {
+          const st = getComputedStyle(cur);
+          const c = parseRgb(st.backgroundColor);
+          if (c && c[3] >= 0.85) return c.slice(0, 3);
+          const g = parseRgb(st.backgroundImage);
+          if (g && g[3] >= 0.85) return g.slice(0, 3);
+          cur = cur.parentElement;
+        }
+        const b = parseRgb(getComputedStyle(document.body).backgroundColor) || [0, 0, 0, 1];
+        return b.slice(0, 3);
+      }
+      function lum([r, g, b]) {
+        const f = (v) => {
+          const s = v / 255;
+          return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        };
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+      }
+      function contraste(fg, bg) {
+        const l1 = lum(fg);
+        const l2 = lum(bg);
+        return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+      }
+
       document.getElementById('btn-cfg').click();
+      document.getElementById('tab-cfg-ia').click();
       const sel = document.getElementById('cfg-acabamento');
       if (!sel) throw new Error('Seletor #cfg-acabamento ausente em Preferências');
       const opcoes = [...sel.options].map(o => o.value);
-      if (opcoes.join(',') !== 'vidro,black') throw new Error('Opções inesperadas em #cfg-acabamento: ' + opcoes.join(','));
-      sel.value = 'black';
-      sel.dispatchEvent(new Event('change'));
-      if (document.documentElement.dataset.acabamento !== 'black') throw new Error('Tema Black não foi aplicado');
-      if (localStorage.getItem('bperes.visual.acabamento.v1') !== 'black') throw new Error('Tema Black não persistiu');
+      if (opcoes.join(',') !== 'vidro,escuro,claro,esmeralda,black') {
+        throw new Error('Opções inesperadas em #cfg-acabamento: ' + opcoes.join(','));
+      }
+
+      // Garante um cartão ativo e um toast visível para auditar contraste real em todos os temas
+      __test.reset();
+      MonitoramentoAlertas.configurar({ ativo: true, popup: true, voz: false, som: false, vibrar: false });
+      __test.espelharAlarmes([{
+        cdEquipamento: 'TEMA-EQ-1', cdId: 'TEMA-EV-1', cdTpAlarme: 5,
+        descTpAlarme: 'VELOCIDADE EXCEDIDA', vlAlarme: 82,
+        descEquipamento: '32275 - Caminhão Canavieiro', nomeOperador: 'Operador Dia',
+        descGrupoEquipamento: 'Frente 1', fgOnline: true
+      }]);
+      MonitoramentoAlertas.abrirPainel();
+
+      for (const tema of ['claro', 'escuro', 'esmeralda', 'black']) {
+        sel.value = tema;
+        sel.dispatchEvent(new Event('change'));
+        if (document.documentElement.dataset.acabamento !== tema) throw new Error('Tema não aplicado: ' + tema);
+        if (localStorage.getItem('bperes.visual.acabamento.v1') !== tema) throw new Error('Tema não persistiu: ' + tema);
+        const modoEsp = tema === 'claro' ? 'light' : 'dark';
+        if (document.documentElement.style.colorScheme !== modoEsp) throw new Error('colorScheme incorreto em ' + tema);
+        if (localStorage.getItem('bp_theme_preference_v1') !== modoEsp) throw new Error('Sync Chamados incorreto em ' + tema);
+
+        const seletoresLeitura = [
+          '#alertas-painel .titulo strong',
+          '#lista-ativos .alerta .a-eq',
+          '#lista-ativos .alerta .a-txt',
+          '#lista-ativos .alerta .a-meta',
+          '#lista-ativos .alerta .a-fala',
+          '#toasts .alerta .a-txt',
+          '.alert-switch-text strong',
+          '.cfg-aba.on'
+        ];
+        for (const s of seletoresLeitura) {
+          const el = document.querySelector(s);
+          if (!el) throw new Error('Elemento ausente p/ auditoria de leitura (' + tema + '): ' + s);
+          const fg = (parseRgb(getComputedStyle(el).color) || [0, 0, 0]).slice(0, 3);
+          const bg = bgEfetivo(el);
+          const cr = contraste(fg, bg);
+          if (cr < 4.5) {
+            throw new Error(`Contraste insuficiente (${cr.toFixed(2)}:1) em ${tema} -> ${s} (fg=${fg} bg=${bg})`);
+          }
+        }
+      }
+
       if (MonitoramentoAlertas.aplicarTema('solido', false) !== 'black') throw new Error('Alias legado solido deve migrar para black');
+      if (MonitoramentoAlertas.aplicarTema('light', false) !== 'claro') throw new Error('Alias light deve normalizar para claro');
+      if (MonitoramentoAlertas.aplicarTema('dark', false) !== 'escuro') throw new Error('Alias dark deve normalizar para escuro');
+      if (MonitoramentoAlertas.aplicarTema('safra', false) !== 'esmeralda') throw new Error('Alias safra deve normalizar para esmeralda');
       sel.value = 'vidro';
       sel.dispatchEvent(new Event('change'));
       if (document.documentElement.dataset.acabamento !== 'vidro') throw new Error('Liquid Glass não foi restaurado');
       document.getElementById('cfg-fechar-x').click();
     }""")
-    print('OK: seletor Liquid Glass / Tema Black em Preferências, persistência local e migração validados')
+    print('OK: 5 temas executivos (Claro Solar, Dark Carbono Pro, Verde Safra BP, Black OLED e Liquid Glass), sincronismo Chamados e contraste WCAG >= 4.5:1 validados')
 
     # Verificações Mesa de Comando COA v3.0.0 (todas as 8 funcionalidades)
     page.evaluate("""() => {

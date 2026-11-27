@@ -123,9 +123,31 @@
     };
   } catch (e) { /* ignora */ }
 
+  function aplicarModoTemaChamados(modo) {
+    if (modo !== 'light' && modo !== 'dark') return;
+    try {
+      var root = document.documentElement;
+      root.setAttribute('data-theme', modo);
+      root.style.colorScheme = modo;
+      var meta = document.getElementById('theme-color-meta');
+      if (meta) meta.setAttribute('content', modo === 'dark' ? '#070D0A' : '#0F5233');
+    } catch (e) { /* ignora */ }
+  }
+
+  window.addEventListener('storage', function (ev) {
+    if (ev && ev.key === 'bp_theme_preference_v1' && (ev.newValue === 'light' || ev.newValue === 'dark')) {
+      aplicarModoTemaChamados(ev.newValue);
+    }
+  });
+
   // Recebe comandos diretos do modal integrado no Monitoramento BP
   window.addEventListener('message', function (ev) {
     if (ev.origin !== window.location.origin || !ev.data || typeof ev.data !== 'object') return;
+    if (ev.data.type === 'bp-tema-alterado' && (ev.data.modo === 'light' || ev.data.modo === 'dark')) {
+      try { localStorage.setItem('bp_theme_preference_v1', ev.data.modo); } catch (e) { /* ignora */ }
+      aplicarModoTemaChamados(ev.data.modo);
+      return;
+    }
     if (ev.data.type === 'bp-abrir-novo-chamado' && ev.data.draft) {
       try {
         localStorage.setItem(KEY_DRAFT, JSON.stringify(ev.data.draft));

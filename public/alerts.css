@@ -341,7 +341,7 @@ button.mudo {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 6px 18px rgba(0, 0, 0, 0.28);
   overflow: hidden;
   animation: sobe 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color 0.15s ease;
 }
 
 .alerta:hover {
@@ -1343,13 +1343,13 @@ button.mudo {
 
 /* ------------------------------ Gaveta da Central ------------------------------ */
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #alertas .veu {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #alertas .veu {
   background: rgba(4, 8, 13, 0.32);
   -webkit-backdrop-filter: blur(3px) saturate(130%);
   backdrop-filter: blur(3px) saturate(130%);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #alertas-painel {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #alertas-painel {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.01) 30%, transparent 100%),
     rgba(11, 19, 28, 0.72);
@@ -1362,7 +1362,7 @@ button.mudo {
   backdrop-filter: var(--lg-blur);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #alertas-painel header {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #alertas-painel header {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.02) 100%),
     radial-gradient(90% 180% at 0% 0%, rgba(0, 108, 48, 0.26) 0%, transparent 60%);
@@ -1370,32 +1370,32 @@ button.mudo {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .ferramentas,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .busca-central,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .linha-status {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .ferramentas,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .busca-central,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .linha-status {
   background: rgba(255, 255, 255, 0.025);
   border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #alertas-painel footer {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #alertas-painel footer {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.015) 100%), rgba(8, 14, 21, 0.5);
   border-top-color: var(--lg-borda);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 /* Trilho de abas em vidro com "gota" ativa esmeralda */
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .abas {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .abas {
   background: rgba(0, 0, 0, 0.28);
   border-color: rgba(255, 255, 255, 0.10);
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .aba {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .aba {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .aba.ativa {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .aba.ativa {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.04) 55%, rgba(255, 255, 255, 0.08) 100%),
     rgba(16, 185, 129, 0.30);
@@ -1403,7 +1403,7 @@ button.mudo {
   box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.45), 0 3px 10px rgba(0, 0, 0, 0.32);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .busca-central input {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .busca-central input {
   background-color: rgba(0, 0, 0, 0.28);
   border-color: rgba(255, 255, 255, 0.12);
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 -1px 0 rgba(255, 255, 255, 0.05);
@@ -1411,7 +1411,7 @@ button.mudo {
 
 /* ------------------------------ Cartões de alerta ------------------------------ */
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .alerta {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .alerta {
   background:
     radial-gradient(110% 60% at 50% -10%, rgba(255, 255, 255, 0.09) 0%, transparent 60%),
     linear-gradient(165deg, rgba(148, 163, 184, 0.08) 0%, rgba(148, 163, 184, 0.02) 100%),
@@ -1428,13 +1428,13 @@ button.mudo {
     0 8px 22px rgba(0, 0, 0, 0.42);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .alerta:hover {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .alerta:hover {
   border-color: rgba(255, 255, 255, 0.28);
   border-left-color: var(--cor, #94a3b8);
 }
 
 /* Críticos: vidro rubi */
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .alerta.sev3 {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .alerta.sev3 {
   background:
     radial-gradient(110% 60% at 50% -10%, rgba(255, 255, 255, 0.10) 0%, transparent 60%),
     linear-gradient(165deg, rgba(239, 68, 68, 0.22) 0%, rgba(127, 29, 29, 0.10) 60%),
@@ -1447,26 +1447,26 @@ button.mudo {
     0 10px 28px rgba(239, 68, 68, 0.22);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .a-chip {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .a-chip {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 100%), rgba(4, 10, 16, 0.72);
   border-color: rgba(255, 255, 255, 0.22);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .a-chip.oficial,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .a-chip.verde {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .a-chip.oficial,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .a-chip.verde {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%), rgba(5, 42, 30, 0.78);
   border-color: rgba(110, 231, 183, 0.45);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .alerta .a-fala {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .alerta .a-fala {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, transparent 100%), rgba(4, 24, 17, 0.76);
   border-color: rgba(52, 211, 153, 0.36);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
 
 /* Botões dentro do cartão: vidro escuro nítido (sem blur extra — o cartão já refrata) */
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .alerta .a-acoes button {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .alerta .a-acoes button {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.03) 100%), rgba(4, 9, 15, 0.78);
   border-color: rgba(255, 255, 255, 0.2);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
@@ -1474,19 +1474,19 @@ button.mudo {
   backdrop-filter: none;
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .alerta .a-acoes button:hover {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .alerta .a-acoes button:hover {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.06) 100%), rgba(18, 32, 46, 0.88);
   border-color: rgba(255, 255, 255, 0.34);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .vazio {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .vazio {
   background: rgba(255, 255, 255, 0.03);
   border-color: rgba(255, 255, 255, 0.14);
 }
 
 /* --------- Toasts sobre o mapa: vidro obsidiana fumê (zero cinza lavado) --------- */
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #toasts .alerta {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #toasts .alerta {
   background:
     radial-gradient(120% 65% at 50% -18%, rgba(255, 255, 255, 0.13) 0%, transparent 58%),
     linear-gradient(165deg, rgba(148, 163, 184, 0.10) 0%, transparent 62%),
@@ -1508,7 +1508,7 @@ button.mudo {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.72);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #toasts .alerta.sev3 {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #toasts .alerta.sev3 {
   background:
     radial-gradient(120% 65% at 50% -18%, rgba(255, 255, 255, 0.14) 0%, transparent 58%),
     radial-gradient(95% 95% at 0% 0%, rgba(239, 68, 68, 0.30) 0%, rgba(127, 29, 29, 0.12) 62%, transparent 80%),
@@ -1523,7 +1523,7 @@ button.mudo {
     0 0 28px rgba(239, 68, 68, 0.22);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #toasts .alerta .a-hora {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #toasts .alerta .a-hora {
   color: #f8fafc;
   background: rgba(2, 6, 12, 0.62);
   padding: 1px 7px;
@@ -1531,26 +1531,26 @@ button.mudo {
   border: 1px solid rgba(255, 255, 255, 0.16);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #toasts .alerta .a-chip {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #toasts .alerta .a-chip {
   background: rgba(3, 8, 14, 0.76);
   border-color: rgba(255, 255, 255, 0.26);
   border-color: color-mix(in srgb, var(--cor, #94a3b8) 52%, rgba(255, 255, 255, 0.28));
   color: #ffffff;
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #toasts .alerta .a-fala {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #toasts .alerta .a-fala {
   background: rgba(3, 24, 16, 0.82);
   border-color: rgba(52, 211, 153, 0.44);
   color: #ecfdf5;
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #toasts .alerta .a-acoes button {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #toasts .alerta .a-acoes button {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.04) 100%), rgba(3, 8, 14, 0.84);
   border-color: rgba(255, 255, 255, 0.24);
   color: #ffffff;
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .aviso {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .aviso {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 100%),
     rgba(7, 14, 22, 0.86);
@@ -1560,7 +1560,7 @@ button.mudo {
   backdrop-filter: var(--lg-blur);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #btn-limpar-toasts {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #btn-limpar-toasts {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.03) 100%),
     rgba(6, 12, 20, 0.86);
@@ -1570,7 +1570,7 @@ button.mudo {
   backdrop-filter: var(--lg-blur);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #btn-limpar-toasts:hover {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #btn-limpar-toasts:hover {
   background:
     linear-gradient(180deg, rgba(253, 224, 71, 0.24) 0%, rgba(253, 224, 71, 0.06) 100%),
     rgba(10, 18, 28, 0.9);
@@ -1579,14 +1579,14 @@ button.mudo {
 
 /* ------------------------------ Preferências ------------------------------ */
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #cfg-alertas {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #cfg-alertas {
   background: rgba(4, 8, 13, 0.52);
   /* o cartão .cfg é quem refrata o mapa */
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .cfg-topo {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .cfg-topo {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 100%),
     rgba(8, 15, 23, 0.88);
@@ -1594,7 +1594,7 @@ button.mudo {
   box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .push-optin {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .push-optin {
   background:
     radial-gradient(110% 60% at 50% -10%, rgba(255, 255, 255, 0.10) 0%, transparent 60%),
     linear-gradient(150deg, rgba(16, 185, 129, 0.18), rgba(6, 78, 59, 0.14) 75%),
@@ -1604,22 +1604,22 @@ button.mudo {
   box-shadow: var(--lg-aro), 0 10px 26px rgba(0, 0, 0, 0.32);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .alert-switch,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .catalogo-detalhes,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .fonte-oficial {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .alert-switch,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .catalogo-detalhes,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .fonte-oficial {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .alert-switch-track {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .alert-switch-track {
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .alert-switch-track::after {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .alert-switch-track::after {
   background: linear-gradient(180deg, #ffffff 0%, #e2e8f0 100%);
   box-shadow: inset 0 1px 0 #fff, 0 2px 6px rgba(0, 0, 0, 0.45);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #voz-bloqueada {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #voz-bloqueada {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0.06) 52%, rgba(255, 255, 255, 0.14) 100%),
     rgba(250, 204, 21, 0.94);
@@ -3646,6 +3646,1012 @@ html[data-acabamento='solido'] .ia-resposta-box {
     max-width: 230px;
   }
 }
+
+/* =====================================================================
+   v6.3.0 — SUÍTE DE TEMAS EXECUTIVOS PREMIUM + LEITURA WCAG AAA
+   & OTIMIZAÇÃO DE DESEMPENHO CROSS-BROWSER (Chrome, Edge, Safari, Firefox)
+   ===================================================================== */
+
+#modal-chamados-bp > .veu {
+  -webkit-backdrop-filter: blur(8px);
+}
+
+#alertas-painel {
+  contain: layout style;
+}
+
+:is(.lista, .catalogo-lista, .regras-auditadas, .chips, .card.cfg, #toasts) {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+/* Virtualização nativa leve p/ catálogo SGPA extenso (300+ itens) sem afetar geometria inicial */
+@supports (content-visibility: auto) {
+  #cfg-tipos .alert-switch:nth-child(n + 25) {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 64px;
+  }
+}
+
+/* Fallback sólido p/ navegadores/TVs sem suporte a backdrop-filter */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  #toasts .alerta,
+  .aviso,
+  #btn-limpar-toasts,
+  .cfg-topo {
+    background-color: #0d1722;
+  }
+}
+
+/* Desliga blur pesado nos temas executivos sólidos p/ 60-120fps em qualquer hardware */
+:is(html[data-acabamento='escuro'], html[data-acabamento='esmeralda'], html[data-acabamento='claro'])
+  :is(#cfg-alertas, #alertas .veu, #alertas-painel, #toasts .alerta, .aviso, #btn-limpar-toasts, .cfg-topo, #coa-telao-bar, #modal-chamados-bp > .veu) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* ---------------- TEMA DARK CARBONO PRO (escuro) ---------------- */
+
+html[data-acabamento='escuro'] #alertas .veu,
+html[data-acabamento='escuro'] #cfg-alertas,
+html[data-acabamento='escuro'] #modal-passagem {
+  background: rgba(5, 9, 15, 0.68);
+}
+
+html[data-acabamento='escuro'] #alertas-painel {
+  background: linear-gradient(180deg, #101824 0%, #0b111a 100%);
+  border-right-color: rgba(148, 163, 184, 0.24);
+  box-shadow: 20px 0 54px rgba(0, 0, 0, 0.65);
+}
+
+html[data-acabamento='escuro'] #alertas-painel header {
+  background: linear-gradient(180deg, #162131 0%, #101824 100%);
+  border-bottom-color: rgba(148, 163, 184, 0.22);
+}
+
+html[data-acabamento='escuro'] :is(.ferramentas, .busca-central, .linha-status, .ativos-triagem) {
+  background: #0e1520;
+  border-bottom-color: rgba(148, 163, 184, 0.16);
+}
+
+html[data-acabamento='escuro'] #alertas-painel footer {
+  background: #0d141e;
+  border-top-color: rgba(148, 163, 184, 0.2);
+}
+
+html[data-acabamento='escuro'] .abas {
+  background: #090e15;
+  border-color: rgba(148, 163, 184, 0.22);
+}
+
+html[data-acabamento='escuro'] .alerta {
+  background: linear-gradient(165deg, #162232 0%, #101925 100%);
+  border-color: rgba(148, 163, 184, 0.24);
+  border-left: 4px solid var(--cor, #94a3b8);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.36);
+}
+
+html[data-acabamento='escuro'] .alerta.sev3 {
+  background: linear-gradient(165deg, #241319 0%, #141118 100%);
+  border-color: rgba(248, 113, 113, 0.36);
+  border-left: 4px solid var(--cor, #ef4444);
+}
+
+html[data-acabamento='escuro'] #toasts .alerta {
+  background: linear-gradient(165deg, #162232 0%, #0e1622 100%);
+  border: 1.5px solid rgba(148, 163, 184, 0.32);
+  border-left: 4.5px solid var(--cor, #f59e0b);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.72);
+  text-shadow: none;
+}
+
+html[data-acabamento='escuro'] #toasts .alerta.sev3 {
+  background: linear-gradient(165deg, #281218 0%, #120d13 100%);
+  border-color: rgba(252, 165, 165, 0.45);
+  border-left: 4.5px solid var(--cor, #ef4444);
+}
+
+html[data-acabamento='escuro'] .cfg-topo {
+  background: #121c2a;
+  border-bottom-color: rgba(148, 163, 184, 0.24);
+}
+
+html[data-acabamento='escuro'] :is(.ctt-card, .ctt-sec, .moenda-card, .comboio-sec, .comboio-card, .radar-303030, .dds-card, .cfg-abas, .ia-resposta-box) {
+  background: #121c29;
+  border-color: rgba(148, 163, 184, 0.22);
+}
+
+/* ---------------- TEMA VERDE SAFRA BP (esmeralda) ---------------- */
+
+html[data-acabamento='esmeralda'] #alertas .veu,
+html[data-acabamento='esmeralda'] #cfg-alertas,
+html[data-acabamento='esmeralda'] #modal-passagem {
+  background: rgba(3, 11, 8, 0.68);
+}
+
+html[data-acabamento='esmeralda'] #alertas-painel {
+  background: linear-gradient(180deg, #0b231a 0%, #06150f 100%);
+  border-right-color: rgba(52, 211, 153, 0.28);
+  box-shadow: 20px 0 54px rgba(0, 0, 0, 0.7);
+}
+
+html[data-acabamento='esmeralda'] #alertas-painel header {
+  background: linear-gradient(180deg, #103225 0%, #091e16 100%);
+  border-bottom-color: rgba(52, 211, 153, 0.26);
+}
+
+html[data-acabamento='esmeralda'] :is(.ferramentas, .busca-central, .linha-status, .ativos-triagem) {
+  background: #081c14;
+  border-bottom-color: rgba(52, 211, 153, 0.18);
+}
+
+html[data-acabamento='esmeralda'] #alertas-painel footer {
+  background: #071811;
+  border-top-color: rgba(52, 211, 153, 0.24);
+}
+
+html[data-acabamento='esmeralda'] .abas {
+  background: #04110c;
+  border-color: rgba(52, 211, 153, 0.24);
+}
+
+html[data-acabamento='esmeralda'] :is(.busca-central input, .busca-modulo input, .campo select, #cfg-glossario, .cfg-add-inline input, .ia-form input) {
+  background-color: #05140e;
+  border-color: rgba(52, 211, 153, 0.28);
+  color: #f0fdf4;
+}
+
+html[data-acabamento='esmeralda'] .alerta {
+  background: linear-gradient(165deg, #102f23 0%, #091d15 100%);
+  border-color: rgba(52, 211, 153, 0.26);
+  border-left: 4px solid var(--cor, #10b981);
+}
+
+html[data-acabamento='esmeralda'] .alerta.sev3 {
+  background: linear-gradient(165deg, #2b1116 0%, #140c10 100%);
+  border-color: rgba(248, 113, 113, 0.4);
+  border-left: 4px solid var(--cor, #ef4444);
+}
+
+html[data-acabamento='esmeralda'] #toasts .alerta {
+  background: linear-gradient(165deg, #103024 0%, #071912 100%);
+  border: 1.5px solid rgba(52, 211, 153, 0.36);
+  border-left: 4.5px solid var(--cor, #f59e0b);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.76);
+  text-shadow: none;
+}
+
+html[data-acabamento='esmeralda'] #toasts .alerta.sev3 {
+  background: linear-gradient(165deg, #2d1015 0%, #13090c 100%);
+  border-color: rgba(252, 165, 165, 0.48);
+  border-left: 4.5px solid var(--cor, #ef4444);
+}
+
+html[data-acabamento='esmeralda'] .cfg-topo {
+  background: #0b241b;
+  border-bottom-color: rgba(52, 211, 153, 0.28);
+}
+
+html[data-acabamento='esmeralda'] :is(.ctt-card, .ctt-sec, .moenda-card, .comboio-sec, .comboio-card, .radar-303030, .dds-card, .alert-switch, .catalogo-detalhes, .cfg-abas, .ia-resposta-box) {
+  background: #0a2118;
+  border-color: rgba(52, 211, 153, 0.24);
+}
+
+/* =====================================================================
+   TEMA CLARO SOLAR EXECUTIVO (claro) — Leitura Diurna de Alta Precisão
+   Contraste WCAG AA/AAA em 100% dos cartões, chips, toasts e controles
+   ===================================================================== */
+
+html[data-acabamento='claro'] #btn-alertas.alertando {
+  background: #fee2e2;
+  border-color: rgba(220, 38, 38, 0.58);
+  color: #991b1b;
+}
+
+html[data-acabamento='claro'] #alert-badge {
+  box-shadow: 0 0 0 2px #ffffff, 0 2px 6px rgba(15, 23, 42, 0.25);
+}
+
+html[data-acabamento='claro'] :is(#alertas .veu, #cfg-alertas, #modal-passagem, #modal-chamados-bp > .veu) {
+  background: rgba(15, 23, 42, 0.36);
+}
+
+html[data-acabamento='claro'] #alertas-painel {
+  background: #f8fafc;
+  border-right: 1px solid #cbd5e1;
+  box-shadow: 16px 0 42px rgba(15, 23, 42, 0.16);
+}
+
+html[data-acabamento='claro'] #alertas-painel header {
+  background:
+    radial-gradient(90% 180% at 0% 0%, rgba(16, 185, 129, 0.1) 0%, transparent 60%),
+    linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
+  border-bottom: 1px solid #cbd5e1;
+}
+
+html[data-acabamento='claro'] #alertas-painel .titulo strong {
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] #alertas-painel .titulo img {
+  filter: drop-shadow(0 1px 3px rgba(15, 23, 42, 0.25));
+}
+
+html[data-acabamento='claro'] :is(.ferramentas, .busca-central, .linha-status, .ativos-triagem) {
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+  color: #334155;
+}
+
+html[data-acabamento='claro'] .abas {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+}
+
+html[data-acabamento='claro'] .aba {
+  color: #334155;
+}
+
+html[data-acabamento='claro'] .aba:hover:not(.ativa) {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .aba.ativa {
+  background: linear-gradient(180deg, #047857 0%, #065f46 100%);
+  border-color: #065f46;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(4, 120, 87, 0.24);
+}
+
+html[data-acabamento='claro'] .pill {
+  background: rgba(15, 23, 42, 0.1);
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .aba.ativa .pill {
+  background: rgba(255, 255, 255, 0.24);
+  color: #ffffff;
+}
+
+html[data-acabamento='claro'] button.icone {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #1e293b;
+}
+
+html[data-acabamento='claro'] #alertas-fixar.fixo-on {
+  background: #fef3c7;
+  border-color: #d97706;
+  color: #92400e;
+  box-shadow: 0 2px 6px rgba(217, 119, 6, 0.18);
+}
+
+html[data-acabamento='claro'] :is(.busca-central input, .busca-modulo input) {
+  background-color: #ffffff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' fill='none' stroke='%23475569' stroke-width='2' viewBox='0 0 24 24'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E");
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] :is(.busca-central input, .busca-modulo input)::placeholder {
+  color: #64748b;
+}
+
+html[data-acabamento='claro'] :is(.busca-central input, .busca-modulo input):focus {
+  border-color: #059669;
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.16);
+}
+
+html[data-acabamento='claro'] #alertas-painel footer {
+  background: #ffffff;
+  border-top: 1px solid #cbd5e1;
+}
+
+/* Triagem 1-clique no Tema Claro */
+html[data-acabamento='claro'] .triagem-chip {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #1e293b;
+}
+
+html[data-acabamento='claro'] .triagem-chip b {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .triagem-chip:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .triagem-chip.on,
+html[data-acabamento='claro'] .triagem-chip[data-filtro-ativos='coa'].on {
+  background: linear-gradient(135deg, #047857, #065f46);
+  border-color: #047857;
+  color: #ffffff;
+}
+
+html[data-acabamento='claro'] .triagem-chip[data-filtro-ativos='flow'].on {
+  background: linear-gradient(135deg, #0284c7, #0369a1);
+  border-color: #0369a1;
+  color: #ffffff;
+}
+
+html[data-acabamento='claro'] .triagem-chip.on b {
+  background: rgba(255, 255, 255, 0.24);
+  color: #ffffff;
+}
+
+html[data-acabamento='claro'] .triagem-lote {
+  background: #fef3c7;
+  border-color: #d97706;
+  color: #92400e;
+}
+
+html[data-acabamento='claro'] .triagem-lote:hover {
+  background: #fde68a;
+  color: #78350f;
+}
+
+/* Cartões de alerta e Toasts flutuantes no Tema Claro */
+html[data-acabamento='claro'] .alerta {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-left: 4px solid var(--cor, #64748b);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.07);
+}
+
+html[data-acabamento='claro'] .alerta:hover {
+  border-color: #94a3b8;
+  border-left-color: var(--cor, #64748b);
+}
+
+html[data-acabamento='claro'] .alerta.sev3 {
+  background: linear-gradient(165deg, #fff5f5 0%, #ffffff 70%);
+  border-color: #fca5a5;
+  border-left: 4.5px solid var(--cor, #dc2626);
+  box-shadow: 0 6px 18px rgba(220, 38, 38, 0.12);
+}
+
+html[data-acabamento='claro'] #toasts .alerta {
+  background: #ffffff;
+  border: 1.5px solid #94a3b8;
+  border-left: 4.5px solid var(--cor, #d97706);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
+  text-shadow: none;
+}
+
+html[data-acabamento='claro'] #toasts .alerta.sev3 {
+  background: #fff5f5;
+  border-color: #f87171;
+  border-left: 4.5px solid var(--cor, #dc2626);
+}
+
+html[data-acabamento='claro'] .alerta .a-eq {
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .alerta .a-txt {
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .alerta .a-meta {
+  color: #334155;
+}
+
+html[data-acabamento='claro'] .alerta .a-meta b {
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .a-hora,
+html[data-acabamento='claro'] #toasts .alerta .a-hora {
+  color: #334155;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+html[data-acabamento='claro'] .a-chip,
+html[data-acabamento='claro'] #toasts .alerta .a-chip {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .a-chip.cinza {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+html[data-acabamento='claro'] :is(.a-chip.oficial, .a-chip.verde),
+html[data-acabamento='claro'] #toasts .alerta :is(.a-chip.oficial, .a-chip.verde) {
+  background: #dcfce7;
+  border-color: rgba(5, 150, 105, 0.5);
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] :is(.a-chip.custo, .a-chip.pentefino) {
+  background: #fef3c7 !important;
+  border-color: #d97706 !important;
+  color: #92400e !important;
+}
+
+html[data-acabamento='claro'] .a-chip.reincidencia {
+  background: #ffedd5 !important;
+  border-color: #ea580c !important;
+  color: #9a3412 !important;
+}
+
+html[data-acabamento='claro'] .a-chip.setor-flow {
+  background: #e0f2fe !important;
+  border-color: #0284c7 !important;
+  color: #075985 !important;
+}
+
+html[data-acabamento='claro'] .a-chip.setor-coa {
+  background: #dcfce7 !important;
+  border-color: #059669 !important;
+  color: #065f46 !important;
+}
+
+html[data-acabamento='claro'] .a-sla.sla-ok {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+html[data-acabamento='claro'] .a-sla.sla-warn {
+  background: #fef3c7;
+  border-color: #d97706;
+  color: #92400e;
+}
+
+html[data-acabamento='claro'] .a-sla.sla-crit {
+  background: #dc2626;
+  border-color: #b91c1c;
+  color: #ffffff;
+}
+
+html[data-acabamento='claro'] .a-telemetria {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+html[data-acabamento='claro'] .tel-pill {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #1e293b;
+}
+
+html[data-acabamento='claro'] .tel-pill b {
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .tel-pill.tel-on {
+  background: #dcfce7;
+  border-color: #10b981;
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] .tel-pill.tel-meia {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+html[data-acabamento='claro'] .tel-pill.tel-off {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #334155;
+}
+
+html[data-acabamento='claro'] .tel-pill.tel-sinal {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #991b1b;
+}
+
+html[data-acabamento='claro'] .alerta .a-fala,
+html[data-acabamento='claro'] #toasts .alerta .a-fala {
+  background: #ecfdf5;
+  border-color: rgba(5, 150, 105, 0.42);
+  color: #064e3b;
+}
+
+html[data-acabamento='claro'] .alerta .a-acoes button,
+html[data-acabamento='claro'] #toasts .alerta .a-acoes button {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .alerta .a-acoes button:hover,
+html[data-acabamento='claro'] #toasts .alerta .a-acoes button:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .alerta .a-acoes button.fim {
+  color: #475569;
+}
+
+html[data-acabamento='claro'] :is(.alerta, #toasts .alerta) .a-acoes .btn-chamado {
+  background: linear-gradient(135deg, #047857, #065f46);
+  border-color: #047857;
+  color: #ffffff;
+}
+
+html[data-acabamento='claro'] :is(.alerta, #toasts .alerta) .a-acoes .btn-chamado:hover {
+  background: linear-gradient(135deg, #10b981, #059669);
+  border-color: #059669;
+  color: #ffffff;
+}
+
+html[data-acabamento='claro'] .a-tratativa {
+  background: #f8fafc;
+  border-color: rgba(5, 150, 105, 0.35);
+}
+
+html[data-acabamento='claro'] .a-trat-tags button {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #1e293b;
+}
+
+html[data-acabamento='claro'] .a-trat-tags button.on {
+  background: #dcfce7;
+  border-color: #059669;
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] .a-trat-nota input {
+  background: #ffffff;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .a-trat-nota button {
+  background: #059669;
+  border-color: #047857;
+  color: #ffffff;
+}
+
+html[data-acabamento='claro'] .aviso {
+  background: #ffffff;
+  border-color: #94a3b8;
+  color: #0f172a;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+
+html[data-acabamento='claro'] #btn-limpar-toasts {
+  background: #ffffff;
+  border-color: #d97706;
+  color: #92400e;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.18);
+}
+
+html[data-acabamento='claro'] #btn-limpar-toasts:hover {
+  background: #fef3c7;
+  border-color: #b45309;
+}
+
+html[data-acabamento='claro'] .vazio {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #475569;
+}
+
+/* Raio-X CTT, Moenda, Alô COA, Comboio, Radar 30-30-30, DDS & Telão no Tema Claro */
+html[data-acabamento='claro'] .ctt-balanceamento {
+  background: #fffbeb;
+  border-color: #f59e0b;
+  border-left-color: #d97706;
+  color: #78350f;
+}
+
+html[data-acabamento='claro'] .ctt-balanceamento strong {
+  color: #92400e;
+}
+
+html[data-acabamento='claro'] :is(.ctt-card, .ctt-sec, .moenda-card, .comboio-sec, .comboio-card, .radar-303030, .dds-card) {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #0f172a;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+}
+
+html[data-acabamento='claro'] :is(.ctt-card.sem-critico, .moenda-card.moenda-risco, .radar-303030.bandeira-vermelha) {
+  background: #fff5f5;
+  border-color: #fca5a5;
+  border-left-color: #dc2626;
+}
+
+html[data-acabamento='claro'] .radar-303030.bandeira-laranja {
+  background: #fff7ed;
+  border-color: #fdba74;
+  border-left-color: #ea580c;
+}
+
+html[data-acabamento='claro'] .ctt-card.sem-chuva {
+  background: #f0f9ff;
+  border-color: #7dd3fc;
+  border-left-color: #0284c7;
+}
+
+html[data-acabamento='claro'] :is(.ctt-nome, .ctt-cell b, .ctt-diesel-top, .moenda-top strong, .moenda-nums b, .comboio-eq, .radar-head strong, .rmet b, .radar-bombeiro, .dds-frente) {
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] :is(.ctt-cell, .rmet, .dds-op) {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .rmet.alerta {
+  background: #fee2e2;
+  border-color: #ef4444;
+}
+
+html[data-acabamento='claro'] :is(.ctt-cell span, .ctt-cell small, .ctt-row small, .ctt-diesel small, .moenda-nums span, .taximetro-bar small, .comboio-motivo small, .rmet span, .rmet small, .radar-inputs label) {
+  color: #475569;
+}
+
+html[data-acabamento='claro'] :is(.ctt-row, .comboio-motivo) {
+  color: #1e293b;
+  border-top-color: #e2e8f0;
+}
+
+html[data-acabamento='claro'] :is(.ctt-sec h4, .comboio-head h4, .dds-head strong) {
+  color: #92400e;
+}
+
+html[data-acabamento='claro'] :is(.ctt-diesel-bar, .moenda-bar) {
+  background: #e2e8f0;
+}
+
+html[data-acabamento='claro'] .taximetro-bar {
+  color: #78350f;
+  border-top-color: #e2e8f0;
+}
+
+html[data-acabamento='claro'] .taximetro-bar b {
+  color: #b45309;
+}
+
+html[data-acabamento='claro'] .dds-op b:last-child {
+  color: #047857;
+}
+
+html[data-acabamento='claro'] :is(.ctt-sem.sem-ok, .moenda-badge.moenda-seguro, .radar-badge) {
+  background: #dcfce7;
+  border-color: #10b981;
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] :is(.ctt-sem.sem-atencao, .moenda-badge.moenda-atencao, .radar-badge.bandeira-amarela, .cpill.warn, .tkpi.alerta-kpi) {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+html[data-acabamento='claro'] :is(.ctt-sem.sem-critico, .moenda-badge.moenda-risco, .radar-badge.bandeira-vermelha, .cpill.crit, .comboio-rs, .pkpi.crit, .tkpi.critico-kpi) {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #991b1b;
+}
+
+html[data-acabamento='claro'] :is(.ctt-sem.sem-chuva, .radar-badge.bandeira-azul, .ctt-acoes button.chuva-on) {
+  background: #e0f2fe;
+  border-color: #0284c7;
+  color: #075985;
+}
+
+html[data-acabamento='claro'] .radar-badge.bandeira-laranja {
+  background: #ffedd5;
+  border-color: #ea580c;
+  color: #9a3412;
+}
+
+html[data-acabamento='claro'] .moenda-badge {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+html[data-acabamento='claro'] :is(.cpill, .pkpi, .tkpi) {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #1e293b;
+}
+
+html[data-acabamento='claro'] :is(.cpill, .pkpi, .tkpi) b {
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .alo-coa-box {
+  background: linear-gradient(155deg, #ecfdf5 0%, #ffffff 100%);
+  border-color: rgba(5, 150, 105, 0.42);
+}
+
+html[data-acabamento='claro'] .alo-coa-head strong {
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] :is(.alo-coa-form input, .radar-inputs input) {
+  background: #ffffff;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .alo-coa-chips button {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #1e293b;
+}
+
+html[data-acabamento='claro'] .alo-coa-chips button:hover {
+  background: #ecfdf5;
+  border-color: #059669;
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] :is(.alo-coa-resp, .comboio-apoio) {
+  background: #ecfdf5;
+  border-color: rgba(5, 150, 105, 0.42);
+  color: #064e3b;
+}
+
+html[data-acabamento='claro'] #passagem-texto {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] #coa-telao-bar {
+  background: #ffffff;
+  border-color: #94a3b8;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.2);
+}
+
+/* Preferências (#cfg-alertas), Abas, Catálogo SGPA, Push e Copiloto IA no Tema Claro */
+html[data-acabamento='claro'] .cfg-topo {
+  background: #ffffff;
+  border-bottom-color: #cbd5e1;
+}
+
+html[data-acabamento='claro'] .secao-alertas {
+  color: #065f46;
+  border-top-color: #e2e8f0;
+}
+
+html[data-acabamento='claro'] .campo em {
+  color: #475569;
+}
+
+html[data-acabamento='claro'] :is(.campo select, .campo input[type='range'], #cfg-glossario, .cfg-add-inline input, .ia-form input) {
+  background: #ffffff;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .chips {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+html[data-acabamento='claro'] .chips .chip {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+html[data-acabamento='claro'] .chips .chip.on {
+  background: #dcfce7;
+  border-color: #059669;
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] :is(.switches .chk, .refeicao-item) {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+html[data-acabamento='claro'] .fonte-oficial {
+  background: #ecfdf5;
+  border-color: rgba(5, 150, 105, 0.42);
+  border-left-color: #059669;
+  color: #064e3b;
+}
+
+html[data-acabamento='claro'] .fonte-oficial span {
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] .alert-switch {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .alert-switch:hover {
+  background: #f8fafc;
+  border-color: #059669;
+}
+
+html[data-acabamento='claro'] .alert-switch-track {
+  background: #cbd5e1;
+  border-color: #94a3b8;
+}
+
+html[data-acabamento='claro'] .alert-switch-track::after {
+  background: #ffffff;
+}
+
+html[data-acabamento='claro'] .alert-switch input:checked + .alert-switch-track {
+  background: #059669;
+  border-color: #047857;
+}
+
+html[data-acabamento='claro'] .catalogo-detalhes {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+html[data-acabamento='claro'] .regras-auditadas > div {
+  border-bottom-color: #e2e8f0;
+}
+
+html[data-acabamento='claro'] .push-optin {
+  background: linear-gradient(150deg, #ecfdf5, #f0fdf4 75%);
+  border-color: rgba(5, 150, 105, 0.42);
+  border-left-color: #059669;
+  color: #064e3b;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+}
+
+html[data-acabamento='claro'] .push-simbolo {
+  background: #d1fae5;
+  border-color: rgba(5, 150, 105, 0.45);
+  color: #047857;
+}
+
+html[data-acabamento='claro'] .push-optin h3 {
+  color: #064e3b;
+}
+
+html[data-acabamento='claro'] :is(.push-dispositivo, .push-optin > p) {
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] .push-optin > .push-status {
+  background: #ffffff;
+  border-color: rgba(5, 150, 105, 0.35);
+  color: #064e3b;
+}
+
+html[data-acabamento='claro'] .push-acoes #push-ativar {
+  color: #ffffff;
+}
+
+html[data-acabamento='claro'] .push-acoes #push-desligar {
+  background: #fef2f2;
+  border-color: rgba(220, 38, 38, 0.48);
+  color: #991b1b;
+}
+
+html[data-acabamento='claro'] #cfg-glossario-previa {
+  background: #fffbeb;
+  color: #78350f;
+}
+
+html[data-acabamento='claro'] #cfg-previa-voz {
+  background: #dcfce7;
+  border-color: #059669;
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] #cfg-previa-voz:hover {
+  background: #bbf7d0;
+}
+
+html[data-acabamento='claro'] .cfg-abas {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+}
+
+html[data-acabamento='claro'] .cfg-aba {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+html[data-acabamento='claro'] .cfg-aba.on {
+  background: linear-gradient(135deg, #047857, #065f46);
+  border-color: #047857;
+  color: #ffffff;
+}
+
+html[data-acabamento='claro'] .cfg-rodape-fixo {
+  border-top-color: #cbd5e1;
+}
+
+html[data-acabamento='claro'] .criticos-box {
+  background: linear-gradient(155deg, #fef2f2 0%, #ffffff 100%);
+  border-color: #fca5a5;
+  color: #7f1d1d;
+}
+
+html[data-acabamento='claro'] .preset-btn {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #1e293b;
+}
+
+html[data-acabamento='claro'] .preset-btn.crit {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #991b1b;
+}
+
+html[data-acabamento='claro'] .preset-btn.dest {
+  background: #e0f2fe;
+  border-color: #0284c7;
+  color: #075985;
+}
+
+html[data-acabamento='claro'] .sgpa-star-btn {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+html[data-acabamento='claro'] .sgpa-star-btn.on {
+  background: #fef3c7;
+  border-color: #d97706;
+  color: #92400e;
+}
+
+html[data-acabamento='claro'] :is(.gemini-voice-card, .ia-copiloto-card) {
+  background: linear-gradient(155deg, #f0f9ff 0%, #ffffff 100%);
+  border-color: #7dd3fc;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .ia-atalhos button {
+  background: #ffffff;
+  border-color: #7dd3fc;
+  color: #075985;
+}
+
+html[data-acabamento='claro'] .ia-resposta-box {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+html[data-acabamento='claro'] .ia-resposta-meta {
+  color: #475569;
+}
+
+html[data-acabamento='claro'] .ia-resposta-texto {
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .chamados-bp-box {
+  background: #ffffff;
+  border-color: #059669;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.25);
+}
+
+html[data-acabamento='claro'] #iframe-chamados-bp {
+  background: #f8fafc;
+}
+
 
 
 

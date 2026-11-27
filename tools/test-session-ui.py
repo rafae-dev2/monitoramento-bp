@@ -77,6 +77,8 @@ try:
         page = context.new_page()
         navegacoes_principais = []
         page.on('framenavigated', lambda frame: navegacoes_principais.append(frame.url) if frame == page.main_frame else None)
+        page.route('https://fonts.googleapis.com/**', lambda route: route.fulfill(status=200, content_type='text/css', body=''))
+        page.route('https://fonts.gstatic.com/**', lambda route: route.fulfill(status=200, content_type='font/woff2', body=b''))
         page.route('**/.netlify/functions/session*', session_route)
         page.route('**/alerts.js', lambda route: route.fulfill(
             status=200,
@@ -108,14 +110,46 @@ try:
 
         page.click('#btn-menu')
         assert not page.locator('#menu').evaluate("e => e.classList.contains('hide')")
-        page.click('#menu [data-tema="black"]')
-        assert page.evaluate("document.documentElement.dataset.acabamento") == 'black'
-        assert not page.locator('#menu').evaluate("e => e.classList.contains('hide')"), 'Trocar tema não deve fechar o menu'
-        page.click('#menu [data-tema="vidro"]')
-        assert page.evaluate("document.documentElement.dataset.acabamento") == 'vidro'
+        for tema, esquema in (('claro', 'light'), ('escuro', 'dark'), ('esmeralda', 'dark'), ('black', 'dark'), ('vidro', 'dark')):
+            page.click(f'#menu [data-tema="{tema}"]')
+            assert page.evaluate("document.documentElement.dataset.acabamento") == tema
+            assert page.evaluate("document.documentElement.style.colorScheme") == esquema
+            assert page.evaluate("localStorage.getItem('bp_theme_preference_v1')") == esquema
+            assert not page.locator('#menu').evaluate("e => e.classList.contains('hide')"), 'Trocar tema não deve fechar o menu'
+            if tema != 'vidro':
+                page.evaluate("""(temaAtual) => {
+                  function parseRgb(s) {
+                    const m = String(s || '').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/);
+                    return m ? [Number(m[1]), Number(m[2]), Number(m[3]), m[4] === undefined ? 1 : Number(m[4])] : null;
+                  }
+                  function bgEfetivo(el) {
+                    let cur = el;
+                    while (cur && cur !== document) {
+                      const st = getComputedStyle(cur);
+                      const c = parseRgb(st.backgroundColor);
+                      if (c && c[3] >= 0.85) return c.slice(0, 3);
+                      const g = parseRgb(st.backgroundImage);
+                      if (g && g[3] >= 0.85) return g.slice(0, 3);
+                      cur = cur.parentElement;
+                    }
+                    return (parseRgb(getComputedStyle(document.body).backgroundColor) || [0, 0, 0]).slice(0, 3);
+                  }
+                  function lum([r, g, b]) {
+                    const f = v => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); };
+                    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+                  }
+                  for (const sel of ['#brand-nome', '.coa-clock', '#menu .sheet h3']) {
+                    const el = document.querySelector(sel);
+                    const fg = parseRgb(getComputedStyle(el).color).slice(0, 3);
+                    const bg = bgEfetivo(el);
+                    const l1 = lum(fg), l2 = lum(bg);
+                    const cr = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+                    if (cr < 4.5) throw new Error(`Contraste baixo (${cr.toFixed(2)}:1) em ${temaAtual} -> ${sel}`);
+                  }
+                }""", tema)
         page.click('#menu-fechar-x')
         assert page.locator('#menu').evaluate("e => e.classList.contains('hide')"), 'Botão X deve fechar o Centro de Comando COA'
-        print('OK: Centro de Comando COA alterna Liquid Glass / Tema Black e fecha pelo botão X.')
+        print('OK: Centro de Comando COA alterna os 5 temas executivos com contraste WCAG >= 4.5:1 e fecha pelo X.')
 
         page.click('#btn-menu')
         page.click('[data-act="fresh"]')

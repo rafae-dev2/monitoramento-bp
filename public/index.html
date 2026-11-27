@@ -8,12 +8,32 @@
       name="description"
       content="Painel operacional e Central de Alertas em tempo real (mapa analítico v4 Solinftec) da unidade Branco Peres, com voz, pop-up e Web Push."
     />
-    <meta name="theme-color" content="#080e14" />
-    <meta name="color-scheme" content="dark" />
+    <meta id="meta-theme-color" name="theme-color" content="#080e14" />
+    <meta id="meta-color-scheme" name="color-scheme" content="dark light" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Monitoramento BP" />
+    <script>
+      (function () {
+        var cores = { vidro: '#080e14', escuro: '#0b1017', claro: '#eef2f6', esmeralda: '#06140f', black: '#000000' };
+        var v = 'vidro';
+        try {
+          var s = localStorage.getItem('bperes.visual.acabamento.v1');
+          if (s === 'solido' || s === 'black') v = 'black';
+          else if (s === 'claro' || s === 'light') v = 'claro';
+          else if (s === 'escuro' || s === 'dark') v = 'escuro';
+          else if (s === 'esmeralda' || s === 'safra') v = 'esmeralda';
+          else if (s === 'vidro') v = 'vidro';
+          else if (window.matchMedia && window.matchMedia('(prefers-reduced-transparency: reduce)').matches) v = 'escuro';
+        } catch (e) {}
+        var root = document.documentElement;
+        root.dataset.acabamento = v;
+        root.style.colorScheme = v === 'claro' ? 'light' : 'dark';
+        var mt = document.getElementById('meta-theme-color');
+        if (mt && cores[v]) mt.setAttribute('content', cores[v]);
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -163,10 +183,13 @@
             <button id="menu-fechar-x" type="button" class="sheet-fechar-x" data-act="close" title="Fechar Centro de Comando" aria-label="Fechar Centro de Comando">✕</button>
           </div>
           <div class="tema-bar" role="group" aria-label="Tema visual">
-            <span class="tema-bar-label">Tema visual</span>
+            <span class="tema-bar-label">Tema visual premium</span>
             <div class="tema-seg">
-              <button type="button" data-tema="vidro" aria-pressed="true">Liquid Glass</button>
-              <button type="button" data-tema="black" aria-pressed="false">Tema Black</button>
+              <button type="button" data-tema="vidro" aria-pressed="true" title="Liquid Glass — Vidro óptico escuro">✨ Liquid Glass</button>
+              <button type="button" data-tema="escuro" aria-pressed="false" title="Dark Carbono Pro — Conforto visual noturno sem reflexos">🌑 Dark Pro</button>
+              <button type="button" data-tema="claro" aria-pressed="false" title="Claro Solar Executivo — Alta leitura diurna">☀️ Claro Solar</button>
+              <button type="button" data-tema="esmeralda" aria-pressed="false" title="Verde Safra BP — Identidade institucional Branco Peres">🌿 Safra BP</button>
+              <button type="button" data-tema="black" aria-pressed="false" title="Black OLED Puro — Máximo contraste em preto absoluto">⬛ Tema Black</button>
             </div>
           </div>
           <div class="menu-group">

@@ -498,22 +498,45 @@
     });
   }
 
+  const CORES_TEMA_SHELL = { vidro: '#080e14', escuro: '#0b1017', claro: '#eef2f6', esmeralda: '#06140f', black: '#000000' };
+  function normalizarTemaShell(valor) {
+    if (valor === 'black' || valor === 'solido') return 'black';
+    if (valor === 'claro' || valor === 'light') return 'claro';
+    if (valor === 'escuro' || valor === 'dark') return 'escuro';
+    if (valor === 'esmeralda' || valor === 'safra') return 'esmeralda';
+    return 'vidro';
+  }
   function aplicarTemaShell(valor, persistir) {
     if (window.MonitoramentoAlertas && typeof window.MonitoramentoAlertas.aplicarTema === 'function') {
       return window.MonitoramentoAlertas.aplicarTema(valor, persistir);
     }
-    const v = valor === 'black' || valor === 'solido' ? 'black' : 'vidro';
-    document.documentElement.dataset.acabamento = v;
+    const v = normalizarTemaShell(valor);
+    const modo = v === 'claro' ? 'light' : 'dark';
+    const root = document.documentElement;
+    const trocou = root.dataset.acabamento && root.dataset.acabamento !== v;
+    if (trocou) root.dataset.trocandoTema = '1';
+    root.dataset.acabamento = v;
+    root.style.colorScheme = modo;
+    const metaCor = document.getElementById('meta-theme-color') || document.querySelector('meta[name="theme-color"]');
+    if (metaCor && CORES_TEMA_SHELL[v]) metaCor.setAttribute('content', CORES_TEMA_SHELL[v]);
     for (const btn of document.querySelectorAll('[data-tema]')) {
       btn.setAttribute('aria-pressed', btn.dataset.tema === v ? 'true' : 'false');
     }
+    if (trocou) {
+      const limpar = () => { delete root.dataset.trocandoTema; };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(limpar));
+      else setTimeout(limpar, 0);
+    }
     if (persistir) {
-      try { localStorage.setItem('bperes.visual.acabamento.v1', v); } catch { /* sem storage */ }
+      try {
+        localStorage.setItem('bperes.visual.acabamento.v1', v);
+        localStorage.setItem('bp_theme_preference_v1', modo);
+      } catch { /* sem storage */ }
     }
     return v;
   }
-  if (!document.documentElement.dataset.acabamento) {
-    let inicial = 'vidro';
+  {
+    let inicial = document.documentElement.dataset.acabamento || 'vidro';
     try {
       const salvo = localStorage.getItem('bperes.visual.acabamento.v1');
       if (salvo) inicial = salvo;

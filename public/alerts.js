@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '6.2.0';
+  const VERSAO = '6.3.0';
   const KEY_PAINEL_FIXO = 'bperes.visual.painel-fixo.v1';
   const KEY_GEMINI_KEY = 'bperes.ia.geminiKey.v1';
   const policy = window.AlertasPolicy;
@@ -60,21 +60,35 @@
   const $ = (id) => document.getElementById(id);
   const agora = () => Date.now();
 
-  /* Tema visual por aparelho: 'vidro' (Liquid Glass) ou 'black' (Tema Black OLED).
-     Aceita 'solido' legado migrando para 'black'. Fica fora do cfg sincronizado. */
+  /* Suíte de temas executivos por aparelho:
+     'vidro' (Liquid Glass), 'escuro' (Dark Carbono Pro), 'claro' (Claro Solar Executivo),
+     'esmeralda' (Verde Safra BP) ou 'black' (Tema Black OLED). Aceita 'solido' -> 'black'. */
   const KEY_ACABAMENTO = 'bperes.visual.acabamento.v1';
+  const CORES_META_TEMA = {
+    vidro: '#080e14',
+    escuro: '#0b1017',
+    claro: '#eef2f6',
+    esmeralda: '#06140f',
+    black: '#000000',
+  };
   function normalizarTema(valor) {
-    return valor === 'black' || valor === 'solido' ? 'black' : 'vidro';
+    if (valor === 'black' || valor === 'solido') return 'black';
+    if (valor === 'claro' || valor === 'light') return 'claro';
+    if (valor === 'escuro' || valor === 'dark') return 'escuro';
+    if (valor === 'esmeralda' || valor === 'safra') return 'esmeralda';
+    return 'vidro';
   }
   function acabamentoSalvo() {
     try {
       const v = localStorage.getItem(KEY_ACABAMENTO);
-      if (v === 'vidro' || v === 'black' || v === 'solido') return normalizarTema(v);
+      if (v === 'vidro' || v === 'escuro' || v === 'dark' || v === 'claro' || v === 'light' || v === 'esmeralda' || v === 'safra' || v === 'black' || v === 'solido') {
+        return normalizarTema(v);
+      }
     } catch {
       /* sem storage */
     }
     try {
-      if (window.matchMedia && window.matchMedia('(prefers-reduced-transparency: reduce)').matches) return 'black';
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-transparency: reduce)').matches) return 'escuro';
     } catch {
       /* matchMedia indisponível */
     }
@@ -90,14 +104,35 @@
   }
   function aplicarAcabamento(valor, persistir) {
     const v = normalizarTema(valor);
-    document.documentElement.dataset.acabamento = v;
+    const modo = v === 'claro' ? 'light' : 'dark';
+    const root = document.documentElement;
+    const trocou = root.dataset.acabamento && root.dataset.acabamento !== v;
+    if (trocou) root.dataset.trocandoTema = '1';
+    root.dataset.acabamento = v;
+    root.style.colorScheme = modo;
+    const metaCor = document.getElementById('meta-theme-color') || document.querySelector('meta[name="theme-color"]');
+    if (metaCor && CORES_META_TEMA[v]) metaCor.setAttribute('content', CORES_META_TEMA[v]);
     sincronizarControlesTema(v);
+    if (trocou) {
+      const limpar = () => { delete root.dataset.trocandoTema; };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(limpar));
+      else setTimeout(limpar, 0);
+    }
     if (persistir) {
       try {
         localStorage.setItem(KEY_ACABAMENTO, v);
+        localStorage.setItem('bp_theme_preference_v1', modo);
       } catch {
         /* sem storage */
       }
+    }
+    try {
+      const ifrChamados = document.getElementById('iframe-chamados-bp');
+      if (ifrChamados && ifrChamados.contentWindow && ifrChamados.getAttribute('src')) {
+        ifrChamados.contentWindow.postMessage({ type: 'bp-tema-alterado', tema: v, modo }, window.location.origin);
+      }
+    } catch {
+      /* iframe ainda carregando */
     }
     return v;
   }
@@ -4902,12 +4937,15 @@
         <label class="chk"><input id="cfg-repete" type="checkbox"><span>Repetir a fala enquanto durar o alerta</span></label>
       </div>
 
-      <h3 class="secao-alertas">Tema Visual e Modo Sentinela 2º Plano</h3>
+      <h3 class="secao-alertas">Tema Visual Premium e Modo Sentinela 2º Plano</h3>
       <div class="grade">
         <label class="campo"><span>Tema da interface neste aparelho</span>
           <select id="cfg-acabamento">
-            <option value="vidro">Liquid Glass (vidro escuro refrativo estilo iPhone)</option>
-            <option value="black">Tema Black (preto puro · máximo contraste)</option>
+            <option value="vidro">✨ Liquid Glass (vidro escuro refrativo estilo iOS)</option>
+            <option value="escuro">🌑 Dark Carbono Pro (modo escuro executivo · conforto visual 8h)</option>
+            <option value="claro">☀️ Claro Solar Executivo (tema claro diurno · máxima nitidez)</option>
+            <option value="esmeralda">🌿 Verde Safra BP (institucional escuro Branco Peres &amp; ouro)</option>
+            <option value="black">⬛ Tema Black OLED (preto absoluto · máximo contraste)</option>
           </select>
         </label>
         <label class="campo"><span>Repetir crítico não confirmado a cada (min)</span><input id="cfg-reescalar-min" type="number" min="1" step="1" inputmode="numeric"></label>

@@ -20,12 +20,17 @@
   --bp-vermelho: #dc2626;
   --warn: #f59e0b;
   --danger: #ef4444;
-  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'Cascadia Mono', Consolas, 'Liberation Mono', monospace;
 }
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 html,
@@ -34,8 +39,11 @@ body {
   height: 100%;
   background: var(--bg);
   color: var(--ink);
-  font: 14px/1.48 var(--font-sans);
+  font: 14px/1.5 var(--font-sans);
+  font-optical-sizing: auto;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   overscroll-behavior: none;
 }
@@ -654,62 +662,64 @@ button:focus-visible,
 
 .tema-bar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  padding: 9px 10px;
   margin-bottom: 6px;
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.28);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  flex-wrap: wrap;
 }
 
 .tema-bar-label {
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: #e2e8f0;
+  color: var(--ink-soft);
 }
 
 .tema-seg {
-  display: inline-flex;
-  gap: 4px;
-  padding: 3px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 5px;
+  padding: 4px;
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.42);
+  background: rgba(0, 0, 0, 0.38);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  flex: 1 1 200px;
-  max-width: 260px;
+  width: 100%;
+  max-width: 100%;
 }
 
 .sheet .tema-seg button {
-  flex: 1 1 0;
-  width: auto;
-  min-height: 32px;
-  padding: 6px 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 8px;
   justify-content: center;
-  border-radius: 7px;
-  font-size: 12px;
+  border-radius: 8px;
+  font-size: 11.5px;
   font-weight: 700;
   white-space: nowrap;
-  color: #cbd5e1;
-  background: transparent;
-  border: 1px solid transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: none;
 }
 
 .sheet .tema-seg button:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.06);
-  border-color: transparent;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 .sheet .tema-seg button[aria-pressed='true'] {
   color: #022014;
   background: linear-gradient(180deg, #34d399 0%, #10b981 100%);
-  border-color: rgba(167, 243, 208, 0.65);
+  border-color: rgba(167, 243, 208, 0.72);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 2px 8px rgba(16, 185, 129, 0.28);
 }
 
@@ -1037,7 +1047,7 @@ code {
 
 /* --------------------------- Cabeçalho --------------------------- */
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #bar {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #bar {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 52%),
     radial-gradient(60% 240% at 0% 0%, rgba(0, 108, 48, 0.34) 0%, transparent 58%),
@@ -1051,7 +1061,7 @@ code {
 }
 
 /* Medalhão de vidro lapidado para o brasão Branco Peres */
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .brand-emblem {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .brand-emblem {
   overflow: hidden;
   isolation: isolate;
   border-radius: 14px;
@@ -1071,7 +1081,7 @@ code {
 }
 
 /* Faixa de brilho diagonal que atravessa o vidro (fica sobre o brasão) */
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .brand-emblem::after {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .brand-emblem::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -1084,17 +1094,17 @@ code {
   mix-blend-mode: screen;
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .brand-emblem #brand-logo {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .brand-emblem #brand-logo {
   position: relative;
   z-index: 1;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 6px rgba(250, 204, 21, 0.12));
 }
 
 /* Cápsulas ópticas do HUD (AO VIVO, severidade, operador, relógio) */
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .coa-pill,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .coa-sev,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #who,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .coa-clock {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .coa-pill,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .coa-sev,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #who,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .coa-clock {
   background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 55%, transparent 100%);
   border-color: var(--lg-borda);
   box-shadow: var(--lg-aro), 0 2px 8px rgba(0, 0, 0, 0.3);
@@ -1104,8 +1114,8 @@ code {
 
 /* ------------------------------ Botões ------------------------------ */
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) button,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .btn {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) button,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .btn {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.11) 0%, rgba(255, 255, 255, 0.03) 52%, rgba(255, 255, 255, 0.05) 100%),
     var(--lg-tinta);
@@ -1121,8 +1131,8 @@ code {
     transform 0.32s var(--lg-mola);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) button:hover:not(:disabled),
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .btn:hover:not(:disabled) {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) button:hover:not(:disabled),
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .btn:hover:not(:disabled) {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.17) 0%, rgba(255, 255, 255, 0.05) 52%, rgba(255, 255, 255, 0.08) 100%),
     rgba(20, 34, 48, 0.62);
@@ -1130,15 +1140,15 @@ code {
   box-shadow: var(--lg-aro), 0 6px 18px rgba(0, 0, 0, 0.36);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) button:active:not(:disabled),
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .btn:active:not(:disabled) {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) button:active:not(:disabled),
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .btn:active:not(:disabled) {
   transform: scale(0.965);
   transition-duration: 0.08s;
 }
 
 /* Primário em vidro esmeralda (ação principal / confirmar) */
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .primary,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #btn-install {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .primary,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #btn-install {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.06) 50%, rgba(255, 255, 255, 0.12) 100%),
     linear-gradient(180deg, rgba(16, 185, 129, 0.92) 0%, rgba(5, 150, 105, 0.94) 100%);
@@ -1150,8 +1160,8 @@ code {
     0 6px 18px rgba(16, 185, 129, 0.28);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .primary:hover:not(:disabled),
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #btn-install:hover:not(:disabled) {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .primary:hover:not(:disabled),
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #btn-install:hover:not(:disabled) {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.42) 0%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.16) 100%),
     linear-gradient(180deg, #34d399 0%, #10b981 100%);
@@ -1159,7 +1169,7 @@ code {
 }
 
 /* Botões de ícone da barra: lentes quadradas com reflexo curvo */
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #actions .icon-btn {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #actions .icon-btn {
   background:
     var(--lg-reflexo),
     linear-gradient(180deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.02) 100%),
@@ -1168,7 +1178,7 @@ code {
   box-shadow: var(--lg-aro), 0 4px 12px rgba(0, 0, 0, 0.34);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #actions .icon-btn:hover {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #actions .icon-btn:hover {
   background:
     var(--lg-reflexo),
     linear-gradient(180deg, rgba(250, 204, 21, 0.20) 0%, rgba(250, 204, 21, 0.06) 100%),
@@ -1176,16 +1186,16 @@ code {
   border-color: rgba(253, 224, 71, 0.5);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #actions .icon-btn:active {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #actions .icon-btn:active {
   transform: scale(0.92);
 }
 
 /* -------------------- Overlays, cartões e folha de menu -------------------- */
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #boot,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #error,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #login,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #about {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #boot,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #error,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #login,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #about {
   background:
     radial-gradient(80% 60% at 50% 0%, rgba(0, 108, 48, 0.22) 0%, transparent 65%),
     radial-gradient(110% 110% at 50% 50%, rgba(12, 21, 30, 0.66) 0%, rgba(6, 11, 17, 0.84) 78%);
@@ -1195,14 +1205,14 @@ code {
   backdrop-filter: none;
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #menu {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #menu {
   background: rgba(4, 8, 13, 0.46);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .card,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .sheet {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .card,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .sheet {
   background:
     var(--lg-reflexo),
     linear-gradient(160deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.015) 45%, rgba(255, 255, 255, 0.04) 100%),
@@ -1213,7 +1223,7 @@ code {
   backdrop-filter: var(--lg-blur);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .sheet button {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .sheet button {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
   border-color: rgba(255, 255, 255, 0.09);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
@@ -1221,22 +1231,22 @@ code {
   backdrop-filter: none;
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .sheet button:hover {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .sheet button:hover {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.13) 0%, rgba(255, 255, 255, 0.05) 100%);
   border-color: var(--lg-borda-forte);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .m-ico,
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .about-pill {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .m-ico,
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .about-pill {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.03) 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .sheet-handle {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .sheet-handle {
   background: rgba(255, 255, 255, 0.34);
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) .marca-halo {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) .marca-halo {
   background:
     radial-gradient(70% 45% at 50% 0%, rgba(255, 255, 255, 0.16) 0%, transparent 70%),
     radial-gradient(circle, rgba(16, 185, 129, 0.26), transparent 72%);
@@ -1244,7 +1254,7 @@ code {
   border-radius: 22px;
 }
 
-:where(html:not([data-acabamento='black']):not([data-acabamento='solido'])) #session-status {
+:where(html:not([data-acabamento]), html[data-acabamento='vidro']) #session-status {
   -webkit-backdrop-filter: var(--lg-blur);
   backdrop-filter: var(--lg-blur);
   box-shadow: var(--lg-aro), 0 12px 32px rgba(0, 0, 0, 0.48);
@@ -1429,4 +1439,512 @@ html[data-acabamento='solido'] .sheet .sheet-fechar-x:hover {
   background: #3b0d0d;
   border-color: #f87171;
 }
+
+/* =====================================================================
+   TEMA DARK CARBONO PRO (escuro) — Conforto visual noturno 8h–12h
+   Superfícies foscas em grafite-ardósia, zero blur de GPU, leitura AAA
+   ===================================================================== */
+
+html[data-acabamento='escuro'] {
+  --bg: #0b1017;
+  --surface-0: #0e151f;
+  --surface-1: #121b27;
+  --surface-2: #172231;
+  --surface-3: #1e2c3f;
+  --bar: #0e1621;
+  --glass: #121b27;
+  --ink: #f8fafc;
+  --ink-soft: #e2e8f0;
+  --muted: #94a3b8;
+  --line: rgba(148, 163, 184, 0.22);
+  --line-strong: rgba(148, 163, 184, 0.36);
+  --specular: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+html[data-acabamento='escuro'] :is(#boot, #error, #login, #about, #menu, #session-status) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-acabamento='escuro'] #bar {
+  background:
+    radial-gradient(60% 200% at 0% 0%, rgba(16, 185, 129, 0.16) 0%, transparent 55%),
+    linear-gradient(180deg, #131d2a 0%, #0c131c 100%);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+html[data-acabamento='escuro'] .brand-emblem {
+  background: linear-gradient(155deg, #172536 0%, #0d1520 100%);
+  border-color: rgba(250, 204, 21, 0.34);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+
+html[data-acabamento='escuro'] :is(.coa-pill, .coa-sev, #who, .coa-clock) {
+  background-color: #131d2b;
+  border-color: rgba(148, 163, 184, 0.24);
+}
+
+html[data-acabamento='escuro'] :is(.card, .sheet) {
+  background: linear-gradient(180deg, #141f2e 0%, #0f1723 100%);
+  border-color: rgba(148, 163, 184, 0.24);
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+html[data-acabamento='escuro'] .sheet button {
+  background: #172334;
+  border-color: rgba(148, 163, 184, 0.18);
+  color: #f8fafc;
+}
+
+html[data-acabamento='escuro'] .sheet button:hover {
+  background: #1f2f45;
+  border-color: rgba(148, 163, 184, 0.34);
+}
+
+html[data-acabamento='escuro'] .tema-bar {
+  background: #0d141e;
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+html[data-acabamento='escuro'] .tema-seg {
+  background: #090e15;
+  border-color: rgba(148, 163, 184, 0.18);
+}
+
+/* =====================================================================
+   TEMA VERDE SAFRA BP (esmeralda) — Identidade Institucional Branco Peres
+   Obsidiana florestal escura com filetes esmeralda e ouro, zero blur GPU
+   ===================================================================== */
+
+html[data-acabamento='esmeralda'] {
+  --bg: #06140f;
+  --surface-0: #081a13;
+  --surface-1: #0b2219;
+  --surface-2: #0f2d22;
+  --surface-3: #153b2d;
+  --bar: #081d15;
+  --glass: #0b2219;
+  --ink: #f0fdf4;
+  --ink-soft: #dcfce7;
+  --muted: #a7f3d0;
+  --line: rgba(52, 211, 153, 0.22);
+  --line-strong: rgba(52, 211, 153, 0.38);
+  --specular: inset 0 1px 0 rgba(167, 243, 208, 0.08);
+}
+
+html[data-acabamento='esmeralda'] :is(#boot, #error, #login, #about, #menu, #session-status) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-acabamento='esmeralda'] #bar {
+  background:
+    radial-gradient(65% 220% at 0% 0%, rgba(16, 185, 129, 0.28) 0%, transparent 58%),
+    radial-gradient(45% 180% at 50% -40%, rgba(250, 204, 21, 0.12) 0%, transparent 62%),
+    linear-gradient(180deg, #0d2b1f 0%, #061710 100%);
+  border-bottom: 1px solid rgba(52, 211, 153, 0.26);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+}
+
+html[data-acabamento='esmeralda'] .brand-emblem {
+  background: linear-gradient(155deg, #113829 0%, #071b13 100%);
+  border-color: rgba(250, 204, 21, 0.45);
+}
+
+html[data-acabamento='esmeralda'] :is(.coa-pill, .coa-sev, #who, .coa-clock) {
+  background-color: #0b241b;
+  border-color: rgba(52, 211, 153, 0.28);
+  color: #ecfdf5;
+}
+
+html[data-acabamento='esmeralda'] #actions .icon-btn {
+  background: linear-gradient(180deg, #113527 0%, #0a2118 100%);
+  border-color: rgba(52, 211, 153, 0.26);
+  color: #ecfdf5;
+}
+
+html[data-acabamento='esmeralda'] :is(.card, .sheet) {
+  background: linear-gradient(180deg, #0d281e 0%, #071912 100%);
+  border-color: rgba(52, 211, 153, 0.28);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.68), inset 0 1px 0 rgba(167, 243, 208, 0.08);
+}
+
+html[data-acabamento='esmeralda'] .sheet button {
+  background: #0f2f23;
+  border-color: rgba(52, 211, 153, 0.2);
+  color: #f0fdf4;
+}
+
+html[data-acabamento='esmeralda'] .sheet button:hover {
+  background: #164232;
+  border-color: rgba(250, 204, 21, 0.45);
+}
+
+html[data-acabamento='esmeralda'] .tema-bar {
+  background: #071b13;
+  border-color: rgba(52, 211, 153, 0.24);
+}
+
+html[data-acabamento='esmeralda'] .tema-seg {
+  background: #04110c;
+  border-color: rgba(52, 211, 153, 0.2);
+}
+
+html[data-acabamento='esmeralda'] :is(.campo input, .guide, code) {
+  background: #061710;
+  border-color: rgba(52, 211, 153, 0.26);
+  color: #f0fdf4;
+}
+
+/* =====================================================================
+   TEMA CLARO SOLAR EXECUTIVO (claro) — Máxima Nitidez Diurna (WCAG AAA)
+   Superfícies claras arquitetônicas, tipografia ardósia profunda e zero
+   texto lavado em salas iluminadas, tablets de campo e monitores diurnos
+   ===================================================================== */
+
+html[data-acabamento='claro'] {
+  --bg: #eef2f6;
+  --surface-0: #f8fafc;
+  --surface-1: #ffffff;
+  --surface-2: #f1f5f9;
+  --surface-3: #e2e8f0;
+  --bar: #ffffff;
+  --glass: #ffffff;
+  --ink: #0f172a;
+  --ink-soft: #1e293b;
+  --muted: #475569;
+  --line: rgba(15, 23, 42, 0.15);
+  --line-strong: rgba(15, 23, 42, 0.28);
+  --specular: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --ok: #059669;
+  --ok-strong: #047857;
+  --warn: #d97706;
+  --danger: #dc2626;
+  -webkit-font-smoothing: auto;
+}
+
+html[data-acabamento='claro'] :is(#boot, #error, #login, #about, #menu, #session-status) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-acabamento='claro'] #bar {
+  background:
+    radial-gradient(60% 220% at 0% 0%, rgba(16, 185, 129, 0.11) 0%, transparent 55%),
+    linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
+  border-bottom: 1px solid #cbd5e1;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.08);
+}
+
+/* Moldura verde-safra institucional preserva contraste do brasão Branco Peres */
+html[data-acabamento='claro'] .brand-emblem {
+  background: linear-gradient(155deg, #0d3826 0%, #072015 100%);
+  border-color: rgba(4, 120, 87, 0.55);
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.16);
+}
+
+html[data-acabamento='claro'] .brand-cia {
+  color: #334155;
+}
+
+html[data-acabamento='claro'] .brand-tag {
+  background: #dcfce7;
+  border-color: rgba(5, 150, 105, 0.45);
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] #brand-nome {
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] #brand b {
+  color: #047857;
+}
+
+html[data-acabamento='claro'] .brand-sub {
+  color: #475569;
+}
+
+html[data-acabamento='claro'] .brand-sub::before {
+  color: #94a3b8;
+}
+
+html[data-acabamento='claro'] .coa-pill {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #1e293b;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+html[data-acabamento='claro'] .coa-pill[data-state='live'] {
+  background: #dcfce7;
+  border-color: rgba(5, 150, 105, 0.5);
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] .coa-pill[data-state='rest'] {
+  background: #fef3c7;
+  border-color: rgba(217, 119, 6, 0.52);
+  color: #92400e;
+}
+
+html[data-acabamento='claro'] .coa-pill[data-state='warn'] {
+  background: #fee2e2;
+  border-color: rgba(220, 38, 38, 0.55);
+  color: #991b1b;
+}
+
+html[data-acabamento='claro'] .coa-sev {
+  background: #fef3c7;
+  border-color: rgba(217, 119, 6, 0.48);
+  color: #92400e;
+}
+
+html[data-acabamento='claro'] .coa-sev.critico {
+  background: #fee2e2;
+  border-color: rgba(220, 38, 38, 0.55);
+  color: #991b1b;
+}
+
+html[data-acabamento='claro'] #who {
+  background: #eff6ff;
+  border-color: rgba(37, 99, 235, 0.28);
+  color: #1e3a8a;
+  font-weight: 600;
+}
+
+html[data-acabamento='claro'] .coa-clock {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] #session-status {
+  background: #fef2f2;
+  border-color: rgba(220, 38, 38, 0.48);
+  color: #991b1b;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+}
+
+html[data-acabamento='claro'] #session-status:not(.erro) {
+  background: #fffbeb;
+  border-color: rgba(217, 119, 6, 0.48);
+  color: #92400e;
+}
+
+:where(html[data-acabamento='claro']) button,
+:where(html[data-acabamento='claro']) .btn {
+  background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
+  border-color: #cbd5e1;
+  color: #0f172a;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.07);
+}
+
+:where(html[data-acabamento='claro']) button:hover:not(:disabled),
+:where(html[data-acabamento='claro']) .btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+:where(html[data-acabamento='claro']) .primary,
+:where(html[data-acabamento='claro']) #btn-install {
+  background: linear-gradient(180deg, #047857 0%, #065f46 100%);
+  border-color: #065f46;
+  color: #ffffff;
+  box-shadow: 0 3px 10px rgba(4, 120, 87, 0.24);
+}
+
+:where(html[data-acabamento='claro']) .primary:hover:not(:disabled),
+:where(html[data-acabamento='claro']) #btn-install:hover:not(:disabled) {
+  background: linear-gradient(180deg, #059669 0%, #047857 100%);
+  border-color: #047857;
+  color: #ffffff;
+}
+
+html[data-acabamento='claro'] #actions .icon-btn {
+  background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
+  border-color: #cbd5e1;
+  color: #1e293b;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+html[data-acabamento='claro'] #actions .icon-btn:hover {
+  background: #ecfdf5;
+  border-color: #059669;
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] #actions #btn-voz-bar.voz-ativa {
+  background: #ecfdf5;
+  border-color: rgba(5, 150, 105, 0.48);
+  color: #047857;
+}
+
+html[data-acabamento='claro'] #actions #btn-voz-bar.voz-muda {
+  background: #fef2f2;
+  border-color: rgba(220, 38, 38, 0.5);
+  color: #b91c1c;
+}
+
+html[data-acabamento='claro'] #actions #btn-pip.pip-ativo {
+  background: #dcfce7;
+  border-color: #059669;
+  color: #065f46;
+}
+
+html[data-acabamento='claro'] #actions #btn-mic-bar.mic-ouvindo {
+  background: #fef3c7;
+  border-color: #d97706;
+  color: #92400e;
+}
+
+html[data-acabamento='claro'] #map {
+  background: #e2e8f0;
+}
+
+html[data-acabamento='claro'] :is(#boot, #error, #login, #about) {
+  background:
+    radial-gradient(80% 60% at 50% 0%, rgba(16, 185, 129, 0.1) 0%, transparent 65%),
+    radial-gradient(110% 110% at 50% 50%, rgba(248, 250, 252, 0.95) 0%, rgba(226, 232, 240, 0.98) 78%);
+}
+
+html[data-acabamento='claro'] #menu {
+  background: rgba(15, 23, 42, 0.35);
+}
+
+html[data-acabamento='claro'] :is(.card, .sheet) {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #0f172a;
+  box-shadow: 0 20px 52px rgba(15, 23, 42, 0.16);
+}
+
+html[data-acabamento='claro'] :is(.sheet h3, .card h2, .boot-title) {
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .card .marca {
+  filter: drop-shadow(0 4px 10px rgba(15, 23, 42, 0.18));
+}
+
+html[data-acabamento='claro'] .marca-halo {
+  background: radial-gradient(circle, rgba(5, 150, 105, 0.18), rgba(15, 23, 42, 0.08) 72%);
+}
+
+html[data-acabamento='claro'] .sheet-handle {
+  background: #cbd5e1;
+}
+
+html[data-acabamento='claro'] .sheet .sheet-fechar-x {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .sheet .sheet-fechar-x:hover {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #991b1b;
+}
+
+html[data-acabamento='claro'] .tema-bar {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+html[data-acabamento='claro'] .tema-bar-label {
+  color: #334155;
+}
+
+html[data-acabamento='claro'] .tema-seg {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+}
+
+html[data-acabamento='claro'] .sheet .tema-seg button {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+html[data-acabamento='claro'] .sheet .tema-seg button:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .sheet .tema-seg button[aria-pressed='true'] {
+  background: linear-gradient(180deg, #047857 0%, #065f46 100%);
+  border-color: #065f46;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(4, 120, 87, 0.25);
+}
+
+html[data-acabamento='claro'] .menu-group {
+  border-top-color: #e2e8f0;
+}
+
+html[data-acabamento='claro'] .sheet button {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .sheet button:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .m-ico {
+  background: #e2e8f0;
+}
+
+html[data-acabamento='claro'] .sheet .close {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+html[data-acabamento='claro'] :is(.about-pill, .guide, code) {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .guide code {
+  color: #b45309;
+  font-weight: 600;
+}
+
+html[data-acabamento='claro'] .card .msg {
+  color: #b45309;
+}
+
+html[data-acabamento='claro'] .campo input {
+  background: #ffffff;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+html[data-acabamento='claro'] .campo input::placeholder {
+  color: #64748b;
+}
+
+/* ====================== OTIMIZAÇÃO CROSS-BROWSER ====================== */
+
+html[data-trocando-tema='1'] *,
+html[data-trocando-tema='1'] *::before,
+html[data-trocando-tema='1'] *::after {
+  transition: none !important;
+}
+
+.sheet {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
 
