@@ -52,17 +52,18 @@ function runEvent(handler, event) {
   return pending;
 }
 
-test('push exibe alarme oficial e mantém os identificadores no notification.data consumido pelo clique', async () => {
+test('push exibe alarme oficial com frota sempre em números e mantém os identificadores no notification.data', async () => {
   const worker = loadWorker();
   const payload = {
-    title: 'Alarme oficial SGPA',
+    title: 'Alarme oficial SGPA · Caminhão oito oito três três',
     body: 'Caminhão oito oito três três excedeu a velocidade a 85 quilômetros por hora. Verificar.',
     tag: 'sgpa-occurrence-1',
     data: { equipmentId: '8833', occurrenceId: 'occurrence-1', typeId: '2203' },
   };
   await runEvent(worker.handlers.get('push'), { data: { json: () => payload } });
   assert.equal(worker.notifications.length, 1);
-  assert.equal(worker.notifications[0].title, 'Alarme oficial SGPA');
+  assert.equal(worker.notifications[0].title, 'Alarme oficial SGPA · Caminhão 8833');
+  assert.equal(worker.notifications[0].options.body, 'Caminhão 8833 excedeu a velocidade a 85 quilômetros por hora. Verificar.');
   assert.equal(worker.notifications[0].options.data.equipmentId, '8833');
   assert.equal(worker.notifications[0].options.data.occurrenceId, 'occurrence-1');
   assert.equal(worker.notifications[0].options.actions[0].action, 'ver-no-mapa');

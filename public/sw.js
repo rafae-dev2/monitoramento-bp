@@ -2,7 +2,7 @@
  * Só cacheamos o casco do app (HTML/CSS/JS/ícones). Sessão, APIs e dados do portal
  * passam sempre pela rede e NUNCA entram no cache.
  */
-const SHELL = 'bperes-shell-v57';
+const SHELL = 'bperes-shell-v58';
 const ASSETS = [
   '/',
   '/index.html',
@@ -112,8 +112,17 @@ self.addEventListener('push', (e) => {
     return;
   }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+  const mapaDig = {
+    zero: '0', um: '1', uma: '1', dois: '2', duas: '2', tres: '3', 'três': '3',
+    quatro: '4', cinco: '5', seis: '6', meia: '6', sete: '7', oito: '8', nove: '9',
+  };
+  const frotaEmNumeros = (s) =>
+    String(s || '').replace(
+      /\b((?:zero|uma?|dois|duas|tr[eê]s|quatro|cinco|seis|meia|sete|oito|nove)(?:\s+(?:zero|uma?|dois|duas|tr[eê]s|quatro|cinco|seis|meia|sete|oito|nove))+)\b/gi,
+      (trecho) => trecho.trim().split(/\s+/).map((p) => mapaDig[p.toLowerCase()] || p).join(''),
+    );
   const texto = (valor, padrao, limite) =>
-    typeof valor === 'string' && valor.trim() ? valor.trim().slice(0, limite) : padrao;
+    typeof valor === 'string' && valor.trim() ? frotaEmNumeros(valor.trim()).slice(0, limite) : padrao;
   const idString = (valor) =>
     typeof valor === 'string' || typeof valor === 'number' ? String(valor).trim().slice(0, 160) : '';
   const dados =

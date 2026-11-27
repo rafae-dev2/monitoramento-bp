@@ -163,20 +163,26 @@ export async function sintetizarVozGemini(opcoes = {}, deps = {}) {
     throw err;
   }
 
-  const textoBruto = String(opcoes.texto || '').trim().slice(0, 900);
-  if (!textoBruto) {
+  const textoLimpo = String(opcoes.texto || '').trim().slice(0, 900);
+  if (!textoLimpo) {
     const err = new Error('Texto vazio para síntese de voz.');
     err.status = 400;
     throw err;
   }
+  const textoBruto = textoLimpo
+    .replace(/\bC\s*[.\-]?\s*O\s*[.\-]?\s*A\b\.?/gi, 'côa')
+    .replace(/\b(?:Coa|côa)\b/gi, 'côa')
+    .replace(/\bF\s*[.\-]?\s*L\s*[.\-]?\s*O\s*[.\-]?\s*W\b\.?/gi, 'flôu')
+    .replace(/\b(?:Flow|flôu)\b/gi, 'flôu');
 
   const voiceName = normalizarVozGemini(opcoes.voz);
   const estilo = String(opcoes.estilo || 'comando').trim();
+  const regraSiglas = 'Pronuncie sempre "côa" como uma palavra única (côa) e "flôu" como uma palavra única (flôu), nunca soletre letras.';
   const direcao = estilo === 'urgente'
-    ? 'Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, tom urgente, firme e nítido de sala de controle operacional, lendo exatamente o texto a seguir sem acrescentar palavras:'
+    ? `Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, tom urgente, firme e nítido de sala de controle operacional. ${regraSiglas} Leia exatamente o texto a seguir sem acrescentar palavras:`
     : estilo === 'calmo'
-      ? 'Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, cadência pausada, clara e serena, lendo exatamente o texto a seguir sem acrescentar palavras:'
-      : 'Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, dicção clara e firme de centro de operações agrícolas, lendo exatamente o texto a seguir sem acrescentar palavras:';
+      ? `Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, cadência pausada, clara e serena. ${regraSiglas} Leia exatamente o texto a seguir sem acrescentar palavras:`
+      : `Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, dicção clara e firme de centro de operações agrícolas. ${regraSiglas} Leia exatamente o texto a seguir sem acrescentar palavras:`;
 
   const payload = {
     contents: [

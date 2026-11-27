@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '6.3.0';
+  const VERSAO = '6.4.0';
   const KEY_PAINEL_FIXO = 'bperes.visual.painel-fixo.v1';
   const KEY_GEMINI_KEY = 'bperes.ia.geminiKey.v1';
   const policy = window.AlertasPolicy;
@@ -3559,9 +3559,21 @@
   }
 
   function paraPronunciaNatural(texto) {
+    if (policy && typeof policy.normalizarPronunciaSetor === 'function') {
+      return policy.normalizarPronunciaSetor(texto);
+    }
     return String(texto == null ? '' : texto)
-      .replace(/\bC\s+O\s+A\b|\bCOA\b/g, 'Coa')
-      .replace(/\bF\s+L\s+O\s+W\b|\bFLOW\b/g, 'Flow');
+      .replace(/\bC\s*[.\-]?\s*O\s*[.\-]?\s*A\b\.?/gi, 'Coa')
+      .replace(/\bF\s*[.\-]?\s*L\s*[.\-]?\s*O\s*[.\-]?\s*W\b\.?/gi, 'Flow');
+  }
+
+  function paraFoneticaLocucao(texto) {
+    if (policy && typeof policy.paraFoneticaVoz === 'function') {
+      return policy.paraFoneticaVoz(texto);
+    }
+    return paraPronunciaNatural(texto)
+      .replace(/\b(?:Coa|côa)\b/gi, 'côa')
+      .replace(/\b(?:Flow|flôu)\b/gi, 'flôu');
   }
 
   function sanitizarChaveGemini(bruto) {
@@ -3680,13 +3692,15 @@
     }
 
     if (!dataUrl && chaveLocal) {
+      const textoFonetico = paraFoneticaLocucao(texto);
+      const regraSiglas = 'Pronuncie sempre "côa" como uma palavra única (côa) e "flôu" como uma palavra única (flôu), nunca soletre letras.';
       const direcao = estilo === 'urgente'
-        ? 'Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, tom urgente, firme e nítido de sala de controle operacional, lendo exatamente o texto a seguir sem acrescentar palavras:'
+        ? `Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, tom urgente, firme e nítido de sala de controle operacional. ${regraSiglas} Leia exatamente o texto a seguir sem acrescentar palavras:`
         : estilo === 'calmo'
-          ? 'Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, cadência pausada e serena, lendo exatamente o texto a seguir sem acrescentar palavras:'
-          : 'Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, dicção clara e firme de centro de operações agrícolas, lendo exatamente o texto a seguir sem acrescentar palavras:';
+          ? `Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, cadência pausada e serena. ${regraSiglas} Leia exatamente o texto a seguir sem acrescentar palavras:`
+          : `Fale em português do Brasil (pt-BR), com sotaque brasileiro natural, dicção clara e firme de centro de operações agrícolas. ${regraSiglas} Leia exatamente o texto a seguir sem acrescentar palavras:`;
       const { r, j } = await chamarGeminiDiretoCliente('gemini-2.5-flash-preview-tts', chaveLocal, {
-        contents: [{ role: 'user', parts: [{ text: `${direcao}\n"${texto}"` }] }],
+        contents: [{ role: 'user', parts: [{ text: `${direcao}\n"${textoFonetico}"` }] }],
         generationConfig: {
           responseModalities: ['AUDIO'],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voz } } },
@@ -3776,7 +3790,7 @@
     if (falando || vozBloqueada || !fila.length) return;
     limparTimersVozWeb();
     const item = fila.shift();
-    const texto = paraPronunciaNatural(item.texto);
+    const texto = paraFoneticaLocucao(item.texto);
 
     if (deveUsarVozGemini(item) && typeof Audio !== 'undefined') {
       falando = true;
@@ -4328,15 +4342,19 @@
   function notificar(a) {
     if (!a || !canalSistema(a) || !a.notificar || !cfg.notificacao || typeof Notification === 'undefined') return;
     if (Notification.permission !== 'granted') return;
-    const titulo = `${a.classe} ${a.numero} — ${a.nome}`;
+    const garantirNum = policy && typeof policy.garantirFrotaEmNumeros === 'function'
+      ? policy.garantirFrotaEmNumeros
+      : (v) => String(v == null ? '' : v);
+    const frotaNum = garantirNum(String(a.numero || (a.e && a.e.numero) || '').trim());
+    const titulo = garantirNum(`${a.classe} ${frotaNum} — ${a.nome}`);
     const opcoes = {
-      body: a.texto,
+      body: garantirNum(a.texto),
       tag: a.chave,
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
       requireInteraction: a.severidade >= 3,
       renotify: true,
-      data: { equipamento: String(a.e.id), chave: a.chave },
+      data: { equipamento: String(a.e.id), frota: frotaNum, chave: a.chave },
     };
     // Android/PWA exige showNotification; new Notification pode lançar TypeError.
     if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {

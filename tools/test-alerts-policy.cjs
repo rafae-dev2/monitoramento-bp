@@ -501,4 +501,35 @@ assert.equal(empacotadoUltimoCam.rascunho.FRENTE, '2');
 assert.equal(empacotadoUltimoCam.rascunho.CODIGO, '908');
 assert.equal(empacotadoUltimoCam.rascunho.IMPACTANTE, 'Crítico');
 
-console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 + v5.1 + v5.2 + v6.0 + v6.1 + v6.2 passaram.');
+// v6.4.0: Pronúncia fonética anti-soletração (COA -> côa, Flow -> flôu) e frotas numéricas nas notificações Push.
+assert.equal(
+  policy.normalizarPronunciaSetor('Atenção C.O.A. e F.L.O.W.: C O A / F L O W / COA / FLOW / coa / flow'),
+  'Atenção Coa e Flow: Coa / Flow / Coa / Flow / Coa / Flow'
+);
+assert.equal(
+  policy.paraFoneticaVoz('Atenção Coa e C.O.A.: falar com o Flow (F L O W) agora.'),
+  'Atenção côa e côa: falar com o flôu (flôu) agora.'
+);
+assert.doesNotMatch(policy.paraFoneticaVoz('COA C-O-A FLOW F-L-O-W'), /\bCOA\b|\bFLOW\b|C\s*O\s*A|F\s*L\s*O\s*W/i);
+assert.equal(
+  policy.garantirFrotaEmNumeros('Atenção Flow: Caminhão oito oito três três e Trator zero zero oito três com apenas um caminhão carregando.'),
+  'Atenção Flow: Caminhão 8833 e Trator 0083 com apenas um caminhão carregando.'
+);
+assert.equal(
+  policy.montarTituloPush({ numero: '8833', classe: 'Caminhão', e: { tipo: 'CAMINHÃO CANAVIEIRO' } }),
+  'Alarme oficial SGPA · Caminhão 8833'
+);
+assert.equal(
+  policy.montarTextoPush({ regra: 'velocidade', numero: '8833', valor: 85, e: { tipo: 'CAMINHÃO CANAVIEIRO' } }),
+  'Atenção Flow: Caminhão 8833 excedeu a velocidade a 85 quilômetros por hora. Verificar.'
+);
+assert.equal(
+  policy.montarTextoPush({
+    regra: 'flowUltimoCaminhao',
+    caminhoes: ['4468'],
+    e: { frente: 'Frente 2' },
+  }),
+  'Atenção Flow, urgente! Frente 2 com apenas um caminhão carregando, caminhão 4468, e nenhum caminhão no aguarde. Avaliar e enviar outro caminhão imediatamente.'
+);
+
+console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 + v5.1 + v5.2 + v6.0 + v6.1 + v6.2 + v6.4 passaram.');

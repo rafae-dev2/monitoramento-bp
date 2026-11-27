@@ -1124,7 +1124,7 @@ with sync_playwright() as pw:
       MonitoramentoAlertas.configurar({ sentinelaSegundoPlano: true });
       MonitoramentoAlertas.falar('Teste perfil COA firme com tom no Android', { oficial: true });
     }""")
-    page.wait_for_function("window.__nativePitchSpoken.some(x => x.text === 'Teste perfil Coa firme com tom no Android')", timeout=3000)
+    page.wait_for_function("window.__nativePitchSpoken.some(x => x.text === 'Teste perfil côa firme com tom no Android')", timeout=3000)
     assert page.evaluate("Math.abs(window.__nativePitchSpoken[0].pitch - 0.88) < 0.01 && Math.abs(window.__nativePitchSpoken[0].rate - 1.05) < 0.01 && window.__bgStates.includes(false) && window.__bgStates.at(-1) === true"), 'Perfil COA deve aplicar taxa/tom e sincronizar serviço Android 2º plano'
     print('OK: rótulos amigáveis, perfil de locução COA, tom encaminhado ao AndroidTTS e ponte de 2º plano validados')
 
@@ -1879,9 +1879,132 @@ with sync_playwright() as pw:
     page.evaluate("MonitoramentoAlertas.fecharSistemaChamados(); __test.restaurarFalas();")
     print('OK: Integração v6.2.0 (1-clique 📋 registrar chamado no modal -> Novo Chamado React pré-preenchido + retorno automático na Central) validada')
 
+    # --- Validação v6.4.0: UI/UX Dark Mode Refinado da Central de Alertas + Pronúncia Fonética côa/flôu + Notificação Sistema Numérica ---
+    page.evaluate("""() => {
+      __test.reset();
+      window.__systemNotifications.length = 0;
+      MonitoramentoAlertas.configurar({
+        ativo: true,
+        acabamentoPainel: 'escuro',
+        notificacao: true,
+        voz: false,
+        som: false,
+        popup: true,
+        somenteCriticos: false,
+      });
+      __test.espelharAlarmes([
+        {
+          cdEquipamento: 'UX-COA-1',
+          cdId: 'OCC-UX-1',
+          cdTpAlarme: 12,
+          descTpAlarme: 'RPM DO MOTOR NO MÁXIMO',
+          descEquipamento: '32277 - Transbordo BP',
+          descTpEquipamento: 'TRANSBORDO',
+          descFrente: 'Frente 2',
+          nmOperador: 'CARLOS EDUARDO',
+          vlAlarme: 2276,
+          fgOnline: true,
+        },
+        {
+          cdEquipamento: 'UX-FLOW-2',
+          cdId: 'OCC-UX-2',
+          cdTpAlarme: 5,
+          descTpAlarme: 'VELOCIDADE EXCEDIDA',
+          descEquipamento: '8833 - Caminhão Canavieiro',
+          descTpEquipamento: 'CAMINHÃO CANAVIEIRO',
+          descFrente: 'Frente 1',
+          nmOperador: 'MARCOS PAULO',
+          vlAlarme: 86,
+          fgOnline: true,
+        },
+      ]);
+    }""")
+    page.wait_for_function("window.__systemNotifications.length === 2", timeout=3000)
+    page.evaluate("""() => {
+      // Verifica que Notification do sistema mostra frota sempre em números (32277 / 8833) e nunca por extenso
+      for (const n of window.__systemNotifications) {
+        const txt = n.title + ' ' + ((n.options && n.options.body) || n.body || '');
+        if (/oito oito|três dois dois/i.test(txt)) {
+          throw new Error('Notificação exibiu frota por extenso: ' + JSON.stringify(n));
+        }
+      }
+      if (!window.__systemNotifications.some(n => n.title.includes('Transbordo 32277')) || !window.__systemNotifications.some(n => n.title.includes('Caminhão 8833'))) {
+        throw new Error('Notificação deveria exibir frota numérica 32277 e 8833: ' + JSON.stringify(window.__systemNotifications));
+      }
+
+      // Verifica UI/UX da Central de Alertas no Dark Mode Refinado
+      MonitoramentoAlertas.abrirPainel();
+      const painelCs = getComputedStyle(document.getElementById('alertas-painel'));
+      if (!/rgba?\(15,\s*23,\s*42/.test(painelCs.backgroundImage) && !/rgba?\(15,\s*23,\s*42/.test(painelCs.backgroundColor)) {
+        throw new Error('Painel lateral deve usar azul-grafite profundo (#0F172A): ' + painelCs.backgroundImage + ' / ' + painelCs.backgroundColor);
+      }
+
+      const cardCrit = document.querySelector('#lista-ativos .alerta.sev3');
+      const cardWarn = document.querySelector('#lista-ativos .alerta.sev2, #lista-ativos .alerta:not(.sev3)');
+      if (!cardCrit || !cardWarn) throw new Error('Cards de alerta ativo não renderizados na Central');
+      const critCs = getComputedStyle(cardCrit);
+      const warnCs = getComputedStyle(cardWarn);
+      if (critCs.borderLeftWidth !== '4px' || critCs.borderLeftColor !== 'rgb(239, 68, 68)') {
+        throw new Error('Card crítico deve ter border-left 4px #EF4444: ' + critCs.borderLeftWidth + ' ' + critCs.borderLeftColor);
+      }
+      if (warnCs.borderLeftWidth !== '4px' || warnCs.borderLeftColor !== 'rgb(249, 115, 22)') {
+        throw new Error('Card atenção deve ter border-left 4px #F97316: ' + warnCs.borderLeftWidth + ' ' + warnCs.borderLeftColor);
+      }
+      if (critCs.borderTopWidth !== '1px' || warnCs.borderTopWidth !== '1px') {
+        throw new Error('Cards devem ter borda fina 1px sem contorno grosso ao redor');
+      }
+      if (critCs.fontVariantNumeric !== 'tabular-nums') {
+        throw new Error('Card deve aplicar tabular-nums: ' + critCs.fontVariantNumeric);
+      }
+
+      // Caixa de transcrição sutil verde-escura + texto #E2E8F0
+      const falaBox = cardWarn.querySelector('.a-fala');
+      const falaCs = getComputedStyle(falaBox);
+      if (falaCs.color !== 'rgb(226, 232, 240)') {
+        throw new Error('Caixa de transcrição deve usar texto #E2E8F0: ' + falaCs.color);
+      }
+
+      // Botão Ciente lote em amarelo-âmbar sólido (#FACC15) com texto escuro (#0F172A, 700)
+      const btnLote = document.getElementById('btn-ack-lote');
+      const loteCs = getComputedStyle(btnLote);
+      if (loteCs.backgroundColor !== 'rgb(250, 204, 21)' || loteCs.color !== 'rgb(15, 23, 42)' || loteCs.fontWeight !== '700') {
+        throw new Error('Botão Ciente lote fora do padrão âmbar sólido: ' + loteCs.backgroundColor + ' / ' + loteCs.color + ' / ' + loteCs.fontWeight);
+      }
+
+      // Botões de ação do card padronizados (32px, #263347, #F1F5F9)
+      const btnOuvir = cardWarn.querySelector('[data-q="ouvir"]');
+      const acaoCs = getComputedStyle(btnOuvir);
+      if (acaoCs.height !== '32px' || acaoCs.backgroundColor !== 'rgb(38, 51, 71)') {
+        throw new Error('Botões internos do card devem ter 32px e fundo #263347: ' + acaoCs.height + ' / ' + acaoCs.backgroundColor);
+      }
+
+      // Rodapé fixo em grid de 3 colunas + botão principal Testar pop-up e voz em #10B981 / #052E16 (largura total)
+      const footer = document.querySelector('#alertas-painel footer');
+      const footerCs = getComputedStyle(footer);
+      const cols = footerCs.gridTemplateColumns.trim().split(/\\s+/);
+      if (cols.length !== 3) {
+        throw new Error('Rodapé fixo deve ter grid de 3 colunas: ' + footerCs.gridTemplateColumns);
+      }
+      const btnTeste = document.getElementById('btn-teste');
+      const testeCs = getComputedStyle(btnTeste);
+      if (testeCs.backgroundColor !== 'rgb(16, 185, 129)' || testeCs.color !== 'rgb(5, 46, 22)' || testeCs.fontWeight !== '700') {
+        throw new Error('Botão #btn-teste deve usar #10B981 com texto #052E16 (700): ' + testeCs.backgroundColor + ' / ' + testeCs.color);
+      }
+      if (Math.abs(btnTeste.getBoundingClientRect().width - (footer.getBoundingClientRect().width - 28)) > 4) {
+        throw new Error('Botão #btn-teste deve ocupar a largura total do rodapé');
+      }
+
+      // Verifica locução fonética no AndroidTTS para COA e Flow (côa e flôu, zero siglas soletráveis)
+      window.__nativePitchSpoken.length = 0;
+      MonitoramentoAlertas.configurar({ voz: true, vozURI: 'android:Android PT-BR A' });
+      MonitoramentoAlertas.falar('Atenção COA e C.O.A.: acionar FLOW e F.L.O.W. imediatamente.', { oficial: true });
+    }""")
+    page.wait_for_function("window.__nativePitchSpoken.some(x => x.text === 'Atenção côa e côa: acionar flôu e flôu imediatamente.')", timeout=3000)
+    print('OK: Central de Alertas Dark Mode Executivo v6.4.0, pronúncia fonética côa/flôu sem soletrar e frota numérica nas notificações validados')
+
     assert not errors, errors
     assert not any(m=='POST' for m,u in requests), 'Teste tentou POST'
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+22} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+23} grupos de verificações.')

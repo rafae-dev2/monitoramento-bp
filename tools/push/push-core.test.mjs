@@ -34,7 +34,9 @@ test('normaliza apenas alarmes SGPA ativos, pronuncia a classe real do equipamen
   assert.equal(alarm.typeId, '2203');
   assert.equal(alarm.category, 'velocidade');
   assert.equal(alarm.value, 85);
-  assert.match(alarm.payload.body, /^Atenção Flow: Caminhão oito oito três três/);
+  assert.equal(alarm.payload.title, 'Alarme oficial SGPA · Caminhão 8833');
+  assert.match(alarm.payload.body, /^Atenção Flow: Caminhão 8833/);
+  assert.doesNotMatch(alarm.payload.body, /oito oito três três/i);
   assert.match(alarm.payload.body, /85 quilômetros por hora/);
   assert.equal(alarm.payload.official, true);
   assert.deepEqual(toDatabaseAlarm(alarm).alarmKey, '8833|2203|4674575');
@@ -45,7 +47,9 @@ test('normaliza apenas alarmes SGPA ativos, pronuncia a classe real do equipamen
     descEquipamento: '0083 - Trator John Deere',
     descTpEquipamento: 'TRATOR',
   }]);
-  assert.match(tractorAlarms[0].payload.body, /^Atenção Coa: Trator zero zero oito três/);
+  assert.equal(tractorAlarms[0].payload.title, 'Alarme oficial SGPA · Trator 0083');
+  assert.match(tractorAlarms[0].payload.body, /^Atenção Coa: Trator 0083/);
+  assert.doesNotMatch(tractorAlarms[0].payload.body, /zero zero oito três/i);
 
   const bombeiroAlarms = normalizeAlertResponse([{
     ...speedFixture,
@@ -54,8 +58,9 @@ test('normaliza apenas alarmes SGPA ativos, pronuncia a classe real do equipamen
     descTpEquipamento: 'TRATOR DE PNEU LEVE',
     descGrupoEquipamento: 'CAMINHÕES BOMBEIROS',
   }]);
-  assert.match(bombeiroAlarms[0].payload.body, /^Atenção Flow: Caminhão nove nove um um/);
-  assert.doesNotMatch(bombeiroAlarms[0].payload.body, /trator|bombeir/i);
+  assert.equal(bombeiroAlarms[0].payload.title, 'Alarme oficial SGPA · Caminhão 9911');
+  assert.match(bombeiroAlarms[0].payload.body, /^Atenção Flow: Caminhão 9911/);
+  assert.doesNotMatch(bombeiroAlarms[0].payload.body, /nove nove um um|trator|bombeir/i);
 
   const turnoIgnored = normalizeAlertResponse([
     { ...speedFixture, cdId: 771, cdTpAlarme: 2849, descTpAlarme: 'TROCA DE TURNO' },
@@ -108,7 +113,7 @@ test('rejeita qualquer payload que não prove origem oficial SGPA', () => {
   assert.equal(acceptsDeviceAlarm(defaults, { equipmentId: '8833', typeId: '2203', body: 'calculado localmente' }), false);
 });
 
-test('payload Push mantém navegação interna, chave de deduplicação e aplica glossário por dispositivo', () => {
+test('payload Push mantém navegação interna, chave de deduplicação, converte legado por extenso em números e aplica glossário', () => {
   const prefs = normalizePushPreferences({ glossarioFala: 'excedeu=ultrapassou' });
   const payload = buildPushPayload(normalizeAlertResponse([speedFixture])[0].payload, 'abc-123', prefs);
   assert.equal(payload.url, '/');
@@ -117,5 +122,15 @@ test('payload Push mantém navegação interna, chave de deduplicação e aplica
   assert.equal(payload.data.typeId, '2203');
   assert.equal(payload.data.alertKey, '8833|sgpa:2203');
   assert.equal(payload.tag, 'sgpa-abc-123');
-  assert.match(payload.body, /ultrapassou a velocidade/);
+  assert.match(payload.body, /Caminhão 8833 ultrapassou a velocidade/);
+
+  const legado = buildPushPayload({
+    title: 'Alarme · Trator três dois dois sete cinco',
+    body: 'Atenção Coa: Trator três dois dois sete cinco sem comunicação.',
+    equipmentId: '32275',
+    typeId: '99',
+    official: true,
+  }, 'occ-leg', {});
+  assert.equal(legado.title, 'Alarme · Trator 32275');
+  assert.equal(legado.body, 'Atenção Coa: Trator 32275 sem comunicação.');
 });

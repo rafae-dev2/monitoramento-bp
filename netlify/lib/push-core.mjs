@@ -94,8 +94,8 @@ export function normalizeOfficialAlarm(row) {
     value,
     startedAt,
     payload: {
-      title: 'Alarme oficial SGPA',
-      body: AlertasPolicy.montarFala(alert),
+      title: AlertasPolicy.montarTituloPush(alert),
+      body: AlertasPolicy.montarTextoPush(alert),
       equipmentId,
       typeId,
       typeDescription,
@@ -193,21 +193,26 @@ export function acceptsDeviceAlarm(preferences, payload) {
 
 export function buildPushPayload(payload, occurrenceId, preferences) {
   const equipmentId = String((payload && payload.equipmentId) || '').slice(0, 64);
+  const fleetNumber = AlertasPolicy.garantirFrotaEmNumeros(String((payload && (payload.number || payload.equipmentId)) || '').trim()).slice(0, 32);
   const typeId = String((payload && payload.typeId) || '').slice(0, 48);
+  const rawTitle = AlertasPolicy.garantirFrotaEmNumeros(
+    String((payload && payload.title) || (fleetNumber ? `Alarme oficial SGPA · Frota ${fleetNumber}` : 'Alarme oficial SGPA')),
+  ).slice(0, 120);
   const rawBody = String((payload && payload.body) || 'Alarme oficial SGPA. Verificar.');
   const prefs = preferences && typeof preferences === 'object' ? preferences : null;
   const customizedBody = prefs && prefs.glossarioFala
     ? AlertasPolicy.aplicarGlossario(rawBody, { glossarioFala: String(prefs.glossarioFala).slice(0, MAX_GLOSSARY_TEXT) })
     : rawBody;
-  const body = customizedBody.slice(0, 320);
+  const body = AlertasPolicy.garantirFrotaEmNumeros(customizedBody).slice(0, 320);
   const id = String(occurrenceId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
   return {
-    title: 'Alarme oficial SGPA',
+    title: rawTitle,
     body,
     tag: id ? `sgpa-${id}`.slice(0, 120) : `sgpa-${equipmentId}`,
     url: '/',
     data: {
       equipmentId,
+      fleetNumber,
       occurrenceId: id,
       typeId,
       alertKey: equipmentId && typeId ? `${equipmentId}|sgpa:${typeId}` : '',
