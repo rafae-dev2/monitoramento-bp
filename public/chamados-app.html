@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta id="theme-color-meta" name="theme-color" content="#0F5233" />
+    <meta
+      name="description"
+      content="Sistema integrado de Chamados COA & FLOW (SGPA Solinftec) — Usina Branco Peres."
+    />
+    <meta property="og:title" content="Chamados Controle · COA & FLOW — Branco Peres" />
+    <meta
+      property="og:description"
+      content="Registro rápido de chamados operacionais integrado ao Monitoramento BP com controle Power BI e sincronização Supabase."
+    />
+    <meta property="og:type" content="website" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Chamados BP" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="alternate icon" href="/logo-branco-peres.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-icon.png" />
+    <link rel="manifest" href="/manifest-chamados.json" />
+    <title>Chamados Controle · COA &amp; FLOW — Branco Peres</title>
+    <script src="/chamados-bridge.js"></script>
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('bp_theme_preference_v1');
+          var sysDark =
+            window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var resolved =
+            saved === 'light' || saved === 'dark' ? saved : sysDark ? 'dark' : 'light';
+          var root = document.documentElement;
+          root.setAttribute('data-theme', resolved);
+          root.style.colorScheme = resolved;
+          var meta = document.getElementById('theme-color-meta');
+          if (meta) meta.setAttribute('content', resolved === 'dark' ? '#070D0A' : '#0F5233');
+        } catch (e) {}
+      })();
+    </script>
+    <link href="/static/css/main.37d1cd05.css" rel="stylesheet" />
+    <script type="module" crossorigin src="/assets/app-bzoriuqv.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/safrarenderer-bsl7ggrz.js">
+    <link rel="stylesheet" crossorigin href="/assets/safrarenderer-h2xynqa2.css">
+  </head>
+  <body>
+    <noscript>Você precisa habilitar o JavaScript para executar este aplicativo.</noscript>
+    <div id="root"></div>
+  </body>
+</html>

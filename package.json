@@ -1,10 +1,10 @@
 {
   "name": "monitoramento-bp",
-  "version": "6.1.0",
+  "version": "6.2.0",
   "private": true,
   "description": "Monitoramento BP PWA — funções serverless, Web Push otimizado para Supabase Free e testes fixture-only",
   "scripts": {
-    "test:syntax": "node --check public/alerts-policy.js && node --check public/alerts.js && node --check public/alerts-stream.js && node --check public/app.js && node --check public/local.js && node --check public/sw.js && node --check netlify/lib/gemini-coa.mjs && node --check netlify/functions/session.mjs && node --check netlify/functions/push-api.mjs && node --check netlify/functions/push-monitor.mjs",
+    "test:syntax": "node --check public/alerts-policy.js && node --check public/alerts.js && node --check public/alerts-stream.js && node --check public/chamados-bridge.js && node --check public/app.js && node --check public/local.js && node --check public/sw.js && node --check netlify/lib/gemini-coa.mjs && node --check netlify/functions/session.mjs && node --check netlify/functions/push-api.mjs && node --check netlify/functions/push-monitor.mjs",
     "test:push": "node --test tools/push/*.test.mjs",
     "test:stream": "node --test tools/alerts-stream.test.mjs",
     "test:audit": "node --test tools/test-audit-endpoint.mjs",

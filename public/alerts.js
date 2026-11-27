@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '6.1.0';
+  const VERSAO = '6.2.0';
   const KEY_PAINEL_FIXO = 'bperes.visual.painel-fixo.v1';
   const KEY_GEMINI_KEY = 'bperes.ia.geminiKey.v1';
   const policy = window.AlertasPolicy;
@@ -3113,9 +3113,10 @@
       e.nome = p.nome;
       e.numero = p.numero;
     }
-    if (a.nomeOperador) {
-      e.operadorBruto = String(a.nomeOperador);
-      e.operador = nomeOperador(a.nomeOperador);
+    const opOficial = a.nomeOperador || a.descOperador || a.nmOperador || a.descFuncionario;
+    if (opOficial) {
+      e.operadorBruto = String(opOficial);
+      e.operador = nomeOperador(opOficial);
     }
     if (a.descFrente != null && String(a.descFrente).trim() !== '') e.frente = String(a.descFrente).trim();
     if (a.descGrupoEquipamento != null) {
@@ -4491,6 +4492,7 @@
         <div><strong>Central de alertas · COA &amp; FLOW</strong><span id="alertas-status" class="fine"></span></div>
       </div>
       <div class="painel-head-acoes">
+        <button id="alertas-chamados" class="icone" type="button" title="Abrir Sistema de Chamados COA &amp; FLOW (Banco conectado)" aria-label="Sistema de Chamados">📝</button>
         <button id="alertas-fixar" class="icone" type="button" title="Fixar painel na lateral esquerda ao lado do mapa (Split-Screen)" aria-label="Fixar painel lateral" aria-pressed="false">📌</button>
         <button id="alertas-fechar" class="icone" title="Fechar" aria-label="Fechar">✕</button>
       </div>
@@ -4938,6 +4940,35 @@
       <p id="cfg-aviso" class="fine"></p>
     </div>
   </div>
+</div>
+
+<div id="modal-chamados-bp" class="hide" role="dialog" aria-modal="true" aria-label="Sistema Integrado de Chamados COA e FLOW">
+  <div class="veu"></div>
+  <div class="chamados-bp-box">
+    <header class="chamados-bp-head">
+      <div class="chamados-bp-titulo">
+        <img src="/logo-branco-peres.png" alt="" width="30" height="30" style="border-radius:6px;object-fit:contain;background:rgba(255,255,255,0.12);padding:2px" />
+        <div>
+          <strong>📝 Sistema de Chamados · COA &amp; FLOW</strong>
+          <span id="chamados-bp-sub">Integrado em tempo real com o banco de dados · Branco Peres</span>
+        </div>
+      </div>
+      <nav class="chamados-bp-nav" aria-label="Módulos do Sistema de Chamados">
+        <button type="button" class="ativo" data-chamados-rota="/novo">➕ Novo Chamado</button>
+        <button type="button" data-chamados-rota="/chamados">📋 Chamados</button>
+        <button type="button" data-chamados-rota="/relatorios/controle-powerbi">📊 Controle Power BI</button>
+        <button type="button" data-chamados-rota="/relatorios/desempenho-powerbi">📈 Desempenho BI</button>
+        <button type="button" data-chamados-rota="/kpi">🏆 Rankings KPI</button>
+        <button type="button" data-chamados-rota="/cadastros">⚙️ Cadastros</button>
+        <button type="button" data-chamados-diretoria="1">👑 Safra Diretoria</button>
+      </nav>
+      <div class="chamados-bp-acoes">
+        <button type="button" id="chamados-bp-nova-guia" title="Abrir esta tela do Sistema de Chamados em uma guia inteira">↗ Nova Guia</button>
+        <button type="button" id="chamados-bp-fechar" title="Voltar ao Mapa (o monitoramento continua ativo)">✕ Mapa</button>
+      </div>
+    </header>
+    <iframe id="iframe-chamados-bp" title="Sistema de Chamados COA &amp; FLOW — Branco Peres" allow="clipboard-write; fullscreen"></iframe>
+  </div>
 </div>`;
     // dentro do #stage para a barra do app (com o sino) continuar visível
     const palco = document.getElementById('stage') || document.body;
@@ -4975,6 +5006,9 @@
       passagemKpis: $('passagem-kpis'),
       passagemTexto: $('passagem-texto'),
       passagemWhats: $('passagem-whats'),
+      modalChamados: $('modal-chamados-bp'),
+      iframeChamados: $('iframe-chamados-bp'),
+      chamadosSub: $('chamados-bp-sub'),
     };
 
     const p = el.painel;
@@ -4995,7 +5029,28 @@
       el.busca.focus();
     };
     $('alertas-fechar').onclick = fecharPainel;
+    if ($('alertas-chamados')) $('alertas-chamados').onclick = () => abrirSistemaChamados('/novo');
     if ($('alertas-fixar')) $('alertas-fixar').onclick = () => alternarPainelFixo();
+    if (el.modalChamados) {
+      const veuChamados = el.modalChamados.querySelector('.veu');
+      if (veuChamados) veuChamados.onclick = fecharSistemaChamados;
+      if ($('chamados-bp-fechar')) $('chamados-bp-fechar').onclick = fecharSistemaChamados;
+      if ($('chamados-bp-nova-guia')) {
+        $('chamados-bp-nova-guia').onclick = () => {
+          const destino = rotaAtualChamados === '/diretoria-premium.html'
+            ? '/diretoria-premium.html'
+            : `/chamados-app.html?rota=${encodeURIComponent(rotaAtualChamados || '/novo')}`;
+          window.open(destino, '_blank', 'noopener');
+        };
+      }
+      el.modalChamados.querySelectorAll('[data-chamados-rota]').forEach((btnRota) => {
+        btnRota.onclick = () => abrirSistemaChamados(btnRota.dataset.chamadosRota || '/novo');
+      });
+      const btnDir = el.modalChamados.querySelector('[data-chamados-diretoria]');
+      if (btnDir) {
+        btnDir.onclick = () => abrirSistemaChamados('/diretoria-premium.html');
+      }
+    }
     p.querySelectorAll('[data-filtro-ativos]').forEach((b) => {
       b.onclick = () => definirFiltroAtivos(b.dataset.filtroAtivos);
     });
@@ -6319,6 +6374,98 @@
     return `<div class="a-telemetria" aria-label="Telemetria ao vivo">${itens.join('')}</div>`;
   }
 
+  /* ---------- Integração Sistema de Chamados COA & FLOW (v6.2) ---------- */
+  const KEY_DRAFT_CHAMADOS = 'chamados-flow.draft.novo';
+  const KEY_META_ALERTA_CHAMADOS = 'bperes.chamados.alertaAtivo.v1';
+  let rotaAtualChamados = '/novo';
+  let listenerChamadosInstalado = false;
+
+  function processarRetornoChamadoRegistrado(dados) {
+    if (!dados || dados.type !== 'bp-chamado-registrado') return;
+    const ch = dados.chamado || {};
+    const meta = dados.alertaMeta || null;
+    const chave = meta && meta.chave ? String(meta.chave) : '';
+    if (chave) {
+      const tagChamado = '📋 Chamado' + (ch.codigo ? ' #' + ch.codigo : ' registrado');
+      const notaChamado = [ch.descricao, ch.frota ? 'Frota ' + ch.frota : ''].filter(Boolean).join(' · ');
+      registrarTratativa(chave, { tag: tagChamado, nota: notaChamado });
+      podarAcks(acks);
+      acks[chave] = agora();
+      salvar(KEY_ACK, acks);
+      if (emergenciaAtiva && emergenciaAtiva.chave === chave) fecharBannerEmergencia();
+      renderAtivos();
+      renderCabecalho();
+    }
+    mostrarAviso(
+      `✅ Chamado registrado no banco${ch.frota ? ' (Frota ' + ch.frota + ')' : ''}${chave ? ' e ocorrência marcada como tratada na Central!' : '!'}`,
+      'info'
+    );
+  }
+
+  function garantirListenerChamados() {
+    if (listenerChamadosInstalado) return;
+    listenerChamadosInstalado = true;
+    window.addEventListener('message', (ev) => {
+      if (ev.origin !== window.location.origin) return;
+      processarRetornoChamadoRegistrado(ev.data);
+    });
+    try {
+      if (typeof BroadcastChannel === 'function') {
+        const bc = new BroadcastChannel('bperes-chamados-sync');
+        bc.onmessage = (ev) => processarRetornoChamadoRegistrado(ev.data);
+      }
+    } catch { /* navegador sem BroadcastChannel */ }
+  }
+
+  function atualizarAbasModalChamados(rota) {
+    if (!el.modalChamados) return;
+    el.modalChamados.querySelectorAll('[data-chamados-rota]').forEach((b) => {
+      b.classList.toggle('ativo', b.dataset.chamadosRota === rota);
+    });
+    const btnDir = el.modalChamados.querySelector('[data-chamados-diretoria]');
+    if (btnDir) btnDir.classList.toggle('ativo', rota === '/diretoria-premium.html');
+  }
+
+  function abrirSistemaChamados(rota = '/novo', subtitulo = '') {
+    if (!el.modalChamados) montar();
+    garantirListenerChamados();
+    const rotaLimpa = String(rota || '/novo').trim() || '/novo';
+    rotaAtualChamados = rotaLimpa;
+    atualizarAbasModalChamados(rotaLimpa);
+    if (el.chamadosSub) {
+      el.chamadosSub.textContent = subtitulo || 'Integrado em tempo real com o banco de dados · Branco Peres';
+    }
+    el.modalChamados.classList.remove('hide');
+    const sufixoTeste = window.__CHAMADOS_TEST_MODE__ === true ? '&modoTeste=1' : '';
+    const novaUrl = rotaLimpa === '/diretoria-premium.html'
+      ? '/diretoria-premium.html'
+      : `/chamados-app.html?rota=${encodeURIComponent(rotaLimpa)}&ts=${agora()}${sufixoTeste}`;
+    if (el.iframeChamados) {
+      el.iframeChamados.src = novaUrl;
+    }
+  }
+
+  function fecharSistemaChamados() {
+    if (el.modalChamados) el.modalChamados.classList.add('hide');
+  }
+
+  function abrirChamadoDeAlerta(alerta) {
+    if (!alerta) {
+      abrirSistemaChamados('/novo');
+      return null;
+    }
+    const eqVivo = (alerta.e && alerta.e.id && frota.get(String(alerta.e.id))) || alerta.e || null;
+    const fonteCompleta = eqVivo ? Object.assign({}, alerta, { e: eqVivo }) : alerta;
+    const { rascunho, alertaMeta } = policy.montarRascunhoChamado(fonteCompleta, cfg);
+    try {
+      localStorage.setItem(KEY_DRAFT_CHAMADOS, JSON.stringify(rascunho));
+      localStorage.setItem(KEY_META_ALERTA_CHAMADOS, JSON.stringify(alertaMeta));
+    } catch { /* sem storage */ }
+    const sub = `📡 Preenchido do alerta [${alertaMeta.setor}]: ${alertaMeta.classe} ${alertaMeta.numero} — ${alertaMeta.nome}`;
+    abrirSistemaChamados('/novo', sub);
+    return rascunho;
+  }
+
   function card(a, comAccoes, contexto) {
     const ts = agora();
     const reconhecido = alertaReconhecido(a, ts);
@@ -6370,6 +6517,7 @@
         </div>
       </div>` : ''}
       <div class="a-acoes">
+        <button type="button" data-q="chamado" class="btn-chamado" title="Abrir Sistema de Chamados já preenchido com as informações deste alerta">📋 registrar chamado</button>
         <button data-q="ouvir">▶ ouvir</button>
         <button data-q="mapa">📍 ver no mapa</button>
         <button data-q="whats" title="Copiar cobrança padronizada COA e abrir WhatsApp">💬 cobrar</button>
@@ -6378,6 +6526,13 @@
         ${comAccoes && !reconhecido ? '<button data-q="ack">✓ reconhecer</button>' : comAccoes ? '<span class="a-chip verde">🛠️ Em acompanhamento</span>' : ''}
         <button data-q="fechar" class="fim">✕</button>
       </div>`;
+    const btnChamadoCard = d.querySelector('[data-q="chamado"]');
+    if (btnChamadoCard) {
+      btnChamadoCard.onclick = (ev) => {
+        ev.stopPropagation();
+        abrirChamadoDeAlerta(a);
+      };
+    }
     d.querySelector('[data-q="ouvir"]').onclick = () => {
       mostrarToast(a, false);
       falar(a.fala, { toastExibido: true });
@@ -6581,7 +6736,15 @@
           `<span class="a-chip ${setorH === 'FLOW' ? 'setor-flow' : 'setor-coa'}">${setorH === 'FLOW' ? '🚛 FLOW' : '🚜 COA'}</span>` +
           `<span class="a-chip">${esc(h.nomeAlarme || r.nome)}</span>${h.frenteInferida ? `<span class="a-chip">Frente inferida: ${esc(h.frenteInferida)}</span>` : ''}${h.tratativa ? `<span class="a-chip verde">📝 ${esc(h.tratativa)}</span>` : ''}${h.notificacaoSelecionada === false ? '<span class="a-chip cinza">sem aviso</span>' : ''}<span class="a-hora">${hora(h.ts)}</span></div>` +
           `<p class="a-txt">${esc(h.texto)}</p>` +
-          `<p class="a-meta">${esc(h.descricao || '')}${h.operador ? ' · ' + esc(h.operador) : ''} · fonte ${esc(h.fonte)}</p>`;
+          `<p class="a-meta">${esc(h.descricao || '')}${h.operador ? ' · ' + esc(h.operador) : ''} · fonte ${esc(h.fonte)}</p>` +
+          `<div class="a-acoes a-acoes-hist"><button type="button" data-q="chamado" class="btn-chamado">📋 registrar chamado</button></div>`;
+        const btnChHist = d.querySelector('[data-q="chamado"]');
+        if (btnChHist) {
+          btnChHist.onclick = (ev) => {
+            ev.stopPropagation();
+            abrirChamadoDeAlerta(Object.assign({ severidade: r.severidade, nome: h.nomeAlarme || r.nome }, h));
+          };
+        }
         d.onclick = () => falar(h.fala || h.texto);
         el.historico.appendChild(d);
       }
@@ -7989,6 +8152,9 @@
     ouvirComandoVoz,
     registrarTratativa,
     cobrarNoWhatsApp,
+    abrirChamadoDeAlerta,
+    abrirSistemaChamados,
+    fecharSistemaChamados,
     gerarPassagemTurno,
     abrirPassagemTurno,
     fecharPassagemTurno,

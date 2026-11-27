@@ -487,6 +487,16 @@
 
   $('btn-menu').addEventListener('click', () => (el.menu.classList.contains('hide') ? show(el.menu) : hide(el.menu)));
   $('btn-portal').addEventListener('click', () => {});
+  if ($('btn-chamados-bar')) {
+    $('btn-chamados-bar').addEventListener('click', () => {
+      if (ALERTAS_ON && !alertasLigados && session) ligarAlertas();
+      if (window.MonitoramentoAlertas && typeof window.MonitoramentoAlertas.abrirSistemaChamados === 'function') {
+        window.MonitoramentoAlertas.abrirSistemaChamados('/novo');
+      } else {
+        window.open('/chamados-app.html?rota=/novo', '_blank', 'noopener');
+      }
+    });
+  }
 
   function aplicarTemaShell(valor, persistir) {
     if (window.MonitoramentoAlertas && typeof window.MonitoramentoAlertas.aplicarTema === 'function') {
@@ -541,6 +551,14 @@
     if (act === 'alertas' && ALERTAS_ON) {
       if (!alertasLigados && session) ligarAlertas();
       MonitoramentoAlertas.abrirPainel('ativos');
+    }
+    if (act === 'chamados') {
+      if (ALERTAS_ON && !alertasLigados && session) ligarAlertas();
+      if (window.MonitoramentoAlertas && typeof window.MonitoramentoAlertas.abrirSistemaChamados === 'function') {
+        window.MonitoramentoAlertas.abrirSistemaChamados('/novo');
+      } else {
+        window.open('/chamados-app.html?rota=/novo', '_blank', 'noopener');
+      }
     }
     if (act === 'fixar-painel' && ALERTAS_ON) {
       if (!alertasLigados && session) ligarAlertas();

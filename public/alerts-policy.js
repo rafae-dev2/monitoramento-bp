@@ -1990,6 +1990,227 @@
     };
   }
 
+  function mapearFrenteChamado(rotuloBruto, grupoBruto) {
+    var candidatos = [rotuloBruto, grupoBruto];
+    for (var i = 0; i < candidatos.length; i += 1) {
+      var s = norm(candidatos[i] == null ? '' : String(candidatos[i])).replace(/[^a-z0-9]+/g, ' ').trim();
+      if (!s) continue;
+      if (/\bfrente(?:\s+de\s+colheita)?\s*0*1\b|^0*1$|^f0*1$/.test(s)) return '1';
+      if (/\bfrente(?:\s+de\s+colheita)?\s*0*2\b|^0*2$|^f0*2$/.test(s)) return '2';
+      if (/\bfrente(?:\s+de\s+colheita)?\s*0*3\b|^0*3$|^f0*3$/.test(s)) return '3';
+      if (/\bfrente(?:\s+de\s+colheita)?\s*0*4\b|^0*4$|^f0*4$/.test(s)) return '4';
+      if (/\bcolhe\w*\s+muda\b/.test(s)) return 'Colhe Muda';
+      if (/\bplantio\b/.test(s)) return 'Plantio';
+      if (/\bherbicid\w*/.test(s)) return 'Herbicida';
+      if (/\bfertirrig\w*|\bvinhac\w*/.test(s)) return 'Fertirrigação';
+      if (/\bsistematiz\w*|\bpreparo\b/.test(s)) return 'Sistematização';
+      if (/\btratos\b|\bcultivo\b|\badub\w*/.test(s)) return 'Tratos';
+      if (/\bcomboio\b|\babastec\w*/.test(s)) return 'Comboio';
+      if (/\boficina\b|\bmanutenc\w*|\bborrach\w*/.test(s)) return 'Oficina';
+      if (/\bpatio\b|\bbalanca\b|\bindustria\b/.test(s)) return 'Patio';
+      if (/\bgraos\b|\bsoja\b|\bmilho\b/.test(s)) return 'Grãos';
+      if (/\bterceir\w*|\bterc\b/.test(s)) return 'Terceiro';
+      if (/\bpropri\w*/.test(s)) return 'Proprio';
+    }
+    return '';
+  }
+
+  function mapearCodigoChamado(item) {
+    var a = isObject(item) ? item : {};
+    var cat = categoryFromAlert(a);
+    var pId = String(a.paradaId || '');
+    var txt = norm([a.nomeAlarme, a.nome, a.descricao, a.texto, a.paradaNome].filter(Boolean).join(' '));
+
+    if (cat === 'velocidade') {
+      if (/\babaixo\b|\bminima\b/.test(txt)) return { codigo: '998', descricao: 'VELOCIDADE ABAIXO', erro: 'Erro Operacional' };
+      return { codigo: '20000', descricao: 'VELOCIDADE A CIMA', erro: 'Erro Operacional' };
+    }
+    if (cat === 'rpm' || cat === 'motorCondicao') {
+      return { codigo: '10000', descricao: 'RPM MAXIMA DE MOTOR', erro: 'Erro Operacional' };
+    }
+    if (cat === 'ocioso' || cat === 'chaveGeralLigada') {
+      return { codigo: '40000', descricao: 'MOTOR OCIOSO', erro: 'Incoerente' };
+    }
+    if (cat === 'semApontamento') {
+      return { codigo: '953', descricao: 'Sem Apontamento', erro: 'Erro Operacional' };
+    }
+    if (cat === 'refeicao') {
+      return { codigo: '900', descricao: 'Refeição e/ou Café - HR', erro: 'Erro Operacional' };
+    }
+    if (cat === 'aguardandoCaminhao') {
+      return { codigo: '905', descricao: 'Aguardando Caminhão - HR', erro: 'Nenhum' };
+    }
+    if (cat === 'aguardandoBasculamento') {
+      return { codigo: '969', descricao: 'Aguard Bascul Transbo', erro: 'Divergente' };
+    }
+    if (cat === 'flowUltimoCaminhao') {
+      return { codigo: '908', descricao: 'Aguardando Carregamento - HD', erro: 'Nenhum' };
+    }
+    if (cat === 'abastecimentoMotorLigado') {
+      return { codigo: '980', descricao: 'Abastecimento Motor Ligado', erro: 'Erro Operacional' };
+    }
+    if (cat === 'emergencia') {
+      return { codigo: '982', descricao: 'Combate ao Incendio', erro: 'Nenhum' };
+    }
+    if (cat === 'telemetriaMuda') {
+      return { codigo: '975', descricao: 'Computador de Bordo Desligado', erro: 'Divergente' };
+    }
+    if (cat === 'semOperadorTrabalhando') {
+      return { codigo: '300', descricao: 'Operador Divergente', erro: 'Erro Operacional' };
+    }
+    if (cat === 'inconsistenciaApontamento' || cat === 'frenteDividida' || cat === 'microParadasCronicas') {
+      return { codigo: '301', descricao: 'Parada Divergente', erro: 'Divergente' };
+    }
+    if (cat === 'bateVolta') {
+      return { codigo: '266', descricao: 'Transporte de Cana Carregado', erro: 'Divergente' };
+    }
+    if (cat === 'manutencaoPreditiva') {
+      return { codigo: '986', descricao: 'Equipamento em Manutenção', erro: 'Nenhum' };
+    }
+    if (cat === 'riscoMoenda') {
+      return { codigo: '911', descricao: 'Parada Industrial - DH', erro: 'Nenhum' };
+    }
+
+    var porParada = {
+      aguardandoCarregamento: { codigo: '908', descricao: 'Aguardando Carregamento - HD', erro: 'Nenhum' },
+      aguardComboio: { codigo: '917', descricao: 'Aguardando Comboio - HR', erro: 'Nenhum' },
+      abastLubrifExcedido: { codigo: '901', descricao: 'Abastecimento Lubrificacao', erro: 'Erro Operacional' },
+      trocaFacas: { codigo: '962', descricao: 'Troca Facas', erro: 'Nenhum' },
+      lavagemEquipamento: { codigo: '929', descricao: 'Lavagem  - HR', erro: 'Nenhum' },
+      faltaTransbordo: { codigo: '928', descricao: 'Falta de Transbordo - HR', erro: 'Nenhum' },
+      faltaOperador: { codigo: '926', descricao: 'Falta de Operador - HR', erro: 'Erro Operacional' },
+      filaUnica: { codigo: '974', descricao: 'Fila Única', erro: 'Nenhum' },
+      aguardMecanico: { codigo: '950', descricao: 'Aguardando Mecânico - HR', erro: 'Nenhum' },
+      emManutencao: { codigo: '986', descricao: 'Equipamento em Manutenção', erro: 'Nenhum' },
+      equipamentoEncalhado: { codigo: '943', descricao: 'Equipamento Encalhado - HR', erro: 'Nenhum' },
+      agColhedoraParadaRapida: { codigo: '990', descricao: 'Aguardando Colheitadeira', erro: 'Nenhum' },
+      aguardandoColhedoraAlocada: { codigo: '985', descricao: 'Aguardando Colhedora Alocada', erro: 'Nenhum' },
+      aguardManobraTransbordo: { codigo: '971', descricao: 'Aguardando Manobra de Transbordo', erro: 'Nenhum' },
+      agSequencTrabalho: { codigo: '964', descricao: 'Ag. Sequenc. de Trabalho', erro: 'Nenhum' },
+      aguardLiberarTrafego: { codigo: '966', descricao: 'Aguard Liberar Trafego', erro: 'Nenhum' },
+      aguardReboqueCaminhao: { codigo: '961', descricao: 'Aguard.Reboque Caminhão', erro: 'Nenhum' },
+      aguardBasculamento: { codigo: '969', descricao: 'Aguard Bascul Transbo', erro: 'Nenhum' },
+      paradaIndustrial: { codigo: '911', descricao: 'Parada Industrial - DH', erro: 'Nenhum' },
+      filaBalancaPatio: { codigo: '914', descricao: 'Aguard Desc na Indústria - HR', erro: 'Nenhum' },
+      trocaJulietaEngate: { codigo: '263', descricao: 'Trocando Julieta no Campo', erro: 'Nenhum' },
+      aguardPrancha: { codigo: '936', descricao: 'Aguard. Transp. (Prancha) - HR', erro: 'Nenhum' },
+      aguardMuda: { codigo: '932', descricao: 'Aguardando Cana Muda - HR', erro: 'Nenhum' },
+      aguardInsumo: { codigo: '918', descricao: 'Falta de Insumos - HR', erro: 'Nenhum' },
+      aguardAgua: { codigo: '992', descricao: 'Aguard Desc Agua Vinhaca', erro: 'Nenhum' }
+    };
+    if (pId && porParada[pId]) return porParada[pId];
+
+    if (cat === 'gestaoFrente') {
+      if (/fila/.test(txt)) return { codigo: '974', descricao: 'Fila Única', erro: 'Nenhum' };
+      if (/transbordo/.test(txt)) return { codigo: '990', descricao: 'Aguardando Colheitadeira', erro: 'Nenhum' };
+      return { codigo: '928', descricao: 'Falta de Transbordo - HR', erro: 'Nenhum' };
+    }
+
+    if (/\bpiloto\b/.test(txt)) return { codigo: '996', descricao: 'PILOTO DESLIGADO', erro: 'Erro Operacional' };
+    if (/\bdensidade\b/.test(txt)) return { codigo: '994', descricao: 'DENSIDADE BAIXA', erro: 'Erro Operacional' };
+    if (/\bchecklist\b/.test(txt)) return { codigo: '963', descricao: 'CHECKLIST', erro: 'Divergente' };
+    if (/\bcentro de custo\b/.test(txt)) return { codigo: '106', descricao: 'CENTRO DE CUSTO DIVERGENTE', erro: 'Divergente' };
+    if (/\babastec\w*.*motor ligado/.test(txt)) return { codigo: '980', descricao: 'Abastecimento Motor Ligado', erro: 'Erro Operacional' };
+
+    return {
+      codigo: '',
+      descricao: String(a.nomeAlarme || a.nome || a.descricao || 'Ocorrência SGPA').trim(),
+      erro: 'Erro Operacional'
+    };
+  }
+
+  function limparNomeOperadorSgpa(bruto) {
+    var s = String(bruto == null ? '' : bruto).trim();
+    if (!s) return '';
+    s = s.replace(/^\d+\s*[-–—:]\s*/, '').trim();
+    if (!s || /^(?:sem operador|nao informado|indefinido|-+)$/i.test(norm(s))) return '';
+    return s.toUpperCase();
+  }
+
+  function montarRascunhoChamado(alerta, cfg) {
+    var item = isObject(alerta) ? alerta : {};
+    var ev = eventFor(item) || {};
+    var tsNum = Number(item.ts) > 0 ? Number(item.ts) : Date.now();
+    var dt = new Date(tsNum);
+    var pad2 = function (n) { return String(n).padStart(2, '0'); };
+    var dataIso = dt.getFullYear() + '-' + pad2(dt.getMonth() + 1) + '-' + pad2(dt.getDate());
+    var horaStr = pad2(dt.getHours()) + ':' + pad2(dt.getMinutes());
+    var horaNum = dt.getHours();
+
+    var setor = item.setor === 'FLOW' || item.setor === 'COA' ? item.setor : setorControle(item, ev);
+    var classe = item.classe || classeEquipamentoFalado(item, ev);
+    var frenteBruta = String(item.frente || (ev && ev.frente) || item.frenteInferida || (ev && ev.frenteInferida) || '').trim();
+    var grupoBruto = String((ev && ev.grupoEquipamento) || '').trim();
+    var frenteMapeada = mapearFrenteChamado(frenteBruta, grupoBruto);
+
+    var frotaBruta = '';
+    if (Array.isArray(item.caminhoes) && item.caminhoes.length && /^\d+$/.test(String(item.caminhoes[0]).trim())) {
+      frotaBruta = String(item.caminhoes[0]).trim();
+    } else {
+      var candNum = String(item.numero != null ? item.numero : (item.equipamento != null ? item.equipamento : (ev.numero || ''))).trim();
+      var mDig = /\b(\d{2,7})\b/.exec(candNum);
+      frotaBruta = mDig ? mDig[1] : (/^(?:frente|flow)/i.test(candNum) ? '' : candNum);
+    }
+
+    var codMap = mapearCodigoChamado(item);
+    var operadorLimpo = limparNomeOperadorSgpa(item.operador || (ev && ev.operador));
+    var turnoInfo = turnoAtualCoa(tsNum);
+    var turnoLetra = turnoInfo && turnoInfo.codigo === 'T2' ? 'B' : (turnoInfo && turnoInfo.codigo === 'T3' ? 'C' : 'A');
+    var critico = ehAlertaCritico(cfg || {}, item) || Number(item.severidade) >= 3;
+    var liderCfg = String(item.lider || liderFrente(cfg || {}, frenteBruta || frenteMapeada) || '').trim().toUpperCase();
+    var cargoSugerido = setor === 'FLOW'
+      ? 'CONTROLADOR DE FLUXO'
+      : (/^[1234]$/.test(frenteMapeada) ? 'LIDER COLHEITA' : 'LIDER');
+
+    var tituloAlerta = String(item.nomeAlarme || item.nome || codMap.descricao || 'Alerta SGPA').trim();
+    var textoAlerta = String(item.texto || '').trim();
+    var detalheAlerta = String(item.detalhe || '').trim();
+    var partesObs = [
+      '[Alerta Monitoramento BP · Controle ' + setor + ']',
+      '• Ocorrência: ' + tituloAlerta + (textoAlerta ? ' — ' + textoAlerta : ''),
+      '• Equipamento: ' + classe + (frotaBruta ? ' ' + frotaBruta : '') +
+        (frenteBruta ? ' · Frente: ' + frenteBruta : '') +
+        (grupoBruto && grupoBruto !== frenteBruta ? ' · Grupo: ' + grupoBruto : ''),
+      operadorLimpo ? ('• Operador SGPA: ' + operadorLimpo) : '• Operador SGPA: não identificado no bordo',
+      '• Horário do alerta: ' + pad2(dt.getDate()) + '/' + pad2(dt.getMonth() + 1) + '/' + dt.getFullYear() + ' às ' + horaStr
+    ];
+    if (detalheAlerta) partesObs.push('• Telemetria: ' + detalheAlerta);
+    partesObs.push('• Complemento ' + setor + ': ');
+
+    var rascunho = {
+      FROTA: frotaBruta,
+      COMUNICACAO: 'RADIO',
+      CARGO: cargoSugerido,
+      FRENTE: frenteMapeada,
+      LIDER: liderCfg,
+      CODIGO: codMap.codigo,
+      DESCRICAO: codMap.descricao,
+      OBSERVACOES: partesObs.join('\n'),
+      DATA: dataIso,
+      HORA: horaStr,
+      HORA_NUM: horaNum,
+      SUCESSO: 'SIM',
+      JUSTIFICATIVA: 'Sim/Lider',
+      TURNO: turnoLetra,
+      IMPACTANTE: critico ? 'Crítico' : 'Não Impactante',
+      OPERADOR: operadorLimpo,
+      ERRO_OPERACIONAL: codMap.erro
+    };
+
+    return {
+      rascunho: rascunho,
+      alertaMeta: {
+        chave: String(item.chave || ''),
+        numero: frotaBruta || String(item.numero || item.equipamento || ''),
+        classe: classe,
+        setor: setor,
+        frente: frenteBruta || frenteMapeada,
+        nome: tituloAlerta,
+        ts: tsNum
+      }
+    };
+  }
+
   return Object.freeze({
     norm: norm,
     alarmeTrocaDeTurno: alarmeTrocaDeTurno,
@@ -2047,6 +2268,9 @@
     operandoSemOperador: operandoSemOperador,
     meiaChaveParada: meiaChaveParada,
     abastecendoComMotorLigado: abastecendoComMotorLigado,
-    avaliarMicroParadas: avaliarMicroParadas
+    avaliarMicroParadas: avaliarMicroParadas,
+    mapearFrenteChamado: mapearFrenteChamado,
+    mapearCodigoChamado: mapearCodigoChamado,
+    montarRascunhoChamado: montarRascunhoChamado
   });
 }));

@@ -110,6 +110,30 @@ with sync_playwright() as pw:
             r.fulfill(status=200, content_type='application/json', body=json.dumps([{'cdEquipamento':'TESTE-API','cdTpAlarme':5,'descTpAlarme':'VELOCIDADE','vlAlarme':85,'fgOnline':True}]))
         elif '/alarmeTempoEquipamento' in url:
             r.fulfill(status=200, content_type='application/json', body='[]')
+        elif url.startswith('https://fixture.invalid/'):
+            from urllib.parse import urlparse
+            rel_path = urlparse(url).path.lstrip('/')
+            local_file = (ROOT / 'public' / rel_path) if rel_path else None
+            if local_file and local_file.is_file() and (
+                rel_path in ('chamados-app.html', 'chamados-bridge.js', 'diretoria-premium.html', 'manifest-chamados.json', 'logo-branco-peres.png', 'icon.svg', 'apple-icon.png', 'registrar-chamado.mp3', 'registrar-chamado-2.mp3')
+                or rel_path.startswith('assets/')
+                or rel_path.startswith('static/')
+            ):
+                ext = local_file.suffix.lower()
+                mime = {
+                    '.html': 'text/html; charset=utf-8',
+                    '.js': 'application/javascript; charset=utf-8',
+                    '.css': 'text/css; charset=utf-8',
+                    '.json': 'application/json',
+                    '.svg': 'image/svg+xml',
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.mp3': 'audio/mpeg',
+                }.get(ext, 'application/octet-stream')
+                r.fulfill(status=200, content_type=mime, body=local_file.read_bytes())
+            else:
+                r.fulfill(status=200, content_type='image/png', body=b'')
         else:
             r.fulfill(status=200, content_type='image/png', body=b'')
     context.route('**/*', route)
@@ -1725,9 +1749,63 @@ with sync_playwright() as pw:
     }""")
     print('OK: Controle FLOW Urgente v6.1.0 (alertas individuais Frente 1, Frente 2 e Frente 3: 1 carregando + 0 no aguarde) validado')
 
+    # --- Validação v6.2.0: Clique em "📋 registrar chamado" no modal flutuante -> abre Novo Chamado React já preenchido + retorno automático ---
+    page.evaluate("""() => {
+      window.__CHAMADOS_TEST_MODE__ = true;
+      __test.reset();
+      __test.capturarFalas();
+      MonitoramentoAlertas.configurar({
+        ativo: true,
+        voz: true,
+        popup: true,
+        somenteCriticos: false,
+        lideresFrente: 'Frente 1=Claudecir Aparecido',
+      });
+      __test.espelharAlarmes([
+        {
+          cdEquipamento: 'CH-FLOW-1',
+          cdId: 'OCC-CH-1',
+          cdTpAlarme: 5,
+          descTpAlarme: 'VELOCIDADE EXCEDIDA',
+          descEquipamento: '4410 - Caminhão Canavieiro',
+          descFrente: 'Frente 1',
+          descGrupoEquipamento: 'CAMINHÕES CANAVIEIRO',
+          nmOperador: '1055 - JOÃO DE SOUZA',
+          vlAlarme: 88,
+          fgOnline: true,
+        },
+      ]);
+      const btnToast = document.querySelector('#toasts .toast [data-q="chamado"]');
+      if (!btnToast) throw new Error('Botão 📋 registrar chamado não apareceu no modal flutuante lateral (.toast)');
+      btnToast.click();
+      if (document.getElementById('modal-chamados-bp').classList.contains('hide')) {
+        throw new Error('Modal #modal-chamados-bp não abriu ao clicar em 📋 registrar chamado');
+      }
+    }""")
+
+    frame_chamados = page.frame_locator('#iframe-chamados-bp')
+    frame_chamados.locator('[data-testid="input-frota"]').wait_for(state='visible', timeout=15000)
+    assert frame_chamados.locator('[data-testid="input-frota"]').input_value() == '4410', 'Frota deve vir pré-preenchida com 4410'
+    assert '1' in frame_chamados.locator('[data-testid="select-frente"]').inner_text(), 'Frente deve vir selecionada como 1'
+    assert '20000' in frame_chamados.locator('[data-testid="select-codigo"]').inner_text(), 'Código Op. deve vir selecionado como 20000'
+    assert frame_chamados.locator('[data-testid="input-descricao"]').input_value() == 'VELOCIDADE A CIMA'
+    obs_val = frame_chamados.locator('[data-testid="input-observacoes"]').input_value()
+    assert 'Controle FLOW' in obs_val and '4410' in obs_val and 'JOÃO DE SOUZA' in obs_val, f'Observações incompletas: {obs_val}'
+
+    # Operador/Controlador complementa as observações e registra o chamado
+    frame_chamados.locator('[data-testid="input-observacoes"]').fill(obs_val + 'Motorista orientado via rádio.')
+    frame_chamados.locator('[data-testid="btn-submit-chamado"]').click()
+
+    page.wait_for_function("""() => {
+      const h = MonitoramentoAlertas.historico()[0];
+      return Boolean(h && h.tratativa && h.tratativa.includes('Chamado #20000'));
+    }""", timeout=5000)
+    page.evaluate("MonitoramentoAlertas.fecharSistemaChamados(); __test.restaurarFalas();")
+    print('OK: Integração v6.2.0 (1-clique 📋 registrar chamado no modal -> Novo Chamado React pré-preenchido + retorno automático na Central) validada')
+
     assert not errors, errors
     assert not any(m=='POST' for m,u in requests), 'Teste tentou POST'
     assert not any('sgpa-solinftec' in u or 'supabase' in u or 'netlify' in u for m,u in requests), 'Teste tentou rede produção'
     print('OK: zero erros JavaScript, nenhuma rede ou escrita de produção')
     browser.close()
-    print(f'Testes integrados passaram: {len(result)+21} grupos de verificações.')
+    print(f'Testes integrados passaram: {len(result)+22} grupos de verificações.')

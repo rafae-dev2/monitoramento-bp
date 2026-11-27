@@ -2,10 +2,12 @@
  * Só cacheamos o casco do app (HTML/CSS/JS/ícones). Sessão, APIs e dados do portal
  * passam sempre pela rede e NUNCA entram no cache.
  */
-const SHELL = 'bperes-shell-v55';
+const SHELL = 'bperes-shell-v56';
 const ASSETS = [
   '/',
   '/index.html',
+  '/chamados-app.html',
+  '/chamados-bridge.js',
   '/app.js',
   '/local.js',
   '/styles.css',
@@ -59,6 +61,8 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+const ROTAS_CHAMADOS = /^\/(?:chamados-app\.html|novo|chamados(?:\/.*)?|cadastros|config|kpi|relatorio|operacional|relatorios\/.*)$/;
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
 
@@ -77,6 +81,21 @@ self.addEventListener('fetch', (e) => {
           return r;
         })
         .catch(() => caches.match('/index.html')),
+    );
+    return;
+  }
+
+  if (ROTAS_CHAMADOS.test(url.pathname)) {
+    e.respondWith(
+      fetch(e.request)
+        .then((r) => {
+          if (r && r.ok && url.pathname === '/chamados-app.html') {
+            const copy = r.clone();
+            caches.open(SHELL).then((c) => c.put('/chamados-app.html', copy)).catch(() => {});
+          }
+          return r;
+        })
+        .catch(() => caches.match('/chamados-app.html')),
     );
     return;
   }

@@ -1,0 +1,35 @@
+{
+  "name": "Chamados Controle - Branco Peres",
+  "short_name": "Chamados Controle",
+  "description": "Sistema integrado de controle e registro de chamados do turno (COA & FLOW · SGPA Solinftec) - Usina Branco Peres.",
+  "start_url": "/chamados-app.html?rota=/novo",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0B1410",
+  "theme_color": "#0F5233",
+  "categories": [
+    "productivity",
+    "business"
+  ],
+  "icons": [
+    {
+      "src": "/logo-branco-peres.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo-branco-peres.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/apple-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

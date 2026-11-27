@@ -456,4 +456,49 @@ assert.equal(policy.notificar({ somenteCriticos: true }, { regra: 'flowUltimoCam
 const falaFlowUrg = policy.montarFala({ regra: 'flowUltimoCaminhao', caminhoes: ['4502'], e: { frente: 'Frente 2' } });
 assert.equal(falaFlowUrg, 'Atenção Flow, urgente! Frente 2 com apenas um caminhão carregando, caminhão quatro cinco zero dois, e nenhum caminhão no aguarde. Avaliar e enviar outro caminhão imediatamente.');
 
-console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 + v5.1 + v5.2 + v6.0 + v6.1 passaram.');
+// v6.2.0: Integração direta Monitoramento BP <-> Sistema de Chamados (montarRascunhoChamado p/ COA e FLOW).
+assert.equal(policy.mapearFrenteChamado('Frente 1', ''), '1');
+assert.equal(policy.mapearFrenteChamado('Frente de Colheita 03', ''), '3');
+assert.equal(policy.mapearFrenteChamado('', 'CAMINHÃO COMBOIO'), 'Comboio');
+assert.equal(policy.mapearFrenteChamado('', 'MANUTENÇÃO MECÂNICA'), 'Oficina');
+assert.deepEqual(policy.mapearCodigoChamado({ regra: 'velocidade', texto: '88 km/h' }), { codigo: '20000', descricao: 'VELOCIDADE A CIMA', erro: 'Erro Operacional' });
+assert.deepEqual(policy.mapearCodigoChamado({ regra: 'semApontamento' }), { codigo: '953', descricao: 'Sem Apontamento', erro: 'Erro Operacional' });
+assert.deepEqual(policy.mapearCodigoChamado({ regra: 'ocioso' }), { codigo: '40000', descricao: 'MOTOR OCIOSO', erro: 'Incoerente' });
+assert.deepEqual(policy.mapearCodigoChamado({ regra: 'flowUltimoCaminhao' }), { codigo: '908', descricao: 'Aguardando Carregamento - HD', erro: 'Nenhum' });
+
+const empacotadoFlow = policy.montarRascunhoChamado({
+  chave: 'CR-02|5',
+  regra: 'velocidade',
+  severidade: 3,
+  numero: '4410',
+  classe: 'Caminhão',
+  setor: 'FLOW',
+  nomeAlarme: 'VELOCIDADE EXCEDIDA',
+  texto: '88 km/h',
+  operador: '1055 - João de Souza',
+  ts: new Date('2026-11-26T14:30:00-03:00').getTime(),
+  e: { frente: 'Frente 1', grupoEquipamento: 'CAMINHÕES CANAVIEIRO' },
+}, { lideresFrente: 'Frente 1=Claudecir Aparecido' });
+assert.equal(empacotadoFlow.rascunho.FROTA, '4410');
+assert.equal(empacotadoFlow.rascunho.FRENTE, '1');
+assert.equal(empacotadoFlow.rascunho.CODIGO, '20000');
+assert.equal(empacotadoFlow.rascunho.DESCRICAO, 'VELOCIDADE A CIMA');
+assert.equal(empacotadoFlow.rascunho.OPERADOR, 'JOÃO DE SOUZA');
+assert.equal(empacotadoFlow.rascunho.LIDER, 'CLAUDECIR APARECIDO');
+assert.equal(empacotadoFlow.rascunho.IMPACTANTE, 'Crítico');
+assert.equal(empacotadoFlow.rascunho.CARGO, 'CONTROLADOR DE FLUXO');
+assert.match(empacotadoFlow.rascunho.OBSERVACOES, /Controle FLOW.*4410.*Frente 1.*JOÃO DE SOUZA/s);
+
+const empacotadoUltimoCam = policy.montarRascunhoChamado({
+  chave: 'flow-frente:frente 2|flowUltimoCaminhao',
+  regra: 'flowUltimoCaminhao',
+  severidade: 4,
+  caminhoes: ['4502'],
+  e: { frente: 'Frente 2' },
+}, {});
+assert.equal(empacotadoUltimoCam.rascunho.FROTA, '4502');
+assert.equal(empacotadoUltimoCam.rascunho.FRENTE, '2');
+assert.equal(empacotadoUltimoCam.rascunho.CODIGO, '908');
+assert.equal(empacotadoUltimoCam.rascunho.IMPACTANTE, 'Crítico');
+
+console.log('test-alerts-policy: contrato integrado e inteligência COA v3.0 + v4.0 + v5.0 + v5.1 + v5.2 + v6.0 + v6.1 + v6.2 passaram.');
