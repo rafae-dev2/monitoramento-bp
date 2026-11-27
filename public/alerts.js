@@ -31,7 +31,7 @@
 (() => {
   'use strict';
 
-  const VERSAO = '6.5.0';
+  const VERSAO = '6.6.0';
   const KEY_PAINEL_FIXO = 'bperes.visual.painel-fixo.v1';
   const KEY_GEMINI_KEY = 'bperes.ia.geminiKey.v1';
   const policy = window.AlertasPolicy;
@@ -68,7 +68,10 @@
      'vidro' (Liquid Glass), 'escuro' (Dark Carbono Pro), 'claro' (Claro Solar Executivo),
      'esmeralda' (Verde Safra BP) ou 'black' (Tema Black OLED). Aceita 'solido' -> 'black'. */
   const KEY_ACABAMENTO = 'bperes.visual.acabamento.v1';
+  const KEY_STUDIO_MIGRADO = 'bperes.visual.studioMigrado.v1';
   const CORES_META_TEMA = {
+    'studio-escuro': '#151311',
+    'studio-claro': '#e9e3da',
     vidro: '#080e14',
     escuro: '#0b1017',
     claro: '#eef2f6',
@@ -76,16 +79,38 @@
     black: '#000000',
   };
   function normalizarTema(valor) {
+    if (valor === 'studio-claro' || valor === 'studio-light' || valor === 'havena' || valor === 'hovira') return 'studio-claro';
+    if (valor === 'studio-escuro' || valor === 'studio-dark' || valor === 'halvo') return 'studio-escuro';
     if (valor === 'black' || valor === 'solido') return 'black';
     if (valor === 'claro' || valor === 'light') return 'claro';
     if (valor === 'escuro' || valor === 'dark') return 'escuro';
     if (valor === 'esmeralda' || valor === 'safra') return 'esmeralda';
-    return 'vidro';
+    if (valor === 'vidro') return 'vidro';
+    return 'studio-escuro';
+  }
+  function ehTemaClaro(v) {
+    return v === 'claro' || v === 'studio-claro';
   }
   function acabamentoSalvo() {
     try {
       const v = localStorage.getItem(KEY_ACABAMENTO);
-      if (v === 'vidro' || v === 'escuro' || v === 'dark' || v === 'claro' || v === 'light' || v === 'esmeralda' || v === 'safra' || v === 'black' || v === 'solido') {
+      const migrado = localStorage.getItem(KEY_STUDIO_MIGRADO) === '1';
+      if (v && !migrado) {
+        let novo = 'studio-escuro';
+        if (v === 'claro' || v === 'light') novo = 'studio-claro';
+        else if (v === 'vidro' || v === 'escuro' || v === 'dark') novo = 'studio-escuro';
+        else novo = normalizarTema(v);
+        localStorage.setItem(KEY_ACABAMENTO, novo);
+        localStorage.setItem(KEY_STUDIO_MIGRADO, '1');
+        return novo;
+      }
+      if (
+        v === 'studio-escuro' || v === 'studio-dark' || v === 'halvo' ||
+        v === 'studio-claro' || v === 'studio-light' || v === 'havena' || v === 'hovira' ||
+        v === 'vidro' || v === 'escuro' || v === 'dark' ||
+        v === 'claro' || v === 'light' || v === 'esmeralda' || v === 'safra' ||
+        v === 'black' || v === 'solido'
+      ) {
         return normalizarTema(v);
       }
     } catch {
@@ -96,7 +121,7 @@
     } catch {
       /* matchMedia indisponível */
     }
-    return 'vidro';
+    return 'studio-escuro';
   }
   function sincronizarControlesTema(v) {
     const sel = document.getElementById('cfg-acabamento');
@@ -105,10 +130,29 @@
     for (const btn of botoes) {
       btn.setAttribute('aria-pressed', btn.dataset.tema === v ? 'true' : 'false');
     }
+    const claroAtivo = ehTemaClaro(v);
+    const btnBarra = document.getElementById('btn-tema-bar');
+    if (btnBarra) {
+      const icoSol = btnBarra.querySelector('.ico-tema-sol');
+      const icoLua = btnBarra.querySelector('.ico-tema-lua');
+      if (icoSol) icoSol.classList.toggle('hide', claroAtivo);
+      if (icoLua) icoLua.classList.toggle('hide', !claroAtivo);
+      btnBarra.classList.toggle('tema-claro-ativo', claroAtivo);
+      btnBarra.title = claroAtivo
+        ? 'Modo Claro Studio ativo — clique para Modo Escuro Studio (Halvo · Havena)'
+        : 'Modo Escuro ativo — clique para Modo Claro Studio (Havena · Hovira)';
+    }
+    const btnPainel = document.getElementById('alertas-tema');
+    if (btnPainel) {
+      btnPainel.textContent = claroAtivo ? '🌙' : '☀️';
+      btnPainel.title = claroAtivo
+        ? 'Alternar para Modo Escuro Studio (Halvo · Havena)'
+        : 'Alternar para Modo Claro Studio (Havena · Hovira)';
+    }
   }
   function aplicarAcabamento(valor, persistir) {
     const v = normalizarTema(valor);
-    const modo = v === 'claro' ? 'light' : 'dark';
+    const modo = ehTemaClaro(v) ? 'light' : 'dark';
     const root = document.documentElement;
     const trocou = root.dataset.acabamento && root.dataset.acabamento !== v;
     if (trocou) root.dataset.trocandoTema = '1';
@@ -125,6 +169,7 @@
     if (persistir) {
       try {
         localStorage.setItem(KEY_ACABAMENTO, v);
+        localStorage.setItem(KEY_STUDIO_MIGRADO, '1');
         localStorage.setItem('bp_theme_preference_v1', modo);
       } catch {
         /* sem storage */
@@ -4887,6 +4932,7 @@
         <div><strong>Central de alertas · COA &amp; FLOW</strong><span id="alertas-status" class="fine"></span></div>
       </div>
       <div class="painel-head-acoes">
+        <button id="alertas-tema" class="icone" type="button" title="Alternar para Modo Claro Studio (Havena · Hovira)" aria-label="Alternar Modo Claro e Escuro">☀️</button>
         <button id="alertas-chamados" class="icone" type="button" title="Abrir Sistema de Chamados COA &amp; FLOW (Banco conectado)" aria-label="Sistema de Chamados">📝</button>
         <button id="alertas-fixar" class="icone" type="button" title="Fixar painel na lateral esquerda ao lado do mapa (Split-Screen)" aria-label="Fixar painel lateral" aria-pressed="false">📌</button>
         <button id="alertas-fechar" class="icone" title="Fechar" aria-label="Fechar">✕</button>
@@ -5400,6 +5446,8 @@
       <div class="grade">
         <label class="campo"><span>Tema da interface neste aparelho</span>
           <select id="cfg-acabamento">
+            <option value="studio-escuro">🌙 Studio Escuro · Halvo &amp; Havena (vidro fumê quente · padrão)</option>
+            <option value="studio-claro">☀️ Studio Claro · Havena &amp; Hovira (vidro marfim arquitetônico)</option>
             <option value="vidro">✨ Liquid Glass (vidro escuro refrativo estilo iOS)</option>
             <option value="escuro">🌑 Dark Carbono Pro (modo escuro executivo · conforto visual 8h)</option>
             <option value="claro">☀️ Claro Solar Executivo (tema claro diurno · máxima nitidez)</option>
@@ -5526,6 +5574,14 @@
       el.busca.focus();
     };
     $('alertas-fechar').onclick = fecharPainel;
+    if ($('alertas-tema')) {
+      $('alertas-tema').onclick = () => {
+        const atual = normalizarTema(document.documentElement.dataset.acabamento);
+        const proximo = ehTemaClaro(atual) ? 'studio-escuro' : 'studio-claro';
+        aplicarAcabamento(proximo, true);
+      };
+    }
+    sincronizarControlesTema(normalizarTema(document.documentElement.dataset.acabamento));
     if ($('alertas-chamados')) $('alertas-chamados').onclick = () => abrirSistemaChamados('/novo');
     if ($('alertas-fixar')) $('alertas-fixar').onclick = () => alternarPainelFixo();
     if (el.modalChamados) {

@@ -498,20 +498,49 @@
     });
   }
 
-  const CORES_TEMA_SHELL = { vidro: '#080e14', escuro: '#0b1017', claro: '#eef2f6', esmeralda: '#06140f', black: '#000000' };
+  const CORES_TEMA_SHELL = {
+    'studio-escuro': '#151311',
+    'studio-claro': '#e9e3da',
+    vidro: '#080e14',
+    escuro: '#0b1017',
+    claro: '#eef2f6',
+    esmeralda: '#06140f',
+    black: '#000000',
+  };
   function normalizarTemaShell(valor) {
+    if (valor === 'studio-claro' || valor === 'studio-light' || valor === 'havena' || valor === 'hovira') return 'studio-claro';
+    if (valor === 'studio-escuro' || valor === 'studio-dark' || valor === 'halvo') return 'studio-escuro';
     if (valor === 'black' || valor === 'solido') return 'black';
     if (valor === 'claro' || valor === 'light') return 'claro';
     if (valor === 'escuro' || valor === 'dark') return 'escuro';
     if (valor === 'esmeralda' || valor === 'safra') return 'esmeralda';
-    return 'vidro';
+    if (valor === 'vidro') return 'vidro';
+    return 'studio-escuro';
+  }
+  function ehTemaClaroShell(v) {
+    return v === 'claro' || v === 'studio-claro';
+  }
+  function sincronizarBotaoTemaBarra(v) {
+    const btn = $('btn-tema-bar');
+    if (!btn) return;
+    const claroAtivo = ehTemaClaroShell(v);
+    const icoSol = btn.querySelector('.ico-tema-sol');
+    const icoLua = btn.querySelector('.ico-tema-lua');
+    if (icoSol) icoSol.classList.toggle('hide', claroAtivo);
+    if (icoLua) icoLua.classList.toggle('hide', !claroAtivo);
+    btn.classList.toggle('tema-claro-ativo', claroAtivo);
+    btn.title = claroAtivo
+      ? 'Modo Claro Studio ativo — clique para Modo Escuro Studio (Halvo · Havena)'
+      : 'Modo Escuro ativo — clique para Modo Claro Studio (Havena · Hovira)';
   }
   function aplicarTemaShell(valor, persistir) {
     if (window.MonitoramentoAlertas && typeof window.MonitoramentoAlertas.aplicarTema === 'function') {
-      return window.MonitoramentoAlertas.aplicarTema(valor, persistir);
+      const aplicado = window.MonitoramentoAlertas.aplicarTema(valor, persistir);
+      sincronizarBotaoTemaBarra(aplicado);
+      return aplicado;
     }
     const v = normalizarTemaShell(valor);
-    const modo = v === 'claro' ? 'light' : 'dark';
+    const modo = ehTemaClaroShell(v) ? 'light' : 'dark';
     const root = document.documentElement;
     const trocou = root.dataset.acabamento && root.dataset.acabamento !== v;
     if (trocou) root.dataset.trocandoTema = '1';
@@ -522,6 +551,7 @@
     for (const btn of document.querySelectorAll('[data-tema]')) {
       btn.setAttribute('aria-pressed', btn.dataset.tema === v ? 'true' : 'false');
     }
+    sincronizarBotaoTemaBarra(v);
     if (trocou) {
       const limpar = () => { delete root.dataset.trocandoTema; };
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(limpar));
@@ -530,13 +560,21 @@
     if (persistir) {
       try {
         localStorage.setItem('bperes.visual.acabamento.v1', v);
+        localStorage.setItem('bperes.visual.studioMigrado.v1', '1');
         localStorage.setItem('bp_theme_preference_v1', modo);
       } catch { /* sem storage */ }
     }
     return v;
   }
+  if ($('btn-tema-bar')) {
+    $('btn-tema-bar').addEventListener('click', () => {
+      const atual = normalizarTemaShell(document.documentElement.dataset.acabamento);
+      const proximo = ehTemaClaroShell(atual) ? 'studio-escuro' : 'studio-claro';
+      aplicarTemaShell(proximo, true);
+    });
+  }
   {
-    let inicial = document.documentElement.dataset.acabamento || 'vidro';
+    let inicial = document.documentElement.dataset.acabamento || 'studio-escuro';
     try {
       const salvo = localStorage.getItem('bperes.visual.acabamento.v1');
       if (salvo) inicial = salvo;

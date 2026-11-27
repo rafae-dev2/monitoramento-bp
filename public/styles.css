@@ -20,12 +20,19 @@
   --bp-vermelho: #dc2626;
   --warn: #f59e0b;
   --danger: #ef4444;
-  --font-sans: 'Inter', 'Plus Jakarta Sans', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-sans: 'Urbanist', 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'Cascadia Mono', Consolas, 'Liberation Mono', monospace;
+  --ease-studio: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 * {
   box-sizing: border-box;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
 }
 
 html {
@@ -39,9 +46,9 @@ body {
   height: 100%;
   background: var(--bg);
   color: var(--ink);
-  font: 14px/1.5 var(--font-sans);
+  font: 500 14px/1.5 var(--font-sans);
   font-optical-sizing: auto;
-  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -704,12 +711,68 @@ button:focus-visible,
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.tema-studio-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 7px;
+}
+
 .tema-bar-label {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--ink-soft);
+}
+
+.tema-studio-switch {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.sheet .tema-studio-switch button {
+  width: auto;
+  min-width: 78px;
+  min-height: 30px;
+  padding: 5px 12px;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  box-shadow: none;
+  transition: background 0.22s var(--ease-studio), color 0.18s ease, box-shadow 0.22s var(--ease-studio), transform 0.22s var(--ease-studio);
+}
+
+.sheet .tema-studio-switch button:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: transparent;
+}
+
+.sheet .tema-studio-switch button[aria-pressed='true'] {
+  background: #f29a1e;
+  border-color: rgba(255, 240, 214, 0.45);
+  color: #241505;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 4px 12px rgba(242, 154, 30, 0.32);
+}
+
+.sheet .tema-studio-switch button[data-tema='studio-claro'][aria-pressed='true'] {
+  background: #fffdf9;
+  border-color: rgba(42, 34, 27, 0.16);
+  color: #1f1914;
+  box-shadow: 0 2px 8px rgba(42, 34, 27, 0.18);
 }
 
 .tema-seg {
@@ -975,7 +1038,8 @@ code {
     padding: 5px 10px;
     padding-top: calc(5px + env(safe-area-inset-top));
   }
-  .coa-sev {
+  .coa-sev,
+  #btn-tema-bar {
     display: none;
   }
   .coa-pill {
@@ -2028,6 +2092,763 @@ html[data-acabamento='claro'] .brand-tag[data-setor='FLOW'] {
   background: #dbeafe;
   border-color: rgba(37, 99, 235, 0.45);
   color: #1e40af;
+}
+
+/* =====================================================================
+   SUÍTE STUDIO GLASS — HALVO · HAVENA · HOVIRA (v6.6.0)
+   Tipografia Urbanist, vidro arquitetônico quente ("under glass"),
+   cápsulas circulares, brilhos atmosféricos âmbar/menta/cobalto e curva
+   elástica cubic-bezier(0.22, 1, 0.36, 1) em Modo Escuro e Modo Claro
+   ===================================================================== */
+
+:is(html[data-acabamento='studio-escuro'], html[data-acabamento='studio-claro']) {
+  --studio-blur: blur(28px) saturate(1.52);
+  --studio-blur-soft: blur(18px) saturate(1.42);
+}
+
+@media (max-width: 560px) {
+  :is(html[data-acabamento='studio-escuro'], html[data-acabamento='studio-claro']) {
+    --studio-blur: blur(16px) saturate(1.38);
+    --studio-blur-soft: blur(12px) saturate(1.3);
+  }
+}
+
+/* Geometria compartilhada Studio: cápsulas circulares, cartões esculpidos 22-24px e física elástica */
+:is(html[data-acabamento='studio-escuro'], html[data-acabamento='studio-claro']) #actions {
+  border-radius: 999px;
+  padding: 4px 5px;
+}
+
+:is(html[data-acabamento='studio-escuro'], html[data-acabamento='studio-claro']) #actions .icon-btn {
+  border-radius: 999px;
+  transition:
+    background 0.22s var(--ease-studio),
+    border-color 0.22s var(--ease-studio),
+    color 0.18s ease,
+    box-shadow 0.22s var(--ease-studio),
+    transform 0.26s var(--ease-studio);
+}
+
+:is(html[data-acabamento='studio-escuro'], html[data-acabamento='studio-claro']) #actions .icon-btn:hover {
+  transform: translateY(-1px);
+}
+
+:is(html[data-acabamento='studio-escuro'], html[data-acabamento='studio-claro']) #actions .icon-btn:active {
+  transform: scale(0.93);
+}
+
+:is(html[data-acabamento='studio-escuro'], html[data-acabamento='studio-claro']) .coa-clock {
+  border-radius: 999px;
+  padding: 0 11px;
+}
+
+:is(html[data-acabamento='studio-escuro'], html[data-acabamento='studio-claro']) :is(.card, .sheet) {
+  border-radius: 24px;
+  -webkit-backdrop-filter: var(--studio-blur);
+  backdrop-filter: var(--studio-blur);
+}
+
+:is(html[data-acabamento='studio-escuro'], html[data-acabamento='studio-claro']) :is(button, .btn) {
+  border-radius: 14px;
+  font-weight: 600;
+  transition:
+    background 0.22s var(--ease-studio),
+    border-color 0.22s var(--ease-studio),
+    color 0.18s ease,
+    box-shadow 0.22s var(--ease-studio),
+    transform 0.26s var(--ease-studio);
+}
+
+:is(html[data-acabamento='studio-escuro'], html[data-acabamento='studio-claro']) :is(.primary, #btn-install) {
+  border-radius: 999px;
+}
+
+:is(html[data-acabamento='studio-escuro'], html[data-acabamento='studio-claro']) .sheet .sheet-fechar-x {
+  border-radius: 999px;
+}
+
+:is(html[data-acabamento='studio-escuro'], html[data-acabamento='studio-claro']) .sheet button {
+  border-radius: 14px;
+}
+
+:is(html[data-acabamento='studio-escuro'], html[data-acabamento='studio-claro']) .m-ico {
+  border-radius: 9px;
+}
+
+/* ---------------------------------------------------------------------
+   1) STUDIO ESCURO (studio-escuro) — Halvo · Havena · Hovira Dark
+   Vidro fumê espresso-obsidiana (#151311 / #221d19), filetes creme e
+   acentos em âmbar mel (#f29a1e), menta Halvo (#5fd8c4) e cobalto (#4973ec)
+   --------------------------------------------------------------------- */
+
+html[data-acabamento='studio-escuro'] {
+  --bg: #151311;
+  --surface-0: #1b1815;
+  --surface-1: #221e1a;
+  --surface-2: #2b2520;
+  --surface-3: #352e28;
+  --bar: #1b1714;
+  --glass: rgba(33, 28, 24, 0.88);
+  --ink: #f4ede4;
+  --ink-soft: #ded4c7;
+  --muted: #b6aa9b;
+  --line: rgba(255, 240, 220, 0.14);
+  --line-strong: rgba(255, 240, 220, 0.26);
+  --specular: inset 0 1px 0 rgba(255, 246, 232, 0.1);
+  --ok: #5fd8c4;
+  --ok-strong: #34bfa9;
+  --warn: #f29a1e;
+  --danger: #ff8d7c;
+}
+
+html[data-acabamento='studio-escuro'] #bar {
+  background-color: rgba(26, 22, 19, 0.92);
+  background-image:
+    radial-gradient(55% 220% at 0% 0%, rgba(95, 216, 196, 0.14) 0%, transparent 56%),
+    radial-gradient(45% 200% at 62% -50%, rgba(242, 154, 30, 0.15) 0%, transparent 62%);
+  border-bottom: 1px solid rgba(255, 240, 220, 0.14);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.45),
+    0 18px 38px -20px rgba(0, 0, 0, 0.78),
+    inset 0 1px 0 rgba(255, 246, 232, 0.09);
+  -webkit-backdrop-filter: var(--studio-blur-soft);
+  backdrop-filter: var(--studio-blur-soft);
+}
+
+html[data-acabamento='studio-escuro'] #bar::after {
+  height: 1.5px;
+  background: linear-gradient(
+    90deg,
+    rgba(242, 154, 30, 0.85) 0%,
+    rgba(95, 216, 196, 0.9) 52%,
+    rgba(73, 115, 236, 0.85) 100%
+  );
+  opacity: 0.75;
+}
+
+html[data-acabamento='studio-escuro'] .brand-emblem {
+  border-radius: 14px;
+  background-color: #26211c;
+  background-image:
+    radial-gradient(circle at 28% 22%, rgba(242, 154, 30, 0.24), transparent 65%),
+    linear-gradient(155deg, #2f2821 0%, #1a1613 100%);
+  border-color: rgba(242, 154, 30, 0.38);
+  box-shadow: inset 0 1px 0 rgba(255, 246, 232, 0.14), 0 6px 16px rgba(0, 0, 0, 0.48);
+}
+
+html[data-acabamento='studio-escuro'] .brand-cia {
+  color: #c9beb0;
+}
+
+html[data-acabamento='studio-escuro'] .brand-tag {
+  background: rgba(95, 216, 196, 0.18);
+  border-color: rgba(95, 216, 196, 0.42);
+  color: #9bf0e1;
+  border-radius: 999px;
+}
+
+html[data-acabamento='studio-escuro'] .brand-tag[data-setor='FLOW'] {
+  background: rgba(73, 115, 236, 0.24);
+  border-color: rgba(143, 173, 255, 0.46);
+  color: #c7d7ff;
+}
+
+html[data-acabamento='studio-escuro'] #brand-nome {
+  color: #f4ede4;
+  letter-spacing: -0.02em;
+}
+
+html[data-acabamento='studio-escuro'] #brand b {
+  color: #5fd8c4;
+}
+
+html[data-acabamento='studio-escuro'] .brand-sub {
+  color: #b6aa9b;
+}
+
+html[data-acabamento='studio-escuro'] :is(.coa-pill, .coa-sev, #who, .coa-clock) {
+  background-color: rgba(38, 33, 28, 0.9);
+  border-color: rgba(255, 240, 220, 0.16);
+  color: #f4ede4;
+  box-shadow: inset 0 1px 0 rgba(255, 246, 232, 0.08);
+}
+
+html[data-acabamento='studio-escuro'] .coa-pill[data-state='live'] {
+  background-color: rgba(18, 54, 46, 0.88);
+  border-color: rgba(95, 216, 196, 0.46);
+  color: #a8f3e5;
+}
+
+html[data-acabamento='studio-escuro'] .coa-pill[data-state='live'] .coa-dot {
+  background: #5fd8c4;
+  box-shadow: 0 0 10px rgba(95, 216, 196, 0.88);
+}
+
+html[data-acabamento='studio-escuro'] .coa-pill[data-state='rest'] {
+  background-color: rgba(68, 46, 18, 0.88);
+  border-color: rgba(242, 154, 30, 0.5);
+  color: #ffd596;
+}
+
+html[data-acabamento='studio-escuro'] .coa-pill[data-state='warn'] {
+  background-color: rgba(84, 28, 24, 0.9);
+  border-color: rgba(255, 141, 124, 0.55);
+  color: #ffd2cb;
+}
+
+html[data-acabamento='studio-escuro'] #who {
+  color: #e6dfd5;
+}
+
+html[data-acabamento='studio-escuro'] #who::before {
+  background: #5fd8c4;
+  box-shadow: 0 0 8px rgba(95, 216, 196, 0.8);
+}
+
+html[data-acabamento='studio-escuro'] #actions {
+  background-color: rgba(34, 29, 25, 0.84);
+  border-color: rgba(255, 240, 220, 0.15);
+  box-shadow: inset 0 1px 0 rgba(255, 246, 232, 0.08), 0 8px 22px -12px rgba(0, 0, 0, 0.65);
+}
+
+html[data-acabamento='studio-escuro'] #actions .icon-btn {
+  background-color: rgba(255, 240, 220, 0.07);
+  background-image: none;
+  border-color: rgba(255, 240, 220, 0.14);
+  color: #f4ede4;
+  box-shadow: inset 0 1px 0 rgba(255, 246, 232, 0.08);
+}
+
+html[data-acabamento='studio-escuro'] #actions .icon-btn:hover {
+  background-color: rgba(242, 154, 30, 0.22);
+  border-color: rgba(242, 154, 30, 0.52);
+  color: #ffd596;
+}
+
+html[data-acabamento='studio-escuro'] #actions #btn-voz-bar.voz-ativa {
+  background-color: rgba(95, 216, 196, 0.16);
+  border-color: rgba(95, 216, 196, 0.42);
+  color: #8ae8d8;
+}
+
+html[data-acabamento='studio-escuro'] #actions #btn-tema-bar {
+  background-color: rgba(242, 154, 30, 0.16);
+  border-color: rgba(242, 154, 30, 0.38);
+  color: #ffc266;
+}
+
+:where(html[data-acabamento='studio-escuro']) button,
+:where(html[data-acabamento='studio-escuro']) .btn {
+  background-color: #2b2520;
+  background-image: linear-gradient(180deg, rgba(255, 245, 230, 0.06) 0%, rgba(255, 245, 230, 0) 100%);
+  border-color: rgba(255, 240, 220, 0.16);
+  color: #f4ede4;
+  box-shadow: inset 0 1px 0 rgba(255, 246, 232, 0.08), 0 4px 12px -4px rgba(0, 0, 0, 0.45);
+}
+
+:where(html[data-acabamento='studio-escuro']) button:hover:not(:disabled),
+:where(html[data-acabamento='studio-escuro']) .btn:hover:not(:disabled) {
+  background-color: #362f29;
+  border-color: rgba(255, 240, 220, 0.28);
+  color: #ffffff;
+}
+
+:where(html[data-acabamento='studio-escuro']) .primary,
+:where(html[data-acabamento='studio-escuro']) #btn-install {
+  background-color: #5fd8c4;
+  background-image: linear-gradient(180deg, #7be2d1 0%, #4acbb6 100%);
+  border-color: rgba(180, 248, 236, 0.6);
+  color: #052a24;
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 8px 22px -6px rgba(95, 216, 196, 0.42);
+}
+
+:where(html[data-acabamento='studio-escuro']) .primary:hover:not(:disabled),
+:where(html[data-acabamento='studio-escuro']) #btn-install:hover:not(:disabled) {
+  background-color: #77e2d0;
+  background-image: linear-gradient(180deg, #91eadb 0%, #5fd8c4 100%);
+  color: #04201b;
+}
+
+html[data-acabamento='studio-escuro'] :is(#boot, #error, #login, #about) {
+  background:
+    radial-gradient(65% 55% at 22% 14%, rgba(242, 154, 30, 0.14) 0%, transparent 62%),
+    radial-gradient(65% 55% at 78% 18%, rgba(95, 216, 196, 0.12) 0%, transparent 62%),
+    radial-gradient(110% 110% at 50% 50%, rgba(26, 22, 19, 0.82) 0%, rgba(15, 13, 11, 0.94) 80%);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-acabamento='studio-escuro'] #menu {
+  background: rgba(10, 8, 6, 0.56);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-acabamento='studio-escuro'] :is(.card, .sheet) {
+  background-color: rgba(32, 27, 23, 0.92);
+  background-image:
+    radial-gradient(90% 70% at 100% 0%, rgba(242, 154, 30, 0.1) 0%, transparent 56%),
+    radial-gradient(80% 60% at 0% 0%, rgba(95, 216, 196, 0.08) 0%, transparent 55%);
+  border-color: rgba(255, 240, 220, 0.18);
+  color: #f4ede4;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.5),
+    0 34px 80px -28px rgba(0, 0, 0, 0.86),
+    inset 0 1px 0 rgba(255, 246, 232, 0.12);
+}
+
+html[data-acabamento='studio-escuro'] :is(.sheet h3, .card h2, .boot-title) {
+  color: #f4ede4;
+  letter-spacing: -0.02em;
+}
+
+html[data-acabamento='studio-escuro'] .marca-halo {
+  background: radial-gradient(circle, rgba(242, 154, 30, 0.22), rgba(95, 216, 196, 0.1) 68%, transparent 78%);
+  border-radius: 24px;
+}
+
+html[data-acabamento='studio-escuro'] .tema-bar {
+  background-color: rgba(20, 17, 14, 0.72);
+  border-color: rgba(255, 240, 220, 0.14);
+  border-radius: 18px;
+}
+
+html[data-acabamento='studio-escuro'] .tema-studio-switch {
+  background: rgba(12, 10, 8, 0.65);
+  border-color: rgba(255, 240, 220, 0.16);
+}
+
+html[data-acabamento='studio-escuro'] .tema-seg {
+  background: rgba(12, 10, 8, 0.58);
+  border-color: rgba(255, 240, 220, 0.12);
+  border-radius: 14px;
+}
+
+html[data-acabamento='studio-escuro'] .sheet .tema-seg button {
+  background: rgba(255, 240, 220, 0.04);
+  border-color: rgba(255, 240, 220, 0.09);
+  color: #ded4c7;
+  border-radius: 10px;
+}
+
+html[data-acabamento='studio-escuro'] .sheet button {
+  background-color: rgba(255, 240, 220, 0.055);
+  background-image: none;
+  border-color: rgba(255, 240, 220, 0.11);
+  color: #f4ede4;
+}
+
+html[data-acabamento='studio-escuro'] .sheet button:hover {
+  background-color: rgba(242, 154, 30, 0.14);
+  border-color: rgba(242, 154, 30, 0.36);
+}
+
+html[data-acabamento='studio-escuro'] .m-ico {
+  background: rgba(255, 240, 220, 0.09);
+}
+
+html[data-acabamento='studio-escuro'] :is(.campo input, .guide, code, .about-pill) {
+  background-color: #191512;
+  border-color: rgba(255, 240, 220, 0.18);
+  color: #f4ede4;
+  border-radius: 12px;
+}
+
+/* ---------------------------------------------------------------------
+   2) STUDIO CLARO (studio-claro) — Havena · Halvo · Hovira Light
+   Pedra-marfim arquitetônica (#e9e3da), vidro creme luminoso (#fffdf9),
+   sombras quentes de umbra, tipografia café-expresso (#1f1914) WCAG AAA
+   --------------------------------------------------------------------- */
+
+html[data-acabamento='studio-claro'] {
+  --bg: #e9e3da;
+  --surface-0: #f5f0e8;
+  --surface-1: #fffdf9;
+  --surface-2: #f1ebe1;
+  --surface-3: #e4dcd0;
+  --bar: #fbf8f2;
+  --glass: rgba(255, 252, 247, 0.92);
+  --ink: #1f1914;
+  --ink-soft: #3a3027;
+  --muted: #5c4f43;
+  --line: rgba(42, 34, 27, 0.14);
+  --line-strong: rgba(42, 34, 27, 0.26);
+  --specular: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  --ok: #197553;
+  --ok-strong: #125d41;
+  --warn: #b86208;
+  --danger: #b3261e;
+  -webkit-font-smoothing: auto;
+}
+
+html[data-acabamento='studio-claro'] #bar {
+  background-color: rgba(251, 248, 242, 0.94);
+  background-image:
+    radial-gradient(55% 220% at 0% 0%, rgba(52, 191, 169, 0.14) 0%, transparent 56%),
+    radial-gradient(45% 200% at 62% -50%, rgba(242, 154, 30, 0.16) 0%, transparent 62%);
+  border-bottom: 1px solid rgba(42, 34, 27, 0.14);
+  box-shadow:
+    0 1px 2px rgba(60, 44, 24, 0.06),
+    0 14px 32px -20px rgba(60, 44, 24, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  -webkit-backdrop-filter: var(--studio-blur-soft);
+  backdrop-filter: var(--studio-blur-soft);
+}
+
+html[data-acabamento='studio-claro'] #bar::after {
+  height: 1.5px;
+  background: linear-gradient(
+    90deg,
+    #f29a1e 0%,
+    #34bfa9 52%,
+    #3563ea 100%
+  );
+  opacity: 0.85;
+}
+
+html[data-acabamento='studio-claro'] .brand-emblem {
+  border-radius: 14px;
+  background: linear-gradient(155deg, #173a2c 0%, #0d241b 100%);
+  border-color: rgba(25, 117, 83, 0.5);
+  box-shadow: 0 4px 12px rgba(42, 34, 27, 0.18);
+}
+
+html[data-acabamento='studio-claro'] .brand-cia {
+  color: #54473b;
+}
+
+html[data-acabamento='studio-claro'] .brand-tag {
+  background: #d8f3ea;
+  border-color: rgba(25, 117, 83, 0.42);
+  color: #0b4f3a;
+  border-radius: 999px;
+}
+
+html[data-acabamento='studio-claro'] .brand-tag[data-setor='FLOW'] {
+  background: #dce7ff;
+  border-color: rgba(53, 99, 234, 0.42);
+  color: #1d3fa3;
+}
+
+html[data-acabamento='studio-claro'] #brand-nome {
+  color: #1f1914;
+  letter-spacing: -0.02em;
+}
+
+html[data-acabamento='studio-claro'] #brand b {
+  color: #0d6e59;
+}
+
+html[data-acabamento='studio-claro'] .brand-sub {
+  color: #5c4f43;
+}
+
+html[data-acabamento='studio-claro'] .brand-sub::before {
+  color: #9b8d7e;
+}
+
+html[data-acabamento='studio-claro'] .coa-pill {
+  background-color: #f3ede3;
+  border-color: rgba(42, 34, 27, 0.16);
+  color: #2a221b;
+  box-shadow: inset 0 1px 0 #ffffff, 0 1px 2px rgba(42, 34, 27, 0.06);
+}
+
+html[data-acabamento='studio-claro'] .coa-pill[data-state='live'] {
+  background-color: #d9f2e6;
+  border-color: rgba(25, 117, 83, 0.45);
+  color: #0b4f3a;
+}
+
+html[data-acabamento='studio-claro'] .coa-pill[data-state='rest'] {
+  background-color: #fdeacc;
+  border-color: rgba(184, 98, 8, 0.45);
+  color: #733b05;
+}
+
+html[data-acabamento='studio-claro'] .coa-pill[data-state='warn'] {
+  background-color: #fadbd6;
+  border-color: rgba(179, 38, 30, 0.48);
+  color: #7d1913;
+}
+
+html[data-acabamento='studio-claro'] .coa-sev {
+  background-color: #fdeacc;
+  border-color: rgba(184, 98, 8, 0.45);
+  color: #733b05;
+}
+
+html[data-acabamento='studio-claro'] .coa-sev.critico {
+  background-color: #fadbd6;
+  border-color: rgba(179, 38, 30, 0.5);
+  color: #7d1913;
+}
+
+html[data-acabamento='studio-claro'] #who {
+  background-color: #e6eefc;
+  border-color: rgba(53, 99, 234, 0.28);
+  color: #1c3d99;
+  font-weight: 600;
+}
+
+html[data-acabamento='studio-claro'] .coa-clock {
+  background-color: #f4eee4;
+  border-color: rgba(42, 34, 27, 0.16);
+  color: #1f1914;
+}
+
+html[data-acabamento='studio-claro'] #session-status {
+  background-color: #fdf0ee;
+  border-color: rgba(179, 38, 30, 0.45);
+  color: #7d1913;
+  box-shadow: 0 14px 32px -14px rgba(42, 34, 27, 0.24);
+}
+
+html[data-acabamento='studio-claro'] #session-status:not(.erro) {
+  background-color: #fef4e2;
+  border-color: rgba(184, 98, 8, 0.45);
+  color: #733b05;
+}
+
+html[data-acabamento='studio-claro'] #actions {
+  background-color: #efe9de;
+  border-color: rgba(42, 34, 27, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+html[data-acabamento='studio-claro'] #actions .icon-btn {
+  background-color: #fffdf9;
+  background-image: none;
+  border-color: rgba(42, 34, 27, 0.14);
+  color: #2a221b;
+  box-shadow: 0 1px 3px rgba(42, 34, 27, 0.08);
+}
+
+html[data-acabamento='studio-claro'] #actions .icon-btn:hover {
+  background-color: #fdeacc;
+  border-color: #e08a16;
+  color: #6b3603;
+}
+
+html[data-acabamento='studio-claro'] #actions #btn-voz-bar.voz-ativa {
+  background-color: #dbf3ea;
+  border-color: rgba(25, 117, 83, 0.42);
+  color: #0b573f;
+}
+
+html[data-acabamento='studio-claro'] #actions #btn-voz-bar.voz-muda {
+  background-color: #fadbd6;
+  border-color: rgba(179, 38, 30, 0.48);
+  color: #8c1d16;
+}
+
+html[data-acabamento='studio-claro'] #actions #btn-pip.pip-ativo {
+  background-color: #dbf3ea;
+  border-color: #197553;
+  color: #0b4f3a;
+}
+
+html[data-acabamento='studio-claro'] #actions #btn-mic-bar.mic-ouvindo {
+  background-color: #fdeacc;
+  border-color: #d97706;
+  color: #733b05;
+}
+
+html[data-acabamento='studio-claro'] #actions #btn-tema-bar {
+  background-color: #fdeacc;
+  border-color: rgba(224, 138, 22, 0.48);
+  color: #824405;
+}
+
+:where(html[data-acabamento='studio-claro']) button,
+:where(html[data-acabamento='studio-claro']) .btn {
+  background-color: #fffdf9;
+  background-image: linear-gradient(180deg, #ffffff 0%, #f5efe6 100%);
+  border-color: rgba(42, 34, 27, 0.16);
+  color: #1f1914;
+  box-shadow: inset 0 1px 0 #ffffff, 0 2px 6px rgba(42, 34, 27, 0.07);
+}
+
+:where(html[data-acabamento='studio-claro']) button:hover:not(:disabled),
+:where(html[data-acabamento='studio-claro']) .btn:hover:not(:disabled) {
+  background-color: #f6f0e6;
+  background-image: linear-gradient(180deg, #fffdf9 0%, #ebe3d6 100%);
+  border-color: rgba(42, 34, 27, 0.28);
+  color: #1f1914;
+}
+
+:where(html[data-acabamento='studio-claro']) .primary,
+:where(html[data-acabamento='studio-claro']) #btn-install {
+  background-color: #147a68;
+  background-image: linear-gradient(180deg, #1b8c78 0%, #0f6657 100%);
+  border-color: #0f6657;
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32), 0 6px 18px -6px rgba(20, 122, 104, 0.36);
+}
+
+:where(html[data-acabamento='studio-claro']) .primary:hover:not(:disabled),
+:where(html[data-acabamento='studio-claro']) #btn-install:hover:not(:disabled) {
+  background-color: #198f7a;
+  background-image: linear-gradient(180deg, #22a089 0%, #147a68 100%);
+  color: #ffffff;
+}
+
+html[data-acabamento='studio-claro'] #map {
+  background: #dfd8cd;
+}
+
+html[data-acabamento='studio-claro'] :is(#boot, #error, #login, #about) {
+  background:
+    radial-gradient(70% 55% at 22% 12%, rgba(242, 154, 30, 0.15) 0%, transparent 62%),
+    radial-gradient(70% 55% at 78% 16%, rgba(52, 191, 169, 0.14) 0%, transparent 62%),
+    radial-gradient(110% 110% at 50% 50%, rgba(247, 242, 234, 0.94) 0%, rgba(232, 225, 214, 0.97) 80%);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-acabamento='studio-claro'] #menu {
+  background: rgba(42, 32, 22, 0.32);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-acabamento='studio-claro'] :is(.card, .sheet) {
+  background-color: rgba(253, 250, 245, 0.94);
+  background-image:
+    radial-gradient(90% 70% at 100% 0%, rgba(242, 154, 30, 0.1) 0%, transparent 56%),
+    radial-gradient(80% 60% at 0% 0%, rgba(52, 191, 169, 0.08) 0%, transparent 55%);
+  border-color: rgba(42, 34, 27, 0.15);
+  color: #1f1914;
+  box-shadow:
+    0 2px 8px rgba(56, 40, 22, 0.08),
+    0 30px 70px -28px rgba(56, 40, 22, 0.34),
+    inset 0 1px 0 #ffffff;
+}
+
+html[data-acabamento='studio-claro'] :is(.sheet h3, .card h2, .boot-title) {
+  color: #1f1914;
+  letter-spacing: -0.02em;
+}
+
+html[data-acabamento='studio-claro'] .marca-halo {
+  background: radial-gradient(circle, rgba(242, 154, 30, 0.2), rgba(52, 191, 169, 0.12) 68%, transparent 78%);
+}
+
+html[data-acabamento='studio-claro'] .sheet-handle {
+  background: rgba(42, 34, 27, 0.22);
+}
+
+html[data-acabamento='studio-claro'] .sheet .sheet-fechar-x {
+  background: #f1ebe1;
+  border-color: rgba(42, 34, 27, 0.16);
+  color: #1f1914;
+}
+
+html[data-acabamento='studio-claro'] .sheet .sheet-fechar-x:hover {
+  background: #fadbd6;
+  border-color: #d94a3d;
+  color: #7d1913;
+}
+
+html[data-acabamento='studio-claro'] .tema-bar {
+  background: #f4eee4;
+  border-color: rgba(42, 34, 27, 0.14);
+  border-radius: 18px;
+}
+
+html[data-acabamento='studio-claro'] .tema-bar-label {
+  color: #463b31;
+}
+
+html[data-acabamento='studio-claro'] .tema-studio-switch {
+  background: #e5ddd0;
+  border-color: rgba(42, 34, 27, 0.14);
+}
+
+html[data-acabamento='studio-claro'] .sheet .tema-studio-switch button {
+  color: #54473b;
+}
+
+html[data-acabamento='studio-claro'] .sheet .tema-studio-switch button:hover {
+  background: rgba(255, 255, 255, 0.55);
+  color: #1f1914;
+}
+
+html[data-acabamento='studio-claro'] .sheet .tema-studio-switch button[aria-pressed='true'] {
+  background: #fffdf9;
+  border-color: rgba(42, 34, 27, 0.16);
+  color: #1f1914;
+  box-shadow: 0 2px 8px rgba(56, 40, 22, 0.15);
+}
+
+html[data-acabamento='studio-claro'] .tema-seg {
+  background: #e7dfd2;
+  border-color: rgba(42, 34, 27, 0.13);
+  border-radius: 14px;
+}
+
+html[data-acabamento='studio-claro'] .sheet .tema-seg button {
+  background: #fffdf9;
+  border-color: rgba(42, 34, 27, 0.14);
+  color: #3a3027;
+  border-radius: 10px;
+}
+
+html[data-acabamento='studio-claro'] .sheet .tema-seg button:hover {
+  background: #f5efe5;
+  border-color: rgba(42, 34, 27, 0.26);
+  color: #1f1914;
+}
+
+html[data-acabamento='studio-claro'] .menu-group {
+  border-top-color: rgba(42, 34, 27, 0.1);
+}
+
+html[data-acabamento='studio-claro'] .sheet button {
+  background: #faf6ef;
+  border-color: rgba(42, 34, 27, 0.12);
+  color: #1f1914;
+}
+
+html[data-acabamento='studio-claro'] .sheet button:hover {
+  background: #fdeacc;
+  border-color: rgba(224, 138, 22, 0.45);
+  color: #1f1914;
+}
+
+html[data-acabamento='studio-claro'] .m-ico {
+  background: #ebe3d6;
+}
+
+html[data-acabamento='studio-claro'] .sheet .close {
+  background: #efe8dc;
+  border-color: rgba(42, 34, 27, 0.16);
+  color: #3a3027;
+}
+
+html[data-acabamento='studio-claro'] :is(.about-pill, .guide, code) {
+  background: #f4eee4;
+  border-color: rgba(42, 34, 27, 0.16);
+  color: #1f1914;
+  border-radius: 12px;
+}
+
+html[data-acabamento='studio-claro'] :is(.guide code, .card .msg) {
+  color: #8f4904;
+  font-weight: 600;
+}
+
+html[data-acabamento='studio-claro'] .campo input {
+  background: #fffdf9;
+  border-color: rgba(42, 34, 27, 0.24);
+  color: #1f1914;
+  border-radius: 12px;
+}
+
+html[data-acabamento='studio-claro'] .campo input::placeholder {
+  color: #6f6154;
 }
 
 /* ====================== OTIMIZAÇÃO CROSS-BROWSER ====================== */

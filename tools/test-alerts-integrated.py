@@ -1198,8 +1198,11 @@ with sync_playwright() as pw:
       const sel = document.getElementById('cfg-acabamento');
       if (!sel) throw new Error('Seletor #cfg-acabamento ausente em Preferências');
       const opcoes = [...sel.options].map(o => o.value);
-      if (opcoes.join(',') !== 'vidro,escuro,claro,esmeralda,black') {
+      if (opcoes.join(',') !== 'studio-escuro,studio-claro,vidro,escuro,claro,esmeralda,black') {
         throw new Error('Opções inesperadas em #cfg-acabamento: ' + opcoes.join(','));
+      }
+      if (!getComputedStyle(document.body).fontFamily.toLowerCase().includes('urbanist')) {
+        throw new Error('Tipografia Urbanist ausente em body: ' + getComputedStyle(document.body).fontFamily);
       }
 
       // Garante um cartão ativo e um toast visível para auditar contraste real em todos os temas
@@ -1213,14 +1216,19 @@ with sync_playwright() as pw:
       }]);
       MonitoramentoAlertas.abrirPainel();
 
-      for (const tema of ['claro', 'escuro', 'esmeralda', 'black']) {
+      for (const tema of ['studio-claro', 'studio-escuro', 'claro', 'escuro', 'esmeralda', 'black']) {
         sel.value = tema;
         sel.dispatchEvent(new Event('change'));
         if (document.documentElement.dataset.acabamento !== tema) throw new Error('Tema não aplicado: ' + tema);
         if (localStorage.getItem('bperes.visual.acabamento.v1') !== tema) throw new Error('Tema não persistiu: ' + tema);
-        const modoEsp = tema === 'claro' ? 'light' : 'dark';
+        const modoEsp = (tema === 'claro' || tema === 'studio-claro') ? 'light' : 'dark';
         if (document.documentElement.style.colorScheme !== modoEsp) throw new Error('colorScheme incorreto em ' + tema);
         if (localStorage.getItem('bp_theme_preference_v1') !== modoEsp) throw new Error('Sync Chamados incorreto em ' + tema);
+
+        if (tema === 'studio-claro' || tema === 'studio-escuro') {
+          const painelBf = getComputedStyle(document.getElementById('alertas-painel')).backdropFilter || getComputedStyle(document.getElementById('alertas-painel')).webkitBackdropFilter || '';
+          if (!painelBf.includes('blur')) throw new Error('Studio deve aplicar backdrop-filter blur em #alertas-painel: ' + painelBf);
+        }
 
         const seletoresLeitura = [
           '#alertas-painel .titulo strong',
@@ -1244,6 +1252,16 @@ with sync_playwright() as pw:
         }
       }
 
+      // Valida alternância rápida 1-clique em #alertas-tema entre Studio Escuro e Studio Claro
+      MonitoramentoAlertas.aplicarTema('studio-escuro', true);
+      document.getElementById('alertas-tema').click();
+      if (document.documentElement.dataset.acabamento !== 'studio-claro') throw new Error('#alertas-tema deveria alternar para studio-claro');
+      document.getElementById('alertas-tema').click();
+      if (document.documentElement.dataset.acabamento !== 'studio-escuro') throw new Error('#alertas-tema deveria retornar para studio-escuro');
+
+      if (MonitoramentoAlertas.aplicarTema('halvo', false) !== 'studio-escuro') throw new Error('Alias halvo deve normalizar para studio-escuro');
+      if (MonitoramentoAlertas.aplicarTema('havena', false) !== 'studio-claro') throw new Error('Alias havena deve normalizar para studio-claro');
+      if (MonitoramentoAlertas.aplicarTema('hovira', false) !== 'studio-claro') throw new Error('Alias hovira deve normalizar para studio-claro');
       if (MonitoramentoAlertas.aplicarTema('solido', false) !== 'black') throw new Error('Alias legado solido deve migrar para black');
       if (MonitoramentoAlertas.aplicarTema('light', false) !== 'claro') throw new Error('Alias light deve normalizar para claro');
       if (MonitoramentoAlertas.aplicarTema('dark', false) !== 'escuro') throw new Error('Alias dark deve normalizar para escuro');
@@ -1253,7 +1271,7 @@ with sync_playwright() as pw:
       if (document.documentElement.dataset.acabamento !== 'vidro') throw new Error('Liquid Glass não foi restaurado');
       document.getElementById('cfg-fechar-x').click();
     }""")
-    print('OK: 5 temas executivos (Claro Solar, Dark Carbono Pro, Verde Safra BP, Black OLED e Liquid Glass), sincronismo Chamados e contraste WCAG >= 4.5:1 validados')
+    print('OK: 7 temas executivos (Studio Escuro, Studio Claro, Claro Solar, Dark Carbono Pro, Verde Safra BP, Black OLED e Liquid Glass), Urbanist, blur e contraste WCAG >= 4.5:1 validados')
 
     # Verificações Mesa de Comando COA v3.0.0 (todas as 8 funcionalidades)
     page.evaluate("""() => {

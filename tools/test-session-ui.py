@@ -110,7 +110,8 @@ try:
 
         page.click('#btn-menu')
         assert not page.locator('#menu').evaluate("e => e.classList.contains('hide')")
-        for tema, esquema in (('claro', 'light'), ('escuro', 'dark'), ('esmeralda', 'dark'), ('black', 'dark'), ('vidro', 'dark')):
+        assert 'urbanist' in page.evaluate("getComputedStyle(document.body).fontFamily.toLowerCase()"), 'Tipografia Urbanist deve estar ativa no body'
+        for tema, esquema in (('studio-claro', 'light'), ('studio-escuro', 'dark'), ('claro', 'light'), ('escuro', 'dark'), ('esmeralda', 'dark'), ('black', 'dark'), ('vidro', 'dark')):
             page.click(f'#menu [data-tema="{tema}"]')
             assert page.evaluate("document.documentElement.dataset.acabamento") == tema
             assert page.evaluate("document.documentElement.style.colorScheme") == esquema
@@ -149,7 +150,7 @@ try:
                 }""", tema)
         page.click('#menu-fechar-x')
         assert page.locator('#menu').evaluate("e => e.classList.contains('hide')"), 'Botão X deve fechar o Centro de Comando COA'
-        print('OK: Centro de Comando COA alterna os 5 temas executivos com contraste WCAG >= 4.5:1 e fecha pelo X.')
+        print('OK: Centro de Comando COA alterna os 7 temas (incluindo Studio Claro & Studio Escuro · Urbanist) com contraste WCAG >= 4.5:1 e fecha pelo X.')
 
         page.evaluate("""() => {
           const sev = document.getElementById('coa-sev');
